@@ -83,6 +83,7 @@ function MessageInput({ convoId }: { convoId: string }) {
             .insert("messages", {
               conversationId: convoId,
               text: draftMsg,
+              // @ts-ignore
               sender_id: session.user.id,
             })
             .then(() => {
@@ -120,7 +121,6 @@ function MessageList({ convoId }: { convoId: string }) {
     error: messagesError,
     fetching: isFetchingMessages,
   } = useMessages(convoId)
-
   const messageArray = useMemo(() => {
     if (!messages) return []
     return Array.from(messages).map(([_id, message]) => message)
@@ -151,6 +151,7 @@ function MessageList({ convoId }: { convoId: string }) {
         </div>
       ) : (
         messageArray.map((message, index) => {
+          // @ts-ignore
           const isOwnMessage = message.sender_id === session.user.id
           const isFirstMessageInABlockFromThisDay =
             index === messageArray.length - 1 ||

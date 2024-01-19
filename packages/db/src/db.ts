@@ -4,12 +4,15 @@ import {
   Models,
   InsertTypeFromModel,
   timestampedSchemaToSchema,
+  Schema,
 } from './schema.js';
 import { AsyncTupleStorageApi, TupleStorageApi } from '@triplit/tuple-database';
 import CollectionQueryBuilder, {
   fetch,
   FetchResult,
   FetchResultEntity,
+  MaybeReturnTypeFromQuery,
+  ReturnTypeFromQuery,
   subscribe,
   subscribeTriples,
 } from './collection-query.js';
@@ -32,7 +35,6 @@ import {
   overrideStoredSchema,
   StoreSchema,
   prepareQuery,
-  replaceVariable,
   getSchemaTriples,
 } from './db-helpers.js';
 import { VariableAwareCache } from './variable-aware-cache.js';
@@ -41,9 +43,10 @@ import {
   AttributeDefinition,
   UserTypeOptions,
 } from './data-types/serialization.js';
-import { triplesToObject } from './utils.js';
+import { copyHooks, triplesToObject } from './utils.js';
 import { EAV, indexToTriple, TripleRow } from './triple-store-utils.js';
-import { TripleStore } from './triple-store.js';
+import { TripleStore, TripleStoreApi } from './triple-store.js';
+import { TripleStoreTransaction } from './triple-store-transaction.js';
 
 export interface Rule<M extends Model<any>> {
   filter: QueryWhere<M>;
@@ -131,7 +134,7 @@ export interface DBConfig<M extends Models<any, any> | undefined> {
   variables?: Record<string, any>;
 }
 
-const DEFAULT_STORE_KEY = 'default';
+export const DEFAULT_STORE_KEY = 'default';
 const QUERY_CACHE_ENABLED = true;
 
 export type CollectionFromModels<
@@ -169,6 +172,7 @@ export type CollectionNameFromModels<M extends Models<any, any> | undefined> =
 export interface DBFetchOptions {
   skipRules?: boolean;
   scope?: string[];
+  stateVector?: Map<string, number>;
 }
 
 export function ruleToTuple(
@@ -202,6 +206,184 @@ type SchemaChangeCallback<M extends Models<any, any> | undefined> = (
   schema: StoreSchema<M> | undefined
 ) => void;
 
+
+type TxOutput<Output> = {
+  txId: string | undefined;
+  output: Output | undefined;
+};
+
+type TriggerWhen =
+  | 'afterCommit'
+  | 'afterDelete'
+  | 'afterInsert'
+  | 'afterUpdate'
+  | 'beforeCommit'
+  | 'beforeDelete'
+  | 'beforeInsert'
+  | 'beforeUpdate';
+
+export type EntityOpSet = {
+  inserts: [string, any][];
+  updates: [string, any][];
+  deletes: [string, any][];
+};
+
+interface AfterCommitOptions<M extends Models<any, any> | undefined> {
+  when: 'afterCommit';
+}
+type AfterCommitCallback<M extends Models<any, any> | undefined> = (args: {
+  opSet: EntityOpSet;
+  tx: DBTransaction<M>;
+  db: DB<M>;
+}) => void | Promise<void>;
+interface AfterInsertOptions<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+> {
+  when: 'afterInsert';
+  collectionName: CN;
+}
+type AfterInsertCallback<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+> = (args: {
+  entity: FetchResultEntity<CollectionQuery<M, CN>>;
+  tx: DBTransaction<M>;
+  db: DB<M>;
+}) => void | Promise<void>;
+interface AfterUpdateOptions<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+> {
+  when: 'afterUpdate';
+  collectionName: CN;
+}
+type AfterUpdateCallback<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+> = (args: {
+  entity: FetchResultEntity<CollectionQuery<M, CN>>;
+  tx: DBTransaction<M>;
+  db: DB<M>;
+}) => void | Promise<void>;
+interface AfterDeleteOptions<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+> {
+  when: 'afterDelete';
+  collectionName: CN;
+}
+type AfterDeleteCallback<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+> = (args: {
+  entity: FetchResultEntity<CollectionQuery<M, CN>>;
+  tx: DBTransaction<M>;
+  db: DB<M>;
+}) => void | Promise<void>;
+interface BeforeCommitOptions<M extends Models<any, any> | undefined> {
+  when: 'beforeCommit';
+}
+type BeforeCommitCallback<M extends Models<any, any> | undefined> = (args: {
+  opSet: EntityOpSet;
+  tx: DBTransaction<M>;
+  db: DB<M>;
+}) => void | Promise<void>;
+interface BeforeInsertOptions<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+> {
+  when: 'beforeInsert';
+  collectionName: CN;
+}
+type BeforeInsertCallback<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+> = (args: {
+  entity: FetchResultEntity<CollectionQuery<M, CN>>;
+  tx: DBTransaction<M>;
+  db: DB<M>;
+}) => void | Promise<void>;
+interface BeforeUpdateOptions<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+> {
+  when: 'beforeUpdate';
+  collectionName: CN;
+}
+type BeforeUpdateCallback<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+> = (args: {
+  entity: FetchResultEntity<CollectionQuery<M, CN>>;
+  tx: DBTransaction<M>;
+  db: DB<M>;
+}) => void | Promise<void>;
+interface BeforeDeleteOptions<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+> {
+  when: 'beforeDelete';
+  collectionName: CN;
+}
+type BeforeDeleteCallback<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+> = (args: {
+  entity: FetchResultEntity<CollectionQuery<M, CN>>;
+  tx: DBTransaction<M>;
+  db: DB<M>;
+}) => void | Promise<void>;
+
+type TriggerOptions =
+  | AfterCommitOptions<any>
+  | AfterInsertOptions<any, any>
+  | AfterUpdateOptions<any, any>
+  | AfterDeleteOptions<any, any>
+  | BeforeCommitOptions<any>
+  | BeforeInsertOptions<any, any>
+  | BeforeUpdateOptions<any, any>
+  | BeforeDeleteOptions<any, any>;
+
+type TriggerCallback =
+  | AfterCommitCallback<any>
+  | AfterInsertCallback<any, any>
+  | AfterUpdateCallback<any, any>
+  | AfterDeleteCallback<any, any>
+  | BeforeCommitCallback<any>
+  | BeforeInsertCallback<any, any>
+  | BeforeUpdateCallback<any, any>
+  | BeforeDeleteCallback<any, any>;
+
+export type DBHooks<M extends Models<any, any> | undefined> = {
+  afterCommit: [AfterCommitCallback<M>, AfterCommitOptions<M>][];
+  afterInsert: [
+    AfterInsertCallback<M, CollectionNameFromModels<M>>,
+    AfterInsertOptions<M, CollectionNameFromModels<M>>
+  ][];
+  afterUpdate: [
+    AfterInsertCallback<M, CollectionNameFromModels<M>>,
+    AfterUpdateOptions<M, CollectionNameFromModels<M>>
+  ][];
+  afterDelete: [
+    AfterDeleteCallback<M, CollectionNameFromModels<M>>,
+    AfterDeleteOptions<M, CollectionNameFromModels<M>>
+  ][];
+  beforeCommit: [BeforeCommitCallback<M>, BeforeCommitOptions<M>][];
+  beforeInsert: [
+    BeforeInsertCallback<M, CollectionNameFromModels<M>>,
+    BeforeInsertOptions<M, CollectionNameFromModels<M>>
+  ][];
+  beforeUpdate: [
+    BeforeUpdateCallback<M, CollectionNameFromModels<M>>,
+    BeforeUpdateOptions<M, CollectionNameFromModels<M>>
+  ][];
+  beforeDelete: [
+    BeforeDeleteCallback<M, CollectionNameFromModels<M>>,
+    BeforeDeleteOptions<M, CollectionNameFromModels<M>>
+  ][];
+};
+
 export default class DB<M extends Models<any, any> | undefined = undefined> {
   tripleStore: TripleStore;
   ensureMigrated: Promise<void | void[]>;
@@ -211,6 +393,17 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
   _schema?: Entity; // Timestamped Object
   schema?: StoreSchema<M>;
   private onSchemaChangeCallbacks: Set<SchemaChangeCallback<M>>;
+
+  private hooks: DBHooks<M> = {
+    afterCommit: [],
+    afterInsert: [],
+    afterUpdate: [],
+    afterDelete: [],
+    beforeCommit: [],
+    beforeInsert: [],
+    beforeUpdate: [],
+    beforeDelete: [],
+  };
 
   constructor({
     schema,
@@ -242,6 +435,7 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
       tenantId,
       clock,
     });
+
     this.cache = new VariableAwareCache(this.tripleStore);
 
     // Add listener to update in memory schema
@@ -271,7 +465,7 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
           async (storeWrites) => {
             // This assumes we are properly using tombstoning, so only looking at set operations
             const schemaTriples = Object.values(storeWrites).flatMap(
-              (w) => w.set?.map(indexToTriple) ?? []
+              (w) => w.set?.map((s) => indexToTriple(s)) ?? []
             );
 
             // Initialize schema entity
@@ -292,6 +486,82 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
           }
         );
       });
+  }
+
+  addTrigger(on: AfterCommitOptions<M>, callback: AfterCommitCallback<M>): void;
+  addTrigger<CN extends CollectionNameFromModels<M>>(
+    on: AfterInsertOptions<M, CN>,
+    callback: AfterInsertCallback<M, CN>
+  ): void;
+  addTrigger<CN extends CollectionNameFromModels<M>>(
+    on: AfterUpdateOptions<M, CN>,
+    callback: AfterUpdateCallback<M, CN>
+  ): void;
+  addTrigger<CN extends CollectionNameFromModels<M>>(
+    on: AfterDeleteOptions<M, CN>,
+    callback: AfterDeleteCallback<M, CN>
+  ): void;
+  addTrigger(
+    on: BeforeCommitOptions<M>,
+    callback: BeforeCommitCallback<M>
+  ): void;
+  addTrigger<CN extends CollectionNameFromModels<M>>(
+    on: BeforeInsertOptions<M, CN>,
+    callback: BeforeInsertCallback<M, CN>
+  ): void;
+  addTrigger<CN extends CollectionNameFromModels<M>>(
+    on: BeforeUpdateOptions<M, CN>,
+    callback: BeforeUpdateCallback<M, CN>
+  ): void;
+  addTrigger<CN extends CollectionNameFromModels<M>>(
+    on: BeforeDeleteOptions<M, CN>,
+    callback: BeforeDeleteCallback<M, CN>
+  ): void;
+  addTrigger(on: TriggerOptions, callback: TriggerCallback) {
+    switch (on.when) {
+      case 'afterCommit':
+        this.hooks.afterCommit.push([callback as AfterCommitCallback<M>, on]);
+        break;
+      case 'afterInsert':
+        this.hooks.afterInsert.push([
+          callback as AfterInsertCallback<M, CollectionNameFromModels<M>>,
+          on,
+        ]);
+        break;
+      case 'afterUpdate':
+        this.hooks.afterUpdate.push([
+          callback as AfterUpdateCallback<M, CollectionNameFromModels<M>>,
+          on,
+        ]);
+        break;
+      case 'afterDelete':
+        this.hooks.afterDelete.push([
+          callback as AfterDeleteCallback<M, CollectionNameFromModels<M>>,
+          on,
+        ]);
+        break;
+      case 'beforeCommit':
+        this.hooks.beforeCommit.push([callback as BeforeCommitCallback<M>, on]);
+        break;
+      case 'beforeInsert':
+        this.hooks.beforeInsert.push([
+          callback as BeforeInsertCallback<M, CollectionNameFromModels<M>>,
+          on,
+        ]);
+        break;
+      case 'beforeUpdate':
+        this.hooks.beforeUpdate.push([
+          callback as BeforeUpdateCallback<M, CollectionNameFromModels<M>>,
+          on,
+        ]);
+        break;
+      case 'beforeDelete':
+        this.hooks.beforeDelete.push([
+          callback as BeforeDeleteCallback<M, CollectionNameFromModels<M>>,
+          on,
+        ]);
+        break;
+    }
   }
 
   withVars(variables: Record<string, any>): DB<M> {
@@ -335,7 +605,7 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     await this.ensureMigrated;
     const schema = await this.getSchema();
     return await this.tripleStore.transact(async (tripTx) => {
-      const tx = new DBTransaction<M>(tripTx, {
+      const tx = new DBTransaction<M>(this, tripTx, this.hooks, {
         variables: this.variables,
         schema,
         skipRules: options.skipRules,
@@ -497,7 +767,8 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
         subscriptionQuery,
         (tripMap) => onResults([...tripMap.values()].flat()),
         onError,
-        (await this.getSchema())?.collections
+        (await this.getSchema())?.collections,
+        options.stateVector
       );
       return unsub;
     };
@@ -589,8 +860,9 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     const { schema } = await readSchemaFromTripleStore(this.tripleStore);
     await this.tripleStore.transact(
       async (tripTx) => {
-        const tx = new DBTransaction(tripTx, {
+        const tx = new DBTransaction(this, tripTx, copyHooks(this.hooks), {
           variables: this.variables,
+          // @ts-expect-error storeSchema issue
           schema,
         });
         for (const operation of operations) {

@@ -17,9 +17,10 @@ import {
   getSchemaFromPath,
   Model,
   Models,
+  Schema,
   timestampedObjectToPlainObject,
 } from './schema.js';
-import { Timestamp } from './timestamp.js';
+import { Timestamp, timestampCompare } from './timestamp.js';
 import { TripleStore, TripleStoreApi } from './triple-store.js';
 import { Pipeline } from './utils/pipeline.js';
 import { EntityIdMissingError, InvalidFilterError } from './errors.js';
@@ -35,7 +36,7 @@ import { Operator } from './data-types/base.js';
 import { VariableAwareCache } from './variable-aware-cache.js';
 import { isTimestampedEntityDeleted } from './entity.js';
 import { CollectionNameFromModels, ModelFromModels } from './db.js';
-import { QueryType } from './data-types/query.js';
+import { QueryResultCardinality, QueryType } from './data-types/query.js';
 import { ExtractJSType } from './data-types/type.js';
 import { TripleRow, Value } from './triple-store-utils.js';
 
@@ -53,6 +54,11 @@ export default function CollectionQueryBuilder<
   });
 }
 
+export type QueryResult<
+  Q extends CollectionQuery<any, any>,
+  C extends QueryResultCardinality
+> = C extends 'one' ? FetchResultEntity<Q> : FetchResult<Q>;
+
 export type FetchResult<C extends CollectionQuery<any, any>> = Map<
   string,
   FetchResultEntity<C>
@@ -65,8 +71,8 @@ export type JSTypeOrRelation<
   Ms extends Models<any, any>,
   M extends Model<any>,
   propName extends keyof M['properties']
-> = M['properties'][propName] extends QueryType<infer Q>
-  ? FetchResult<CollectionQuery<Ms, Q['collectionName']>>
+> = M['properties'][propName] extends QueryType<infer Q, infer Cardinality>
+  ? QueryResult<CollectionQuery<Ms, Q['collectionName']>, Cardinality>
   : ExtractJSType<M['properties'][propName]>;
 
 // Trying this out, having types that know and dont know the schema exists might be a useful pattern
@@ -93,7 +99,7 @@ export type FetchResultEntity<C extends CollectionQuery<any, any>> =
     ? M extends Models<any, any>
       ? ReturnTypeFromQuery<M, CN>
       : any
-    : never;
+    : 'bad fetch result';
 
 export interface FetchOptions {
   includeTriples?: boolean;
@@ -160,6 +166,51 @@ async function getOrderedIdsForQuery<
     )
   );
 }
+
+function getEntitiesAtStateVector(
+  collectionTriples: TripleRow[],
+  stateVector?: Map<string, number>
+) {
+  return triplesToEntities(
+    collectionTriples,
+    stateVector && stateVector.size > 0 ? stateVector : undefined
+  );
+}
+
+/**
+ * When a subscription is made, the initial fetch includes a state vector.
+ * This state vector is used to pick up any triples that may invalidate existing data in a querying client.
+ */
+function getTriplesAfterStateVector(
+  collectionTriples: TripleRow[],
+  currentEntities: Map<string, Entity>,
+  stateVector?: Map<string, number>
+) {
+  // Get the entities at the state vector
+  const entitiesAtStateVector = getEntitiesAtStateVector(
+    collectionTriples,
+    stateVector
+  );
+
+  // For those entities, get the triples that are newer than the state vector
+  return Array.from(entitiesAtStateVector.entries()).flatMap(
+    ([entityId, entity]) => {
+      const currentEntity = currentEntities.get(entityId);
+      if (!currentEntity) return [];
+      return Object.entries(currentEntity.tripleHistory).flatMap(
+        ([attrPointer, triples]) => {
+          const eaTimestamp = entity.triples[attrPointer]?.timestamp;
+          if (!eaTimestamp) return [];
+
+          return triples.filter(
+            (triple) => timestampCompare(triple.timestamp, eaTimestamp) === 1
+          );
+        }
+      );
+    }
+  );
+}
+
 /**
  * Fetch
  * @summary This function is used to fetch entities from the database. It can be used to fetch a single entity or a collection of entities.
@@ -178,6 +229,7 @@ export async function fetch<
   options?: FetchOptions & {
     includeTriples: false;
     cache?: VariableAwareCache<any>;
+    stateVector?: Map<string, number>;
   }
 ): Promise<FetchResult<Q>>;
 export async function fetch<
@@ -189,6 +241,7 @@ export async function fetch<
   options?: FetchOptions & {
     includeTriples: true;
     cache?: VariableAwareCache<any>;
+    stateVector?: Map<string, number>;
   }
 ): Promise<{ results: FetchResult<Q>; triples: Map<string, TripleRow[]> }>;
 export async function fetch<
@@ -201,7 +254,11 @@ export async function fetch<
     includeTriples = false,
     schema,
     cache,
-  }: FetchOptions & { cache?: VariableAwareCache<any> } = {}
+    stateVector,
+  }: FetchOptions & {
+    cache?: VariableAwareCache<any>;
+    stateVector?: Map<string, number>;
+  } = {}
 ) {
   const collectionSchema = schema && schema[query.collectionName]?.schema;
   if (cache && VariableAwareCache.canCacheQuery(query, collectionSchema)) {
@@ -214,8 +271,13 @@ export async function fetch<
     queryWithInsertedVars;
 
   const collectionTriples = await getTriplesForQuery(tx, queryWithInsertedVars);
-
   const entitiesMap = triplesToEntities(collectionTriples);
+  // TODO: ensure state vector + cache works
+  const stateVectorSyncTriples = getTriplesAfterStateVector(
+    collectionTriples,
+    entitiesMap,
+    stateVector
+  );
   const allEntities = new Map(
     [...entitiesMap.entries()].map(([id, entity]) => {
       return [
@@ -415,6 +477,15 @@ export async function fetch<
   }
 
   if (includeTriples) {
+    // Append state vector sync triples to triples result
+    stateVectorSyncTriples.forEach((triple) => {
+      const [_collection, id] = splitIdParts(triple.id);
+      if (resultTriples.has(id)) {
+        resultTriples.get(id)?.push(triple);
+      } else {
+        resultTriples.set(id, [triple]);
+      }
+    });
     return {
       results: new Map(entities), // TODO: also need to deserialize data?
       triples: resultTriples,
@@ -857,7 +928,8 @@ export function subscribeResultsAndTriples<
     args: [results: FetchResult<Q>, newTriples: Map<string, TripleRow[]>]
   ) => void | Promise<void>,
   onError?: (error: any) => void | Promise<void>,
-  schema?: M
+  schema?: M,
+  stateVector?: Map<string, number>
 ) {
   const { select, order, limit } = query;
   const queryWithInsertedVars = replaceVariablesInQuery(query);
@@ -869,6 +941,7 @@ export function subscribeResultsAndTriples<
       const fetchResult = await fetch<M, Q>(tripleStore, query, {
         includeTriples: true,
         schema,
+        stateVector,
       });
       results = fetchResult.results;
       triples = fetchResult.triples;
@@ -1111,7 +1184,8 @@ export function subscribeTriples<
   query: Q,
   onResults: (results: Map<string, TripleRow[]>) => void | Promise<void>,
   onError?: (error: any) => void | Promise<void>,
-  schema?: M
+  schema?: M,
+  stateVector?: Map<string, number>
 ) {
   if (query.entityId) {
     return subscribeSingleEntity(
@@ -1127,6 +1201,7 @@ export function subscribeTriples<
     query,
     ([_results, triples]) => onResults(triples),
     onError,
-    schema
+    schema,
+    stateVector
   );
 }

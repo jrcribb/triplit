@@ -45,6 +45,19 @@ it('codegen can generate a schema from migrations', async () => {
           collectionName: 'collection',
           where: [['attr', '=', 'value']],
         }),
+        subquery2: S.RelationMany('collection', {
+          where: [['attr', '=', 'value']],
+        }),
+        relationMany: S.RelationMany('collection', {
+          where: [['attr', '=', 'value']],
+          order: [['attr', 'ASC']],
+          limit: 10,
+        }),
+        relationOne: S.RelationOne('collection', {
+          where: [['attr', '=', 'value']],
+          order: [['attr', 'DESC']],
+        }),
+        relationById: S.RelationById('collection', 'id'),
       }),
       rules: {
         read: {
@@ -63,7 +76,6 @@ it('codegen can generate a schema from migrations', async () => {
     },
   } satisfies Models<any, any>;
   const jsonSchema = schemaToJSON({ collections: schema, version: 0 })!;
-
   // Create a migration
   const migration = createMigration({}, jsonSchema.collections, 1, 0, '');
   if (!migration) throw new Error('migration is undefined');
@@ -654,6 +666,75 @@ describe('migration creation', () => {
             attribute: S.Query({
               collectionName: 'test2',
               where: [['id', '=', 'id']],
+            }).toJSON(),
+          },
+        ],
+      ]);
+    });
+    it('can create a migration for a subquery with a changed cardinality', () => {
+      const schemaA = {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            subquery: S.RelationMany('test2', {
+              where: [],
+            }),
+          }),
+        },
+      } satisfies Models<any, any>;
+      const schemaB = {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            subquery: S.RelationOne('test2', {
+              where: [],
+            }),
+          }),
+        },
+      } satisfies Models<any, any>;
+      const jsonSchemaA = schemaToJSON({ collections: schemaA, version: 0 })!;
+      const jsonSchemaB = schemaToJSON({ collections: schemaB, version: 0 })!;
+      const migration = createMigration(
+        jsonSchemaA.collections,
+        jsonSchemaB.collections,
+        1,
+        0,
+        ''
+      );
+      expect(migration?.up).toEqual([
+        [
+          'drop_attribute',
+          {
+            collection: 'test',
+            path: ['subquery'],
+          },
+        ],
+        [
+          'add_attribute',
+          {
+            collection: 'test',
+            path: ['subquery'],
+            attribute: S.RelationOne('test2', {
+              where: [],
+            }).toJSON(),
+          },
+        ],
+      ]);
+      expect(migration?.down).toEqual([
+        [
+          'drop_attribute',
+          {
+            collection: 'test',
+            path: ['subquery'],
+          },
+        ],
+        [
+          'add_attribute',
+          {
+            collection: 'test',
+            path: ['subquery'],
+            attribute: S.RelationMany('test2', {
+              where: [],
             }).toJSON(),
           },
         ],

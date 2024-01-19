@@ -61,7 +61,7 @@ export const authOptions: NextAuthConfig = {
         }
 
         const isPasswordMatch = await isPasswordValid(
-          credentials.password,
+          credentials.password as string,
           authInfo.password
         )
 
@@ -100,6 +100,7 @@ export const authOptions: NextAuthConfig = {
     strategy: "jwt" as const,
   },
   jwt: {
+    // @ts-ignore
     secret: process.env.NEXTAUTH_SECRET,
     encode: async ({ secret, token, maxAge }) => {
       return await signToken(token, secret)
@@ -113,13 +114,20 @@ export const authOptions: NextAuthConfig = {
       if (user) {
         token["x-triplit-user-id"] = user.id
       }
-      token["x-triplit-project-id"] = process.env.NEXT_PUBLIC_PROJECT_ID
+      token["x-triplit-project-id"] = process.env.TRIPLIT_PROJECT_ID
       token["x-triplit-token-type"] = "external"
       return token
     },
+    // when attempting to build on vercel { token } throwing a type error in below parameter
+    // @ts-ignore
     async session({ session, token, user }) {
       if (process.env.NEXTAUTH_SECRET) {
+        // @ts-ignore
         session.token = await signToken(token, process.env.NEXTAUTH_SECRET)
+      }
+      if (session.user) {
+        // @ts-ignore
+        session.user.id = token["x-triplit-user-id"]
       }
       return session
     },

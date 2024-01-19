@@ -1,5 +1,53 @@
 # @triplit/console
 
+## 0.3.11
+
+### Patch Changes
+
+- Updated dependencies [ae9bad9]
+  - @triplit/db@0.3.10
+  - @triplit/client@0.3.10
+  - @triplit/server-core@0.3.11
+  - @triplit/react@0.3.10
+
+## 0.3.10
+
+### Patch Changes
+
+- Updated dependencies [7c8e6eb]
+  - @triplit/server-core@0.3.10
+
+## 0.3.9
+
+### Patch Changes
+
+- Updated dependencies [ff3bfe2]
+  - @triplit/client@0.3.9
+  - @triplit/db@0.3.9
+  - @triplit/react@0.3.9
+  - @triplit/server-core@0.3.9
+
+## 0.3.8
+
+### Patch Changes
+
+- Updated dependencies [f4f87df]
+- Updated dependencies [f4f87df]
+  - @triplit/client@0.3.8
+  - @triplit/db@0.3.8
+  - @triplit/react@0.3.8
+  - @triplit/server-core@0.3.8
+
+## 0.3.7
+
+### Patch Changes
+
+- Updated dependencies [4d2d381]
+  - @triplit/db@0.3.7
+  - @triplit/client@0.3.7
+  - @triplit/server-core@0.3.7
+  - @triplit/react@0.3.7
+
 ## 0.3.6
 
 ### Patch Changes

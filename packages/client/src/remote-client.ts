@@ -14,12 +14,13 @@ import {
   ClientFetchResult,
   ClientFetchResultEntity,
   ClientQuery,
+  ClientSchema,
   prepareFetchByIdQuery,
   prepareFetchOneQuery,
 } from './utils/query.js';
 
 // Interact with remote via http api, totally separate from your local database
-export class RemoteClient<M extends Models<any, any> | undefined> {
+export class RemoteClient<M extends ClientSchema | undefined> {
   constructor(
     public options: { server?: string; token?: string; schema?: M }
   ) {}
@@ -43,7 +44,7 @@ export class RemoteClient<M extends Models<any, any> | undefined> {
     return { data: await res.json(), error: undefined };
   }
 
-  async fetch<CQ extends ClientQuery<any, any>>(
+  async fetch<CQ extends ClientQuery<M, any>>(
     query: CQ
   ): Promise<ClientFetchResult<CQ>> {
     const { data, error } = await this.sendRequest('/fetch', 'POST', {
@@ -53,7 +54,7 @@ export class RemoteClient<M extends Models<any, any> | undefined> {
     return deserializeHTTPFetchResult(query, data.result, this.options.schema);
   }
 
-  async fetchOne<CQ extends ClientQuery<any, any>>(
+  async fetchOne<CQ extends ClientQuery<M, any>>(
     query: CQ
   ): Promise<ClientFetchResultEntity<CQ> | null> {
     query = prepareFetchOneQuery(query);
@@ -177,16 +178,24 @@ function deserializeHTTPEntity<CQ extends ClientQuery<any, any>>(
   if (includeKeys.length === 0) return deserializedEntity;
   for (const key of includeKeys) {
     // Get query from schema or from include
-    const query =
-      include[key] === null
-        ? schema?.[collectionName]?.schema?.properties?.[key]?.query
-        : include[key];
+    let cardinality: any;
+    let query: any;
+    if (include[key] === null) {
+      const schemaItem = schema?.[collectionName]?.schema?.properties?.[key];
+      query = schemaItem?.query;
+      cardinality = schemaItem?.cardinality;
+    } else {
+      query = include[key];
+    }
     if (!query) continue;
-    const relationData = deserializeHTTPFetchResult(
-      query, // could be null (part of the schema)
-      deserializedEntity[key],
-      schema
-    );
+    const relationData =
+      cardinality === 'one'
+        ? deserializeHTTPEntity(query, deserializedEntity[key], schema)
+        : deserializeHTTPFetchResult(
+            query, // could be null (part of the schema)
+            deserializedEntity[key],
+            schema
+          );
     deserializedEntity[key] = relationData;
   }
   return deserializedEntity;

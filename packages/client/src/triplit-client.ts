@@ -20,8 +20,10 @@ import { SyncTransport } from './transport/transport.js';
 import { SyncEngine } from './sync-engine.js';
 import {
   ClientFetchResult,
+  ClientFetchResultEntity,
   ClientQuery,
   ClientQueryBuilder,
+  ClientSchema,
   prepareFetchByIdQuery,
   prepareFetchOneQuery,
 } from './utils/query.js';
@@ -115,7 +117,7 @@ function getClientStorage(storageOption: StorageOptions) {
 
 const DEFAULT_STORAGE_OPTION = 'memory';
 
-export interface ClientOptions<M extends Models<any, any> | undefined> {
+export interface ClientOptions<M extends ClientSchema | undefined> {
   schema?: M;
   token?: string;
   claimsPath?: string;
@@ -140,7 +142,7 @@ const DEFAULT_FETCH_OPTIONS = {
   policy: 'local-first',
 } as const;
 
-export class TriplitClient<M extends Models<any, any> | undefined = undefined> {
+export class TriplitClient<M extends ClientSchema | undefined = undefined> {
   db: DB<M>;
 
   /**
@@ -235,7 +237,7 @@ export class TriplitClient<M extends Models<any, any> | undefined = undefined> {
     return ClientQueryBuilder<M, CN>(collectionName);
   }
 
-  async fetch<CQ extends ClientQuery<M, CollectionNameFromModels<M>>>(
+  async fetch<CQ extends ClientQuery<M, any>>(
     query: CQ,
     options?: FetchOptions
   ): Promise<ClientFetchResult<CQ>> {
@@ -285,7 +287,7 @@ export class TriplitClient<M extends Models<any, any> | undefined = undefined> {
   ): Promise<ClientFetchResult<CQ>> {
     const scope = parseScope(query);
     const res = await this.db.fetch(query, { scope, skipRules: SKIP_RULES });
-    return res;
+    return res as ClientFetchResult<CQ>;
   }
 
   async fetchById<CN extends CollectionNameFromModels<M>>(
@@ -305,7 +307,7 @@ export class TriplitClient<M extends Models<any, any> | undefined = undefined> {
   async fetchOne<CQ extends ClientQuery<M, any>>(
     query: CQ,
     options?: FetchOptions
-  ) {
+  ): Promise<ClientFetchResultEntity<CQ> | null> {
     query = prepareFetchOneQuery(query);
     const result = await this.fetch(query, options);
     const entity = [...result.values()][0];

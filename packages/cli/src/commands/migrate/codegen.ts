@@ -160,10 +160,27 @@ function schemaItemToString(schemaItem: AttributeDefinition): string {
     return `S.Record({${Object.entries(schemaItem.properties)
       .map(([key, value]) => `'${key}': ${schemaItemToString(value as any)}`)
       .join(',\n')}})`;
-  if (type === 'query')
-    return `S.Query(${subQueryToString(schemaItem.query)}, ${
-      schemaItem.cardinality
-    })`;
+  if (type === 'query') {
+    const { query, cardinality } = schemaItem;
+    const { collectionName, ...queryParams } = query;
+    if (cardinality === 'one') {
+      const isRelationById =
+        collectionName &&
+        query.where &&
+        query.where.length === 1 &&
+        query.where[0][0] === 'id' &&
+        query.where[0][1] === '=' &&
+        Object.keys(queryParams).length === 1;
+      if (isRelationById)
+        return `S.RelationById('${collectionName}', '${queryParams.where[0][2]}')`;
+      return `S.RelationOne('${collectionName}',${subQueryToString(
+        queryParams
+      )})`;
+    }
+    return `S.RelationMany('${collectionName}',${subQueryToString(
+      queryParams
+    )})`;
+  }
   throw new Error(`Invalid type: ${type}`);
 }
 
@@ -204,9 +221,23 @@ function valueToJS(value: any) {
   throw new Error(`Invalid value: ${value}`);
 }
 
-function subQueryToString(subquery: QueryAttributeDefinition['query']) {
-  const { collectionName, where } = subquery;
-  return `{collectionName: '${collectionName}' as const, where: ${JSON.stringify(
-    where
-  )}}`;
+function subQueryToString(
+  subquery: Omit<QueryAttributeDefinition['query'], 'collectionName'>
+) {
+  const { where, limit, order } = subquery;
+  // const collectionNameString = collectionName
+  //   ? `collectionName: '${collectionName}' as const`
+  //   : '';
+  const whereString = where ? `where: ${JSON.stringify(where)}` : '';
+  const limitString = limit ? `limit: ${limit}` : '';
+  const orderString = order ? `order: ${JSON.stringify(order)}` : '';
+  const cleanedString = [
+    // collectionNameString,
+    whereString,
+    limitString,
+    orderString,
+  ]
+    .filter((str) => str)
+    .join(', ');
+  return `{${cleanedString}}`;
 }

@@ -1,5 +1,29 @@
 # @triplit/db
 
+## 0.3.10
+
+### Patch Changes
+
+- ae9bad9: clean up @tuple-database deps to fixt nextjs builds
+
+## 0.3.9
+
+### Patch Changes
+
+- ff3bfe2: Properly handle single relationship deserialization
+
+## 0.3.8
+
+### Patch Changes
+
+- f4f87df: Add RelationMany, RelationOne and RelationById schema helpers
+
+## 0.3.7
+
+### Patch Changes
+
+- 4d2d381: add relationship types to schema
+
 ## 0.3.6
 
 ### Patch Changes

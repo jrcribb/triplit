@@ -1,5 +1,35 @@
 # @triplit/client
 
+## 0.3.10
+
+### Patch Changes
+
+- Updated dependencies [ae9bad9]
+  - @triplit/db@0.3.10
+
+## 0.3.9
+
+### Patch Changes
+
+- ff3bfe2: Properly handle single relationship deserialization
+- Updated dependencies [ff3bfe2]
+  - @triplit/db@0.3.9
+
+## 0.3.8
+
+### Patch Changes
+
+- f4f87df: Add Entity and ClientSchema helper types
+- Updated dependencies [f4f87df]
+  - @triplit/db@0.3.8
+
+## 0.3.7
+
+### Patch Changes
+
+- Updated dependencies [4d2d381]
+  - @triplit/db@0.3.7
+
 ## 0.3.6
 
 ### Patch Changes
