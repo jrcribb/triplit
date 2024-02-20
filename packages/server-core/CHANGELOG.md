@@ -1,5 +1,89 @@
 # @triplit/server-core
 
+## 0.3.21
+
+### Patch Changes
+
+- 43626b6: add internal logs to TriplitServer
+- Updated dependencies [9651552]
+- Updated dependencies [9a7fe03]
+- Updated dependencies [5ea23b8]
+- Updated dependencies [480f8eb]
+  - @triplit/db@0.3.18
+
+## 0.3.20
+
+### Patch Changes
+
+- fde0f56: Ensure server params have value before parsing, send proper error on /clear
+- Updated dependencies [458fc03]
+- Updated dependencies [10bb3eb]
+  - @triplit/db@0.3.17
+
+## 0.3.19
+
+### Patch Changes
+
+- 3fe5761: Check for fallback property when checking for TriplitError
+- Updated dependencies [6bf47f6]
+- Updated dependencies [3fe5761]
+  - @triplit/db@0.3.16
+
+## 0.3.18
+
+### Patch Changes
+
+- Updated dependencies [554aaa6]
+  - @triplit/db@0.3.15
+
+## 0.3.17
+
+### Patch Changes
+
+- 2e1a2ad: fixup bugs in schema and schemaless syncing in the console
+
+## 0.3.16
+
+### Patch Changes
+
+- 391d77f: refactor Triplit REST API routing into server-core and use in node server package
+- 75a765c: re-export relevant types for syncing from @triplit/types
+- Updated dependencies [33cc09c]
+  - @triplit/db@0.3.14
+
+## 0.3.15
+
+### Patch Changes
+
+- 623ca55: fix schemaless bug in bulk-insert route
+
+## 0.3.14
+
+### Patch Changes
+
+- 6ebf160: relax permissiveness of http api
+- 78edb1d: Improve error messaging
+- 0bd7759: Improve indexeddb performance and prevent ghost attributes from deleted entities
+- b21dacf: include sync closing as part of message passing and improve logs of close reason
+- Updated dependencies [78edb1d]
+- Updated dependencies [0bd7759]
+  - @triplit/db@0.3.13
+
+## 0.3.13
+
+### Patch Changes
+
+- Updated dependencies [f2b0f1f]
+  - @triplit/db@0.3.12
+
+## 0.3.12
+
+### Patch Changes
+
+- Updated dependencies [9e222c8]
+- Updated dependencies [ed225fd]
+  - @triplit/db@0.3.11
+
 ## 0.3.11
 
 ### Patch Changes

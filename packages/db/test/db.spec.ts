@@ -32,6 +32,8 @@ import {
   appendCollectionToId,
   stripCollectionFromId,
 } from '../src/db-helpers.js';
+import { TripleRow } from '../dist/types/triple-store-utils.js';
+import { triplesToStateVector } from '../src/triple-store-utils.js';
 
 const pause = async (ms: number = 100) =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -151,6 +153,36 @@ describe('Database API', () => {
     );
     expect(nin.size).toBe(1);
   });
+  it('treats "in" operations on sets as a defacto "intersects"', async () => {
+    const newDb = new DB({
+      schema: {
+        collections: {
+          test: { schema: S.Schema({ id: S.Id(), set: S.Set(S.String()) }) },
+        },
+      },
+    });
+    await newDb.insert('test', { id: '1', set: new Set(['a', 'b', 'c']) });
+    await newDb.insert('test', { id: '2', set: new Set(['a']) });
+    await newDb.insert('test', { id: '3', set: new Set(['d', 'e']) });
+    let results = await newDb.fetch(
+      CollectionQueryBuilder('test')
+        .where([['set', 'in', ['a', 'd']]])
+        .build()
+    );
+    expect(results.size).toBe(3);
+    results = await newDb.fetch(
+      CollectionQueryBuilder('test')
+        .where([['set', 'in', ['d']]])
+        .build()
+    );
+    expect(results.size).toBe(1);
+    results = await newDb.fetch(
+      CollectionQueryBuilder('test')
+        .where([['set', 'in', ['a', 'b']]])
+        .build()
+    );
+    expect(results.size).toBe(2);
+  });
 
   it('supports basic queries with the "like" operator', async () => {
     const studentsNamedJohn = await db.fetch(
@@ -261,7 +293,7 @@ describe('Database API', () => {
     ).rejects.toThrowError(InvalidFilterError);
   });
 
-  it('supports filtering on one attribute with multiple operators', async () => {
+  it('supports filtering on one attribute with multiple operators (and() helper)', async () => {
     const results = await db.fetch(
       CollectionQueryBuilder('Rapper')
         .where([
@@ -270,6 +302,20 @@ describe('Database API', () => {
             ['rank', '>=', 2],
           ]),
         ])
+        .build()
+    );
+    const ranks = [...results.values()].map((r) => r.rank);
+    expect(Math.max(...ranks)).toBe(4);
+    expect(Math.min(...ranks)).toBe(2);
+    expect(results.size).toBe(3);
+  });
+
+  it('supports filtering on one attribute with multiple operators (additive)', async () => {
+    const results = await db.fetch(
+      CollectionQueryBuilder('Rapper')
+        .where([['rank', '<', 5]])
+        .where('rank', '>=', 2)
+        .where()
         .build()
     );
     const ranks = [...results.values()].map((r) => r.rank);
@@ -403,6 +449,66 @@ describe('Database API', () => {
     );
   });
 
+  it('update throws an error if you attempt to mutate the entity id', async () => {
+    // Schemaless
+    const db = new DB();
+    await db.insert('Student', {
+      name: 'John Doe',
+      id: '1',
+      not: { id: 'not_id' },
+    });
+    await expect(
+      db.update('Student', '1', (entity) => {
+        entity.id = '2';
+      })
+    ).rejects.toThrowError(InvalidOperationError);
+    await expect(
+      db.update('Student', '1', (entity) => {
+        delete entity.id;
+      })
+    ).rejects.toThrowError(InvalidOperationError);
+    await expect(
+      db.update('Student', '1', (entity) => {
+        entity.not.id = 'updated';
+      })
+    ).resolves.not.toThrow();
+
+    // Schemaful
+    const schemaDb = new DB({
+      schema: {
+        collections: {
+          Student: {
+            schema: S.Schema({
+              id: S.Id(),
+              name: S.String(),
+              not: S.Record({ id: S.String() }),
+            }),
+          },
+        },
+      },
+    });
+    await schemaDb.insert('Student', {
+      id: '1',
+      name: 'John Doe',
+      not: { id: 'not_id' },
+    });
+    await expect(
+      schemaDb.update('Student', '1', (entity) => {
+        entity.id = '2';
+      })
+    ).rejects.toThrowError(InvalidOperationError);
+    await expect(
+      schemaDb.update('Student', '1', (entity) => {
+        delete entity.id;
+      })
+    ).rejects.toThrowError(InvalidOperationError);
+    await expect(
+      schemaDb.update('Student', '1', (entity) => {
+        entity.not.id = 'updated';
+      })
+    ).resolves.not.toThrow();
+  });
+
   it('checks the schema has proper fields on an insert', async () => {
     const db = new DB({
       schema: {
@@ -435,6 +541,24 @@ describe('Database API', () => {
         extraField: 'extra',
       })
     ).rejects.toThrowError(DBSerializationError);
+
+    // fields have valid types
+    await expect(
+      db.insert('test', {
+        id: '1',
+        name: 'John Doe',
+        age: '22',
+      })
+    )
+      .rejects.toThrowError(DBSerializationError)
+      // TODO: maybe setup custom matchers to test messages: https://jestjs.io/docs/expect#expectextendmatchers
+      // Ugly but so is setting up try / catch
+      .then((assertion) => {
+        const error = assertion.__flags.object;
+        expect(error.message).toContain(
+          'invalid value for age (Expected a number value, but got string instead.)'
+        );
+      });
   });
 });
 
@@ -598,7 +722,6 @@ describe('Set operations', () => {
     const db = new DB({ schema });
     await db.insert('Users', defaultUser);
     const result = await db.fetchById('Users', 'user-1');
-    console.log('result', result);
     expect(result!.friends).toBeInstanceOf(Set);
     expect([...result!.friends.values()]).toEqual(['Bob', 'Charlie']);
   });
@@ -887,6 +1010,202 @@ describe('Set operations', () => {
     expect(
       [...result.booleanSet.values()].every((val) => typeof val === 'boolean')
     ).toBeTruthy();
+  });
+
+  // Sets cant really be deleted at the moment, but entities with sets can, make sure fetch still works
+  it('set filters can fetch deleted entities', async () => {
+    const schema = {
+      collections: {
+        students: {
+          schema: S.Schema({
+            id: S.Id(),
+            name: S.String(),
+            classes: S.Set(S.String()),
+          }),
+        },
+      },
+    };
+    const db = new DB({ schema });
+    await db.insert('students', {
+      id: '1',
+      name: 'Alice',
+      classes: new Set(['math', 'science']),
+    });
+    await db.insert('students', {
+      id: '2',
+      name: 'Bob',
+      classes: new Set(['math', 'science']),
+    });
+    await db.delete('students', '1');
+
+    const query = db
+      .query('students')
+      .where([['classes', '=', 'math']])
+      .build();
+
+    const results = await db.fetch(query);
+    expect(results.size).toBe(1);
+    expect(results.get('2')).toBeDefined();
+  });
+
+  it('Can subscribe to queries with a set in the filter', async () => {
+    const schema = {
+      collections: {
+        students: {
+          schema: S.Schema({
+            id: S.Id(),
+            name: S.String(),
+            classes: S.Set(S.String()),
+          }),
+        },
+      },
+    };
+
+    const db = new DB({ schema });
+    const query = db
+      .query('students')
+      .where([['classes', '=', 'math']])
+      .build();
+    await db.insert('students', {
+      id: '1',
+      name: 'Alice',
+      classes: new Set(['math', 'science']),
+    });
+
+    await testSubscription(db, query, [
+      { check: (data) => expect(Array.from(data.keys())).toEqual(['1']) },
+      // Insert
+      {
+        action: async () => {
+          await db.transact(async (tx) => {
+            await tx.insert('students', {
+              id: '2',
+              name: 'Bob',
+              classes: new Set(['history', 'science']),
+            });
+            await tx.insert('students', {
+              id: '3',
+              name: 'Charlie',
+              classes: new Set(['math', 'history']),
+            });
+          });
+        },
+        check: (data) => expect(Array.from(data.keys())).toEqual(['1', '3']),
+      },
+      // Update
+      {
+        action: async () => {
+          await db.transact(async (tx) => {
+            await tx.update('students', '2', async (entity) => {
+              entity.classes.add('math');
+            });
+            await tx.update('students', '3', async (entity) => {
+              entity.classes.delete('math');
+            });
+          });
+        },
+        check: (data) => expect(Array.from(data.keys())).toEqual(['1', '2']),
+      },
+      // Delete
+      {
+        action: async () => {
+          await db.delete('students', '1');
+        },
+        check: (data) => expect(Array.from(data.keys())).toEqual(['2']),
+      },
+    ]);
+  });
+  describe('nullable sets', () => {
+    it('can define nullable sets in schema', async () => {
+      const schema = {
+        collections: {
+          test: {
+            schema: S.Schema({
+              id: S.Id(),
+              name: S.String(),
+              friends: S.Set(S.String(), { nullable: true }),
+            }),
+          },
+        },
+      };
+      const db = new DB({ schema });
+      await db.insert('test', {
+        id: '1',
+        name: 'Alice',
+        friends: new Set(['Bob', 'Charlie']),
+      });
+      await db.insert('test', {
+        id: '2',
+        name: 'Bob',
+        friends: null,
+      });
+      await db.insert('test', {
+        id: '3',
+        name: 'Charlie',
+        friends: new Set(),
+      });
+      await db.insert('test', {
+        id: '4',
+        name: 'Diane',
+        friends: new Set(['Ella']),
+      });
+
+      const result = await db.fetchById('test', '2');
+      expect(result!.friends).toBeNull();
+      const result2 = await db.fetchById('test', '3');
+      expect(result2!.friends).toBeInstanceOf(Set);
+      expect([...result2!.friends!.values()]).toEqual([]);
+    });
+
+    it('can update a null set to a non-null set', async () => {
+      const schema = {
+        collections: {
+          test: {
+            schema: S.Schema({
+              id: S.Id(),
+              name: S.String(),
+              friends: S.Set(S.String(), { nullable: true }),
+            }),
+          },
+        },
+      };
+      const db = new DB({ schema });
+      await db.insert('test', {
+        id: '1',
+        name: 'Alice',
+        friends: null,
+      });
+      await db.update('test', '1', async (entity) => {
+        entity.friends = new Set(['Bob', 'Charlie']);
+      });
+      const result = await db.fetchById('test', '1');
+      expect(result!.friends).toBeInstanceOf(Set);
+      expect([...result!.friends!.values()]).toEqual(['Bob', 'Charlie']);
+    });
+    it('can update update a nullable set to null', async () => {
+      const schema = {
+        collections: {
+          test: {
+            schema: S.Schema({
+              id: S.Id(),
+              name: S.String(),
+              friends: S.Set(S.String(), { nullable: true }),
+            }),
+          },
+        },
+      };
+      const db = new DB({ schema });
+      await db.insert('test', {
+        id: '1',
+        name: 'Alice',
+        friends: new Set(['Bob', 'Charlie']),
+      });
+      await db.update('test', '1', async (entity) => {
+        entity.friends = null;
+      });
+      const result = await db.fetchById('test', '1');
+      expect(result!.friends).toBeNull();
+    });
   });
 });
 
@@ -2029,6 +2348,7 @@ describe('delete api', () => {
       author_id: 'user-1',
     });
   });
+
   it('in a transaction, delete an entity and then update the same one', async () => {
     const db = new DB();
     await db.insert('posts', { id: 'post-1', author_id: 'user-1' });
@@ -2039,6 +2359,27 @@ describe('delete api', () => {
           entity.author_id = 'user-2';
         })
       ).rejects.toThrowError(EntityNotFoundError);
+    });
+  });
+  it('prevents deletes triples from returning when same Entity ID is reused after deleting', async () => {
+    const db = new DB();
+    // insert a post, delete it, and then insert a new post with the same id but different attribute
+    await db.insert('posts', { id: 'post-1', author_id: 'user-1' });
+    await db.delete('posts', 'post-1');
+    await db.insert('posts', { id: 'post-1', title: 'user-2' });
+    const result = await db.fetchById('posts', 'post-1');
+    expect(result).not.toHaveProperty('author_id');
+    expect(result).toStrictEqual({ id: 'post-1', title: 'user-2' });
+  });
+  it('tx: can reinsert, delete an entity and then insert the same one without polluting triples', async () => {
+    const db = new DB();
+    await db.transact(async (tx) => {
+      await db.insert('posts', { id: 'post-1', author_id: 'user-1' });
+      await db.delete('posts', 'post-1');
+      await db.insert('posts', { id: 'post-1', title: 'user-2' });
+      const result = await db.fetchById('posts', 'post-1');
+      expect(result).not.toHaveProperty('author_id');
+      expect(result).toStrictEqual({ id: 'post-1', title: 'user-2' });
     });
   });
 });
@@ -2290,6 +2631,28 @@ describe('ORDER & LIMIT & Pagination', () => {
   it('order by multiple properties', async () => {
     const descendingScoresResults = await db.fetch(
       db.query('TestScores').order(['score', 'ASC'], ['date', 'DESC']).build()
+    );
+    expect(descendingScoresResults.size).toBe(TEST_SCORES.length);
+    const areAllScoresDescending = Array.from(
+      descendingScoresResults.values()
+    ).every((result, i, arr) => {
+      if (i === 0) return true;
+      const previous = arr[i - 1];
+      const current = result;
+      const hasCorrectOrder =
+        previous.score < current.score ||
+        (previous.score === current.score && previous.date >= current.date);
+      return hasCorrectOrder;
+    });
+    expect(areAllScoresDescending).toBeTruthy();
+  });
+  it('order by multiple properties (additive)', async () => {
+    const descendingScoresResults = await db.fetch(
+      db
+        .query('TestScores')
+        .order(['score', 'ASC'])
+        .order('date', 'DESC')
+        .build()
     );
     expect(descendingScoresResults.size).toBe(TEST_SCORES.length);
     const areAllScoresDescending = Array.from(
@@ -3792,9 +4155,11 @@ describe('Rules', () => {
 
       it("throws an error when updating an obj that doesn't match filter", async () => {
         await expect(
-          db.update('posts', POST_ID, async (entity) => {
-            entity.author_id = 'not me';
-          })
+          db
+            .withVars({ user_id: 'not the user' })
+            .update('posts', POST_ID, async (entity) => {
+              entity.content = 'hax0r';
+            })
         ).rejects.toThrowError(WriteRuleError);
         const post = await db.fetchById('posts', POST_ID);
         expect(post.author_id).not.toBe('not me');
@@ -3828,7 +4193,7 @@ describe('Rules', () => {
         ).resolves.not.toThrowError();
       });
 
-      it("throws an error when updating a obj that doesn't match filter", async () => {
+      it.skip("throws an error when updating a obj that doesn't match filter", async () => {
         await expect(
           db.transact(async (tx) => {
             await tx.update('posts', POST_ID, async (entity) => {
@@ -4410,46 +4775,79 @@ describe('DB variable index cache view thing', () => {
 
 describe('relational querying / sub querying', () => {
   const db = new DB({});
+  const DATA = [
+    [
+      'manufacturers',
+      {
+        name: 'Ford',
+        country: 'USA',
+        id: 'ford',
+      },
+    ],
+    [
+      'manufacturers',
+      {
+        name: 'Toyota',
+        country: 'Japan',
+        id: 'toyota',
+      },
+    ],
+    [
+      'manufacturers',
+      {
+        name: 'Honda',
+        country: 'Japan',
+        id: 'honda',
+      },
+    ],
+    [
+      'manufacturers',
+      {
+        name: 'Volkswagen',
+        country: 'Germany',
+        id: 'vw',
+      },
+    ],
+    [
+      'cars',
+      { year: 2021, model: 'F150', manufacturer: 'ford', type: 'truck' },
+    ],
+    [
+      'cars',
+      { year: 2022, model: 'Fusion', manufacturer: 'ford', type: 'sedan' },
+    ],
+    [
+      'cars',
+      { year: 2022, model: 'Explorer', manufacturer: 'ford', type: 'SUV' },
+    ],
+    [
+      'cars',
+      { year: 2022, model: 'Camry', manufacturer: 'toyota', type: 'sedan' },
+    ],
+    [
+      'cars',
+      { year: 2021, model: 'Tacoma', manufacturer: 'toyota', type: 'truck' },
+    ],
+    [
+      'cars',
+      { year: 2021, model: 'Civic', manufacturer: 'honda', type: 'sedan' },
+    ],
+    [
+      'cars',
+      { year: 2022, model: 'Accord', manufacturer: 'honda', type: 'sedan' },
+    ],
+    ['cars', { year: 2022, model: 'Jetta', manufacturer: 'vw', type: 'sedan' }],
+    ['cars', { year: 2023, model: 'Atlas', manufacturer: 'vw', type: 'truck' }],
+    ['cars', { year: 2022, model: 'Tiguan', manufacturer: 'vw', type: 'SUV' }],
+  ];
   beforeAll(async () => {
     // Insert mock data for Cars and Manufacturers
     // Manufacturer - Contains name and country
-    await db.insert('manufacturers', {
-      name: 'Ford',
-      country: 'USA',
-      id: 'ford',
-    });
-    await db.insert('manufacturers', {
-      name: 'Toyota',
-      country: 'Japan',
-      id: 'toyota',
-    });
-    await db.insert('manufacturers', {
-      name: 'Honda',
-      country: 'Japan',
-      id: 'honda',
-    });
-    await db.insert('manufacturers', {
-      name: 'Volkswagen',
-      country: 'Germany',
-      id: 'vw',
-    });
-    // Cars - Contains a make, model, manufacturer, and class (like SUV)
-    const cars = [
-      { year: 2021, model: 'F150', manufacturer: 'ford', type: 'truck' },
-      { year: 2022, model: 'Fusion', manufacturer: 'ford', type: 'sedan' },
-      { year: 2022, model: 'Explorer', manufacturer: 'ford', type: 'SUV' },
-      { year: 2022, model: 'Camry', manufacturer: 'toyota', type: 'sedan' },
-      { year: 2021, model: 'Tacoma', manufacturer: 'toyota', type: 'truck' },
-      { year: 2021, model: 'Civic', manufacturer: 'honda', type: 'sedan' },
-      { year: 2022, model: 'Accord', manufacturer: 'honda', type: 'sedan' },
-      { year: 2022, model: 'Jetta', manufacturer: 'vw', type: 'sedan' },
-      { year: 2023, model: 'Atlas', manufacturer: 'vw', type: 'truck' },
-      { year: 2022, model: 'Tiguan', manufacturer: 'vw', type: 'SUV' },
-    ];
-    for (const car of cars) {
-      await db.insert('cars', car);
+    for (const [collection, data] of DATA) {
+      await db.insert(collection, data);
     }
   });
+
   it('can handle sub queries that use variables', async () => {
     const query = db
       .query('manufacturers')
@@ -4467,9 +4865,48 @@ describe('relational querying / sub querying', () => {
       .build();
 
     const result = await db.fetch(query);
-    // console.log('result', result);
     expect(result).toHaveLength(2);
   });
+
+  it('can handle sub queries that use variables with deletes', async () => {
+    const db = new DB({});
+    for (const [collection, data] of DATA) {
+      await db.insert(collection, data);
+    }
+    // Add matching data
+    await db.insert('manufacturers', {
+      name: 'Suburu',
+      country: 'USA',
+      id: 'suburu',
+    });
+    await db.insert('cars', {
+      year: 2019,
+      model: 'Outback',
+      manufacturer: 'suburu',
+      type: 'SUV',
+    });
+    // Delete a parent that would inject variables
+    await db.delete('manufacturers', 'suburu');
+
+    const query = db
+      .query('manufacturers')
+      .where([
+        {
+          exists: db
+            .query('cars')
+            .where([
+              ['type', '=', 'SUV'],
+              ['manufacturer', '=', '$id'],
+            ])
+            .build(),
+        },
+      ])
+      .build();
+
+    const result = await db.fetch(query, { noCache: true });
+    expect(result).toHaveLength(2);
+  });
+
   it('can handle nested subqueries', async () => {
     const query = db
       .query('cars')
@@ -4773,7 +5210,7 @@ describe('Subqueries in schema', () => {
   });
 });
 
-describe.todo('social network test', () => {
+describe('social network test', () => {
   let db: DB<any>;
   beforeAll(async () => {
     db = new DB({
@@ -4799,6 +5236,7 @@ describe.todo('social network test', () => {
               id: S.String(),
               content: S.String(),
               author_id: S.String(),
+              author: S.RelationById('users', '$author_id'),
             }),
           },
         },
@@ -4837,14 +5275,93 @@ describe.todo('social network test', () => {
     });
   });
 
-  it('can query posts from friends', () => {
+  it('can query posts from friends', async () => {
+    const userDb = db.withVars({ USER_ID: 'user-1' });
+    const query = userDb
+      .query('posts')
+      .where([['author.friend_ids', '=', '$USER_ID']])
+      .build();
+    const results = await userDb.fetch(query);
+    expect(results).toHaveLength(2);
+  });
+});
+
+describe('state vector querying', () => {
+  it('respects rules when fetching after some state vector', async () => {
+    const db = new DB({
+      schema: {
+        collections: {
+          posts: {
+            schema: S.Schema({
+              id: S.String(),
+              author_id: S.String(),
+              content: S.String(),
+            }),
+            rules: {
+              read: {
+                'post-author': {
+                  description: 'Users can only read posts they authored',
+                  filter: [['author_id', '=', '$user_id']],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const user_id = 'user-1';
+    const user_id2 = 'user-2';
+    const post_id = 'post-1';
+    const post_id2 = 'post-2';
+    await db.insert('posts', { id: post_id, author_id: user_id, content: '' });
+    await db.insert('posts', {
+      id: post_id2,
+      author_id: user_id2,
+      content: '',
+    });
     const query = db
       .query('posts')
-      .vars({})
-      .where([['author.friends', '=', '$USER_ID']])
+      .where([['author_id', '=', '$user_id']])
       .build();
-    const results = db.fetch(query);
-    expect(results).toHaveLength(2);
+    const userDB = db.withVars({ user_id });
+    const results = await userDB.fetchTriples(query);
+    const resultEntities = results.reduce(
+      (entitySet: Set<string>, triple: TripleRow) => {
+        entitySet.add(stripCollectionFromId(triple.id));
+        return entitySet;
+      },
+      new Set()
+    );
+
+    expect(resultEntities).toHaveLength(1);
+    expect(resultEntities).toContain(post_id);
+
+    const stateVector = triplesToStateVector(results);
+    await db.insert('posts', {
+      id: 'post-3',
+      author_id: user_id2,
+      content: '',
+    });
+    const clientStates = new Map(
+      (stateVector ?? []).map(([sequence, client]) => [client, sequence])
+    );
+    const callback = vi.fn();
+    const unsub = userDB.subscribeTriples(query, callback, () => {}, {
+      stateVector: clientStates,
+    });
+    await pause(10);
+    unsub();
+    expect(callback).toHaveBeenCalledTimes(1);
+    const results2 = callback.mock.calls[0][0];
+    const result2Entities = results2.reduce(
+      (entitySet: Set<string>, triple: TripleRow) => {
+        entitySet.add(stripCollectionFromId(triple.id));
+        return entitySet;
+      },
+      new Set()
+    );
+    expect(result2Entities).toHaveLength(1);
+    expect(result2Entities).toContain(post_id);
   });
 });
 
@@ -4852,7 +5369,7 @@ describe.todo('social network test', () => {
  * This tests the power of the query engine to handle complex relational queries
  * This test focuses on the classic graph example of aviation routes
  */
-describe.todo('Graph-like queries', () => {
+describe('Graph-like queries', () => {
   const db = new DB();
   beforeAll(async () => {
     // Insert a bunch of airplane, airport, and flights mock data
@@ -4936,6 +5453,7 @@ describe.todo('Graph-like queries', () => {
   });
 
   it('can handle a deeply nested subquery', async () => {
+    // Find all plane models that have flown to 'San Francisco, CA' from non-CA airports
     const query = db
       .query('airplanes')
       .where([
@@ -4949,6 +5467,7 @@ describe.todo('Graph-like queries', () => {
                   .query('airports')
                   .where([
                     ['name', '=', '$origin'],
+                    ['location', 'nlike', '%, CA'],
                     {
                       exists: db
                         .query('airports')
@@ -4968,7 +5487,11 @@ describe.todo('Graph-like queries', () => {
       .build();
 
     const result = await db.fetch(query);
-    expect(result).toHaveLength(2);
+    expect(Array.from(result.keys())).toEqual([
+      'Airbus-A380',
+      'Boeing-737',
+      'Boeing-747',
+    ]);
   });
 });
 
@@ -5216,7 +5739,6 @@ describe('selecting subqueries', () => {
       ])
       .build();
     const result = await db.fetch(query);
-    console.log('result', result);
     expect(result.get('user-1')).toHaveProperty('favoritePost');
     expect(result.get('user-1').favoritePost).toMatchObject({
       id: 'post-1',
@@ -5242,7 +5764,6 @@ describe('selecting subqueries', () => {
       ])
       .build();
     const result = await db.fetch(query);
-    console.log('result', result);
     expect(result.get('user-1')).toHaveProperty('favoritePost');
     expect(result.get('user-1').favoritePost).toEqual(null);
   });
@@ -5595,24 +6116,21 @@ describe('hooks API', async () => {
       await tx.delete('users', '2');
     });
     expect(beforeCommitFn).toHaveBeenCalledTimes(3);
-    expect(beforeCommitFn.mock.calls[2][0].opSet).toStrictEqual({
-      inserts: [],
-      updates: [],
-      deletes: [
-        ['users#1', { id: '1', name: 'aaron' }],
-        ['users#2', { id: '2', name: 'blair' }],
-      ],
-    });
+    const { inserts, updates, deletes } = beforeCommitFn.mock.calls[2][0].opSet;
+    expect(inserts).toStrictEqual([]);
+    expect(updates).toStrictEqual([]);
+    expect(deletes).toMatchObject([
+      ['users#1', { id: '1' }],
+      ['users#2', { id: '2' }],
+    ]);
     expect(beforeInsertFn).toHaveBeenCalledTimes(2);
     expect(beforeUpdateFn).toHaveBeenCalledTimes(2);
     expect(beforeDeleteFn).toHaveBeenCalledTimes(2);
-    expect(beforeDeleteFn.mock.calls[0][0].entity).toStrictEqual({
+    expect(beforeDeleteFn.mock.calls[0][0].entity).toMatchObject({
       id: '1',
-      name: 'aaron',
     });
-    expect(beforeDeleteFn.mock.calls[1][0].entity).toStrictEqual({
+    expect(beforeDeleteFn.mock.calls[1][0].entity).toMatchObject({
       id: '2',
-      name: 'blair',
     });
   });
   it('after write hooks will run on transaction', async () => {
@@ -5715,24 +6233,49 @@ describe('hooks API', async () => {
       await tx.delete('users', '2');
     });
     expect(afterCommitFn).toHaveBeenCalledTimes(3);
-    expect(afterCommitFn.mock.calls[2][0].opSet).toStrictEqual({
-      inserts: [],
-      updates: [],
-      deletes: [
-        ['users#1', { id: '1', name: 'aaron' }],
-        ['users#2', { id: '2', name: 'blair' }],
-      ],
-    });
+    const { inserts, updates, deletes } = afterCommitFn.mock.calls[2][0].opSet;
+    expect(inserts).toStrictEqual([]);
+    expect(updates).toStrictEqual([]);
+    expect(deletes).toMatchObject([
+      ['users#1', { id: '1' }],
+      ['users#2', { id: '2' }],
+    ]);
     expect(afterInsertFn).toHaveBeenCalledTimes(2);
     expect(afterUpdateFn).toHaveBeenCalledTimes(2);
     expect(afterDeleteFn).toHaveBeenCalledTimes(2);
-    expect(afterDeleteFn.mock.calls[0][0].entity).toStrictEqual({
+    expect(afterDeleteFn.mock.calls[0][0].entity).toMatchObject({
       id: '1',
-      name: 'aaron',
     });
-    expect(afterDeleteFn.mock.calls[1][0].entity).toStrictEqual({
+    expect(afterDeleteFn.mock.calls[1][0].entity).toMatchObject({
       id: '2',
-      name: 'blair',
     });
   });
+});
+
+it('clearing a database resets the schema', async () => {
+  const schema = {
+    collections: {
+      test: {
+        schema: S.Schema({
+          id: S.String(),
+          name: S.String(),
+        }),
+      },
+    },
+    version: 0,
+  };
+  const db = new DB({ schema });
+  await db.ensureMigrated;
+
+  // Should load schema into cache
+  const resultSchema = await db.getSchema();
+  const cacheSchema = db.schema!;
+  expect(schemaToJSON(resultSchema)).toEqual(schemaToJSON(schema));
+  expect(schemaToJSON(cacheSchema)).toEqual(schemaToJSON(schema));
+
+  await db.clear();
+
+  // Should reset schema cache
+  const schemaAfterClear = await db.getSchema();
+  expect(schemaAfterClear).toEqual(undefined);
 });

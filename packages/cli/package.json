@@ -1,6 +1,6 @@
 {
   "name": "@triplit/cli",
-  "version": "0.3.12",
+  "version": "0.3.26",
   "type": "module",
   "scripts": {
     "build": "tsc",
@@ -20,6 +20,8 @@
     "node": ">=16.0.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240117.0",
+    "@triplit/types": "workspace:^",
     "@types/degit": "^2",
     "@types/ink": "^2.0.3",
     "@types/jsonwebtoken": "^9.0.2",
@@ -34,21 +36,27 @@
     "vitest": "^0.34.6"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.39.3",
     "@triplit/client": "workspace:^",
     "@triplit/console": "workspace:^",
     "@triplit/db": "workspace:^",
     "@triplit/server": "workspace:^",
+    "@triplit/server-core": "workspace:^",
     "ansis": "^1.5.5",
     "axios": "^1.5.0",
     "better-sqlite3": "^8.6.0",
     "chokidar": "^3.5.3",
+    "conf": "^12.0.0",
     "degit": "^2.8.4",
     "dotenv": "^16.3.1",
+    "dotenv-expand": "^10.0.0",
+    "esbuild": "^0.20.0",
     "ink": "^4.4.0",
     "jsondiffpatch": "^0.5.0",
     "jsonwebtoken": "^9.0.2",
     "minimist": "^1.2.8",
     "node-fetch": "^3.3.2",
+    "ora": "^8.0.1",
     "prettier": "^3.0.3",
     "prompts": "^2.4.2",
     "react": "^18.2.0",

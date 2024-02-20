@@ -86,9 +86,9 @@ export function replaceVariable(
 ) {
   if (typeof target !== 'string') return target;
   if (!target.startsWith('$')) return target;
-  const varValue = variables[target.slice(1)];
-  if (varValue === undefined) throw new SessionVariableNotFoundError(target);
-  return varValue;
+  const varKey = target.slice(1);
+  if (!(varKey in variables)) throw new SessionVariableNotFoundError(target);
+  return variables[varKey];
 }
 
 export function replaceVariablesInQuery<
@@ -230,12 +230,19 @@ export function validateTriple(
   const valueSchema = getSchemaFromPath(model.schema, path);
   // allow record marker for certain types
   if (value === '{}' && ['record', 'set'].includes(valueSchema.type)) return;
-
   // We expect you to set values at leaf nodes
   // Our leafs should be value types, so use that as check
   const isLeaf = (VALUE_TYPE_KEYS as unknown as string[]).includes(
     valueSchema.type
   );
+  if (
+    !isLeaf &&
+    ['record', 'set'].includes(valueSchema.type) &&
+    // @ts-ignore
+    valueSchema.options?.nullable === true &&
+    value === null
+  )
+    return;
   if (!isLeaf) {
     throw new InvalidSchemaPathError(
       path as string[],

@@ -1,5 +1,61 @@
 # @triplit/db
 
+## 0.3.18
+
+### Patch Changes
+
+- 9651552: add support for nullable sets
+- 9a7fe03: add support for additive query filters and order statements in the query builder api
+- 5ea23b8: ensure object assignments are agnostic to order
+- 480f8eb: Add error and ts preventing updates to an entity id
+
+## 0.3.17
+
+### Patch Changes
+
+- 458fc03: Fixup issues with set values in filters
+- 10bb3eb: Add more informative errors when parsing values to types
+
+## 0.3.16
+
+### Patch Changes
+
+- 6bf47f6: pass deleted keys to variables in exists subquery
+- 3fe5761: Add fallback prop to TriplitErrors for identification
+
+## 0.3.15
+
+### Patch Changes
+
+- 554aaa6: Implement basic json to js conversion of queries
+
+## 0.3.14
+
+### Patch Changes
+
+- 33cc09c: refactor state vector querying, handle many async schema loads, fixup set filter bug with deleted entities
+
+## 0.3.13
+
+### Patch Changes
+
+- 78edb1d: Improve error messaging
+- 0bd7759: Improve indexeddb performance and prevent ghost attributes from deleted entities
+
+## 0.3.12
+
+### Patch Changes
+
+- f2b0f1f: remove FormatRegistry usage in date
+
+## 0.3.11
+
+### Patch Changes
+
+- 9e222c8: ensure clear() resets in memory schema
+  small bug fixes
+- ed225fd: Fix bug causing oversending of triples
+
 ## 0.3.10
 
 ### Patch Changes

@@ -1,7 +1,6 @@
-import { ValuePointer } from '@sinclair/typebox/value';
 import { Model, Models, SelectModelFromModel } from './schema.js';
 import { QueryClauseFormattingError } from './errors.js';
-import { timestampCompare } from './timestamp.js';
+import { Timestamp, timestampCompare } from './timestamp.js';
 import { CollectionNameFromModels, ModelFromModels } from './db.js';
 import { ExtractOperators } from './data-types/type.js';
 import { RecordType } from './data-types/record.js';
@@ -144,12 +143,17 @@ export type Query<
   CN extends CollectionNameFromModels<M>
 > = Omit<CollectionQuery<M, CN>, 'collectionName'>;
 
+type TimestampedData =
+  | [Value, Timestamp]
+  | [Record<string, TimestampedData>, Timestamp];
+type EntityData = Record<string, TimestampedData>;
+
 export class Entity {
-  data: Record<string, any> = {};
+  data: EntityData = {};
   triples: Record<string, TripleRow> = {};
   tripleHistory: Record<string, TripleRow[]> = {};
 
-  constructor(init?: { data?: Record<string, any>; triples: TripleRow[] }) {
+  constructor(init?: { data?: EntityData; triples: TripleRow[] }) {
     if (init) {
       this.data = init.data ?? {};
       this.triples = init.triples.reduce((acc, triple) => {
@@ -168,10 +172,12 @@ export class Entity {
     } = triple;
 
     // Set tombstones as undefined, so we can continue to reduce and check timestamp
-    const value = isExpired ? undefined : rawValue;
+    let value: any = isExpired ? undefined : rawValue;
+
+    // Handle _collection attribute
     if (attribute[0] === '_collection') {
       const pointer = '/_collection';
-      ValuePointer.Set(this.data, pointer, [value, timestamp]);
+      EntityPointer.Set(this.data, pointer, value, timestamp);
       this.triples[pointer] = triple;
       this.tripleHistory[pointer]
         ? this.tripleHistory[pointer].push(triple)
@@ -193,30 +199,163 @@ export class Entity {
       const part = path[i];
       if (typeof part === 'number') {
         const pointerToParent = '/' + path.slice(0, i).join('/');
-        const existingParent = ValuePointer.Get(this.data, pointerToParent);
+        const existingParent = EntityPointer.Get(this.data, pointerToParent);
         if (!existingParent) {
           // console.log('creating array at', pointerToParent, entity);
-          ValuePointer.Set(this.data, pointerToParent, []);
+          EntityPointer.Set(this.data, pointerToParent, [], timestamp);
         }
       }
     }
 
-    const currentValue = ValuePointer.Get(this.data, pointer);
-    if (currentValue && timestampCompare(timestamp, currentValue[1]) < 0) {
-      return false;
+    // Skip if current value or a parent value has a newer timestamp
+    {
+      let pointer = '/';
+      for (let i = 0; i < path.length; i++) {
+        pointer += path[i];
+        const currentValue = EntityPointer.Get(this.data, pointer);
+        if (currentValue && timestampCompare(timestamp, currentValue[1]) < 0) {
+          return false;
+        }
+        pointer += '/';
+      }
     }
 
     // If we get an object marker, assign an empty object to the pointer if it doesn't exist
     if (value === '{}') {
-      // if (currentValue == undefined || currentValue[0] == undefined)
-      ValuePointer.Set(this.data, pointer, {});
-      this.triples[pointer] = triple;
-      return true;
+      const currentValue = EntityPointer.Get(this.data, pointer);
+      if (currentValue === undefined) {
+        value = {};
+      } else {
+        // delete everything with less than to timestamp
+        // TODO: should we clean up triple data?
+        const cleanedData = pruneExpiredChildren(currentValue, timestamp);
+        if (!cleanedData) value = {};
+        else value = cleanedData[0];
+      }
     }
 
-    ValuePointer.Set(this.data, pointer, [value, timestamp]);
+    // Update data at pointer
+    EntityPointer.Set(this.data, pointer, value, timestamp);
     this.triples[pointer] = triple;
     return true;
+  }
+}
+
+// Check existing children of assignment, if has any keys GTE timestamp, keep them, otherwise delete them
+export function pruneExpiredChildren(
+  timestampedData: TimestampedData,
+  timestamp: Timestamp
+) {
+  // If value has children (ie object), prune child values
+  if (typeof timestampedData[0] === 'object' && timestampedData[0] !== null) {
+    const [obj, ts] = timestampedData as [
+      Record<string, TimestampedData>,
+      Timestamp
+    ];
+    // Prune expired children
+    for (const key in obj) {
+      const value = obj[key];
+      const expiryResult = pruneExpiredChildren(value, timestamp);
+      if (!expiryResult) {
+        delete obj[key];
+      }
+    }
+    // If everything was expired, return undefined
+    if (
+      Object.keys(obj).length === 0 &&
+      timestampCompare(ts, timestamp) === -1
+    ) {
+      return undefined;
+    }
+    // If there is data return timestamped data
+    return [obj, ts];
+  }
+
+  // Base case: return undefined if timestamp is less than the given timestamp, otherwise return timestamped data
+  if (timestampCompare(timestampedData[1], timestamp) === -1) {
+    return undefined;
+  }
+  return timestampedData;
+}
+
+export namespace EntityPointer {
+  function Escape(component: string) {
+    return component.indexOf('~') === -1
+      ? component
+      : component.replace(/~1/g, '/').replace(/~0/g, '~');
+  }
+  /** Formats the given pointer into navigable key components */
+  export function* Format(pointer: string): IterableIterator<string> {
+    if (pointer === '') return;
+    let [start, end] = [0, 0];
+    for (let i = 0; i < pointer.length; i++) {
+      const char = pointer.charAt(i);
+      if (char === '/') {
+        if (i === 0) {
+          start = i + 1;
+        } else {
+          end = i;
+          yield Escape(pointer.slice(start, end));
+          start = i + 1;
+        }
+      } else {
+        end = i;
+      }
+    }
+    yield Escape(pointer.slice(start));
+  }
+  /** Sets the value at the given pointer. If the value at the pointer does not exist it is created */
+  export function Set(
+    value: any,
+    pointer: string,
+    update: unknown,
+    timestamp: Timestamp
+  ): void {
+    if (pointer === '')
+      throw new Error(
+        `ValuePointerRootSetError - (${JSON.stringify(
+          value
+        )}, ${pointer}, ${JSON.stringify([update, timestamp])})`
+      ); // throw new ValuePointerRootSetError(value, pointer, [update, timestamp])
+    let [owner, next, key] = [null as any, value, ''];
+    for (const component of Format(pointer)) {
+      // This is contextual which I dont love, but if we are setting a tombstone for an already tombstoned value, just stop
+      if (update === undefined && next === undefined) return;
+
+      // If the next value is undefined, create it to continue traversing path
+      if (next === undefined) {
+        next = {};
+        // so we dont lose the reference to the owner/parent
+        owner[key][0] = next;
+      }
+      if (next[component] === undefined) next[component] = [{}, undefined];
+      owner = next;
+      next = next[component][0];
+      key = component;
+    }
+    owner[key] = [update, timestamp];
+  }
+  /** Deletes a value at the given pointer */
+  export function Delete(value: any, pointer: string): void {
+    throw new Error('EntityPointer.Delete() is not implemented');
+  }
+  /** Returns true if a value exists at the given pointer */
+  export function Has(value: any, pointer: string): boolean {
+    throw new Error('EntityPointer.Has() is not implemented');
+  }
+  /** Gets the value at the given pointer */
+  export function Get(value: any, pointer: string): any {
+    if (pointer === '') return value;
+    let current = value;
+    // Root values are untimestamped
+    let root = true;
+    for (const component of Format(pointer)) {
+      const next = root ? current[component] : current[0]?.[component];
+      if (next === undefined) return undefined;
+      current = next;
+      root = false;
+    }
+    return current;
   }
 }
 
@@ -306,14 +445,15 @@ export const QUERY_INPUT_TRANSFORMERS = <
   CN extends CollectionNameFromModels<M>
 >() => ({
   where: (
-    _q: Query<M, CN>,
+    q: Query<M, CN>,
     ...args: FilterInput<ModelFromModels<M, CN>>
   ): QueryWhere<ModelFromModels<M, CN>> => {
+    let newWhere: QueryWhere<ModelFromModels<M, CN>> = [];
     if (typeof args[0] === 'string') {
       /**
        * E.g. where("id", "=", "123")
        */
-      return [args as FilterStatement<ModelFromModels<M, CN>>];
+      newWhere = [args as FilterStatement<ModelFromModels<M, CN>>];
     } else if (
       args.length === 1 &&
       args[0] instanceof Array &&
@@ -322,21 +462,23 @@ export const QUERY_INPUT_TRANSFORMERS = <
       /**
        *  E.g. where([["id", "=", "123"], ["name", "=", "foo"]])
        */
-      return args[0] as QueryWhere<ModelFromModels<M, CN>>;
+      newWhere = args[0] as QueryWhere<ModelFromModels<M, CN>>;
     } else if (args.every((arg) => typeof arg === 'object')) {
       /**
        * E.g. where(["id", "=", "123"], ["name", "=", "foo"]);
        */
-      return args as QueryWhere<ModelFromModels<M, CN>>;
+      newWhere = args as QueryWhere<ModelFromModels<M, CN>>;
     } else {
       throw new QueryClauseFormattingError('where', args);
     }
+    return [...(q.where ?? []), ...newWhere];
   },
   order: (
-    _q: Query<M, CN>,
+    q: Query<M, CN>,
     ...args: OrderInput<ModelFromModels<M, CN>>
   ): QueryOrder<ModelFromModels<M, CN>>[] | undefined => {
     if (!args[0]) return undefined;
+    let newOrder: QueryOrder<ModelFromModels<M, CN>>[] = [];
     /**
      * E.g. order("id", "ASC")
      */
@@ -344,26 +486,25 @@ export const QUERY_INPUT_TRANSFORMERS = <
       args.length === 2 &&
       (args as any[]).every((arg) => typeof arg === 'string')
     ) {
-      return [[...args] as QueryOrder<ModelFromModels<M, CN>>];
-    }
-    /**
-     * E.g. order(["id", "ASC"], ["name", "DESC"])
-     */
-    if (args.every((arg) => arg instanceof Array)) {
-      return args as NonNullable<Query<M, CN>['order']>;
-    }
-    /**
-     * E.g. order([["id", "ASC"], ["name", "DESC"]])
-     */
-    if (
+      newOrder = [[...args] as QueryOrder<ModelFromModels<M, CN>>];
+    } else if (args.every((arg) => arg instanceof Array)) {
+      /**
+       * E.g. order(["id", "ASC"], ["name", "DESC"])
+       */
+      newOrder = args as NonNullable<Query<M, CN>['order']>;
+    } else if (
+      /**
+       * E.g. order([["id", "ASC"], ["name", "DESC"]])
+       */
       args.length === 1 &&
       args[0] instanceof Array &&
       args[0].every((arg) => arg instanceof Array)
     ) {
-      return args[0] as NonNullable<Query<M, CN>['order']>;
+      newOrder = args[0] as NonNullable<Query<M, CN>['order']>;
+    } else {
+      throw new QueryClauseFormattingError('order', args);
     }
-
-    throw new QueryClauseFormattingError('order', args);
+    return [...(q.order ?? []), ...newOrder];
   },
   include<
     RName extends M extends Models<any, any>

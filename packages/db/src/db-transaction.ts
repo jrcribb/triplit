@@ -56,7 +56,6 @@ import {
   splitIdParts,
   getCollectionSchema,
   prepareQuery,
-  replaceVariable,
 } from './db-helpers.js';
 import {
   CollectionQuery,
@@ -73,7 +72,6 @@ import {
   EntityId,
   TripleStoreBeforeInsertHook,
   TripleStoreBeforeCommitHook,
-  isTupleEntityDeleteMarker,
   TripleRow,
   EAV,
   Attribute,
@@ -159,9 +157,16 @@ async function triplesToEntityOpSet(
         ]);
         break;
       case 'delete':
+        const [collection, externalId] = splitIdParts(id);
         opSet.deletes.push([
           id,
-          timestampedObjectToPlainObject(entity.data) as any,
+          {
+            id: externalId,
+            _collection: collection,
+            // I don't expect an entity to have any data here as the
+            // triples are already tombstoned
+            ...(timestampedObjectToPlainObject(entity.data) as any),
+          },
         ]);
         break;
     }
@@ -173,6 +178,60 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
   schema: StoreSchema<M> | undefined;
   private _schema: Entity | undefined;
   readonly variables?: Record<string, any>;
+  private _permissionCache: Map<string, boolean> = new Map();
+
+  constructor(
+    readonly db: DB<M>,
+    readonly storeTx: TripleStoreTransaction,
+    private readonly hooks: DBHooks<M>,
+    readonly options: TransactionOptions<M> = {}
+  ) {
+    this.schema = options.schema;
+    this.variables = options.variables;
+    this.storeTx.beforeInsert(this.ValidateTripleSchema);
+    if (!options?.skipRules) {
+      // Pre-update write checks
+      this.storeTx.beforeInsert(async (triples, tx) => {
+        /**
+         * This will check writes rules on every insert
+         * it will look for a _collection attribute to indicate an insert
+         * which means looking only at the inserted triples is sufficient
+         * to validate the rule.
+         * Otherwise treat any triples as an update/delete and fetch the entity
+         * from the store to validate the rule
+         */
+        const insertedEntities: Set<string> = new Set();
+        const updatedEntities: Set<string> = new Set();
+        for (const triple of triples) {
+          if (triple.attribute[0] === '_collection' && !triple.expired) {
+            insertedEntities.add(triple.id);
+            updatedEntities.delete(triple.id);
+            const entityTriples = triples.filter(
+              (t) => t.id === triple.id && t.expired === false
+            );
+            const entity = constructEntity(entityTriples, triple.id);
+            checkWriteRules(
+              triple.id,
+              entity?.data,
+              this.variables,
+              this.schema
+            );
+          } else {
+            updatedEntities.add(triple.id);
+          }
+        }
+        // for each updatedEntity, load triples, construct entity, and check write rules
+        for (const id of updatedEntities) {
+          const entityTriples = await tx.findByEntity(id);
+          const entity = constructEntity(entityTriples, id);
+          checkWriteRules(id, entity?.data, this.variables, this.schema);
+        }
+      });
+    }
+    this.storeTx.beforeInsert(this.UpdateLocalSchema);
+    this.storeTx.beforeCommit(this.CallBeforeCommitDBHooks);
+    this.storeTx.afterCommit(this.CallAfterCommitDBHooks);
+  }
 
   private ValidateTripleSchema: TripleStoreBeforeInsertHook = async (
     triples
@@ -184,82 +243,6 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
       if (trip.expired) continue;
       // TODO: figure out how to validate tombstones (value will be null so validation may fail, but want to think through if naively skipping is ok)
       validateTriple(this.schema.collections, trip.attribute, trip.value);
-    }
-  };
-
-  // This does a lot of reads on commit, isnt overly efficient
-  // TODO: mayube can use triples?
-  private CheckCanWrite: TripleStoreBeforeCommitHook = async (triples, tx) => {
-    const schema = await this.getSchema();
-
-    const txs = Object.values(tx.tupleTx.txs);
-
-    function hasWriteRules(collectionName: string) {
-      return (
-        Object.values(schema?.collections?.[collectionName]?.rules?.write ?? {})
-          .length > 0
-      );
-    }
-
-    // Note: I'm not totally sure this will work with subqueries in rules
-    const deletedTriples = txs.flatMap((stx) => {
-      return stx.writes.remove.filter(
-        (key) =>
-          key[1] === 'EAT' &&
-          hasWriteRules(
-            splitIdParts(
-              //@ts-expect-error typing with tuple prefix is off by 1
-              key[2]
-            )[0]
-          )
-      );
-    });
-    const updatedTriples = txs.flatMap((stx) => {
-      return stx.writes.set.filter(
-        (tuple) =>
-          tuple.key[1] === 'EAT' &&
-          hasWriteRules(
-            splitIdParts(
-              //@ts-expect-error
-              tuple.key[2]
-            )[0]
-          )
-      );
-    });
-
-    // Return early to prevent unnecessary reads
-    if (!deletedTriples.length && !updatedTriples.length) return;
-
-    const deletedEntityIds = new Set(
-      updatedTriples
-        .filter((tuple) => isTupleEntityDeleteMarker(tuple))
-        .map((tuple) => tuple.key[2] as string)
-    );
-    const deletedEntities = new Map();
-    for (const id of deletedEntityIds) {
-      const entity = constructEntity(await tx.findByEntity(id), id);
-      if (entity) deletedEntities.set(id, entity.data);
-    }
-
-    const updatedEntityIds = new Set(
-      updatedTriples
-        .map((tuple) => tuple.key[2] as string)
-        .concat(deletedTriples.map((key) => key[2] as string))
-        .filter((id) => !deletedEntityIds.has(id))
-    );
-
-    const updatedEntities = new Map();
-    for (const id of updatedEntityIds) {
-      const triples = await tx.findByEntity(id);
-      const entity = constructEntity(triples, id);
-      if (entity) updatedEntities.set(id, entity.data);
-    }
-
-    for (const [storeId, timestampedEntity] of updatedEntities) {
-      checkWriteRules(storeId, timestampedEntity, this.variables, schema);
-    }
-    for (const [storeId, timestampedEntity] of deletedEntities) {
-      checkWriteRules(storeId, timestampedEntity, this.variables, schema);
     }
   };
 
@@ -285,6 +268,7 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     updateEntity(this._schema, metadataTriples);
 
     // Type definitions are kinda ugly here
+    // @ts-expect-error - Probably want a way to override the output type of this
     const schemaDefinition = timestampedObjectToPlainObject(
       this._schema.data
     ) as SchemaDefinition | undefined;
@@ -461,30 +445,6 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     }
   };
 
-  constructor(
-    readonly db: DB<M>,
-    readonly storeTx: TripleStoreTransaction,
-    private readonly hooks: DBHooks<M>,
-    readonly options: TransactionOptions<M> = {}
-  ) {
-    this.schema = options.schema;
-    this.variables = options.variables;
-
-    this.storeTx.beforeInsert(this.ValidateTripleSchema);
-    this.storeTx.beforeInsert(this.UpdateLocalSchema);
-    // this.storeTx.beforeCommit(async (tx) => {
-    //   await this.GarbageCollect(tx.writes, tx);
-    // });
-
-    if (!options?.skipRules) {
-      // Check rules on write
-      this.storeTx.beforeCommit(this.CheckCanWrite);
-    }
-
-    this.storeTx.beforeCommit(this.CallBeforeCommitDBHooks);
-    this.storeTx.afterCommit(this.CallAfterCommitDBHooks);
-  }
-
   // Doing this as a TS fix, but would like to properly define the _metadata scheam
   readonly METADATA_COLLECTION_NAME =
     '_metadata' as CollectionNameFromModels<M>;
@@ -616,7 +576,13 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     // Run updater (runs serialization of values)
     await updater(updateProxy);
     const changeTuples = changes.getTuples();
-
+    for (const [attr, value] of changeTuples) {
+      if (attr.at(0) === 'id') {
+        throw new InvalidOperationError(
+          `Attempted to update the id of an entity in the ${collectionName} from ${entity.id} to ${value}. The 'id' attribute of an entity is immutable and cannot be updated.`
+        );
+      }
+    }
     // Create change tuples
     const updateValues: EAV[] = [];
     for (let tuple of changeTuples) {
@@ -904,11 +870,11 @@ export class ChangeTracker {
 
 export function createUpdateProxy<M extends Model<any> | undefined>(
   changeTracker: ChangeTracker,
-  entityObj: UpdateTypeFromModel<M>,
+  entityObj: Partial<UpdateTypeFromModel<M>>,
   schema?: M,
   prefix: string = ''
 ): UpdateTypeFromModel<M> {
-  return new Proxy(entityObj, {
+  return new Proxy(entityObj as UpdateTypeFromModel<M>, {
     set: (_target, prop, value) => {
       if (typeof prop === 'symbol') return true;
       const propPointer = [prefix, prop].join('/');
@@ -924,14 +890,25 @@ export function createUpdateProxy<M extends Model<any> | undefined>(
         throw new UnrecognizedPropertyInUpdateError(propPointer, value);
       }
       if (propSchema.type === 'set') {
+        if (value === null && propSchema.options.nullable) {
+          changeTracker.set(propPointer, null);
+          return true;
+        }
         if (!Array.isArray(value) && !(value instanceof Set)) {
           throw new DBSerializationError(
             'Set',
             `Cannot assign a non-array or non-set value to a set.`
           );
         }
+        const existingVal = changeTracker.get(propPointer);
         const setProxy = createSetProxy(changeTracker, propPointer, propSchema);
-        setProxy.clear();
+
+        if (existingVal !== null) {
+          setProxy.clear();
+        } else {
+          // Set object landmark if empty set or previously null
+          changeTracker.set(propPointer, new Set());
+        }
         for (const v of value) {
           setProxy.add(v);
         }
@@ -960,7 +937,9 @@ export function createUpdateProxy<M extends Model<any> | undefined>(
       if (typeof prop === 'symbol') return undefined;
       const parentPropPointer = [prefix, prop].join('/');
       const currentValue = changeTracker.get(parentPropPointer);
-
+      if (currentValue === null) {
+        return null;
+      }
       const propSchema =
         schema &&
         getSchemaFromPath(schema, parentPropPointer.slice(1).split('/'));

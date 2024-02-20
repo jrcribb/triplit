@@ -11,6 +11,7 @@ import {
 } from '@triplit/db';
 import {
   QuerySyncError,
+  RouteNotFoundError,
   ServiceKeyRequiredError,
   TriplesInsertError,
   UnrecognizedMessageTypeError,
@@ -18,13 +19,18 @@ import {
 import {
   groupTriplesByTimestamp,
   insertTriplesByTransaction,
+  isTriplitError,
 } from './utils.js';
 import {
   ServerSyncMessage,
   ClientSyncMessage,
   ParsedToken,
+  ServerCloseReason,
+  ClientConnectQueryMessage,
+  ClientDisconnectQueryMessage,
+  ClientTriplesMessage,
 } from '@triplit/types/sync';
-import { Server } from './triplit-server.js';
+import { Server as TriplitServer } from './triplit-server.js';
 
 export interface ConnectionOptions {
   clientId: string;
@@ -35,6 +41,8 @@ export interface ConnectionOptions {
 export class Connection {
   connectedQueries: Map<string, () => void>;
   listeners: Set<(messageType: string, payload: {}) => void>;
+
+  chunkedMessages: Map<string, string[]> = new Map();
 
   constructor(public session: Session, public options: ConnectionOptions) {
     this.connectedQueries = new Map<string, () => void>();
@@ -77,11 +85,7 @@ export class Connection {
     this.sendResponse('ERROR', payload);
   }
 
-  handleConnectQueryMessage(msgParams: {
-    id: string;
-    params: any;
-    state?: Timestamp[];
-  }) {
+  handleConnectQueryMessage(msgParams: ClientConnectQueryMessage['payload']) {
     const { id: queryKey, params, state } = msgParams;
     const { collectionName, ...parsedQuery } = params;
     const clientStates = new Map(
@@ -96,7 +100,8 @@ export class Connection {
             client !== this.options.clientId &&
             (!clientStates.has(client) || clientStates.get(client)! < t)
         );
-
+        // We should always send triples to client even if there are none
+        // so that the client knows that the query has been fulfilled by the remote
         this.sendResponse('TRIPLES', {
           triples: triplesForClient,
           forQueries: [queryKey],
@@ -104,12 +109,11 @@ export class Connection {
       },
       (error) => {
         console.error(error);
-        const innerError =
-          error instanceof TriplitError
-            ? error
-            : new TriplitError(
-                'An unknown error occurred while processing your request.'
-              );
+        const innerError = isTriplitError(error)
+          ? error
+          : new TriplitError(
+              'An unknown error occurred while processing your request.'
+            );
         this.sendErrorResponse('CONNECT_QUERY', new QuerySyncError(params), {
           queryKey,
           innerError,
@@ -129,7 +133,9 @@ export class Connection {
     this.connectedQueries.set(queryKey, unsubscribe);
   }
 
-  handleDisconnectQueryMessage(msgParams: { id: string }) {
+  handleDisconnectQueryMessage(
+    msgParams: ClientDisconnectQueryMessage['payload']
+  ) {
     const { id: queryKey } = msgParams;
     if (this.connectedQueries.has(queryKey)) {
       this.connectedQueries.get(queryKey)?.();
@@ -137,11 +143,18 @@ export class Connection {
     }
   }
 
+  // in case TRIPLES_PENDING requests pile up, throttle them
+  // Or figure out a better way to tap into queue of pending requests
+  private throttledTriplesRequest = throttle(
+    () => this.sendResponse('TRIPLES_REQUEST', {}),
+    10
+  );
+
   handleTriplesPendingMessage() {
-    this.sendResponse('TRIPLES_REQUEST', {});
+    this.throttledTriplesRequest();
   }
 
-  async handleTriplesMessage(msgParams: { triples: any[] }) {
+  async handleTriplesMessage(msgParams: ClientTriplesMessage['payload']) {
     const { triples } = msgParams;
     if (!triples?.length) return;
     let successes: string[] = [];
@@ -157,7 +170,7 @@ export class Connection {
             failures.push([
               txId,
               new TriplitError(
-                'Invalid permissions to modify schema. Must use service key.'
+                'Invalid permissions to modify schema. Must use Service Token.'
               ),
             ]);
             return false;
@@ -179,23 +192,43 @@ export class Connection {
             error: error.toJSON(),
           })),
         });
-        return;
       }
 
-      this.sendResponse('TRIPLES_ACK', { txIds: successes });
+      this.sendResponse('TRIPLES_ACK', {
+        txIds: successes,
+        failedTxIds: failures.map(([txId]) => txId),
+      });
     } catch (e) {
-      const error =
-        e instanceof TriplitError
-          ? e
-          : new TriplitError(
-              'An unknown error occurred while processing your request.'
-            );
+      const error = isTriplitError(e)
+        ? e
+        : new TriplitError(
+            'An unknown error occurred while processing your request.'
+          );
       this.sendErrorResponse('TRIPLES', new TriplesInsertError(), {
         failures: Object.keys(txTriples).map((txId) => ({
           txId,
           error: error.toJSON(),
         })),
       });
+    }
+  }
+
+  handleChunkMessage(msgParams: {
+    data: string;
+    total: number;
+    index: number;
+    id: string;
+  }) {
+    const { data, total, index, id } = msgParams;
+    if (!this.chunkedMessages.has(id)) {
+      this.chunkedMessages.set(id, []);
+    }
+    const chunks = this.chunkedMessages.get(id)!;
+    chunks[index] = data;
+    if (isChunkedMessageComplete(chunks, total)) {
+      const message = JSON.parse(this.chunkedMessages.get(id)!.join(''));
+      this.chunkedMessages.delete(id);
+      this.dispatchCommand(message);
     }
   }
 
@@ -210,6 +243,8 @@ export class Connection {
           return this.handleTriplesPendingMessage();
         case 'TRIPLES':
           return this.handleTriplesMessage(message.payload);
+        case 'CHUNK':
+          return this.handleChunkMessage(message.payload);
         default:
           return this.sendErrorResponse(
             // @ts-ignore
@@ -221,7 +256,7 @@ export class Connection {
     } catch (e) {
       return this.sendErrorResponse(
         message.type,
-        e instanceof TriplitError
+        isTriplitError(e)
           ? e
           : new TriplitError(
               'An unknown error occurred while processing your request.'
@@ -235,7 +270,7 @@ export class Connection {
     return this.session.db.insert(collectionName, entity);
   }
 
-  async isClientSchemaCompatible() {
+  async isClientSchemaCompatible(): Promise<ServerCloseReason | undefined> {
     const serverSchema = await this.session.db.getSchema();
     const serverHash = hashSchemaJSON(schemaToJSON(serverSchema)?.collections);
     if (
@@ -245,19 +280,27 @@ export class Connection {
     )
       return {
         type: 'SCHEMA_MISMATCH',
-        payload: {},
         retry: false,
+        message: 'Client schema does not match server schema.',
       };
     return undefined;
   }
 }
 
-type ServerResponse = {
+function isChunkedMessageComplete(message: string[], total: number) {
+  if (message.length !== total) return false;
+  for (let i = 0; i < total; i++) {
+    if (!message[i]) return false;
+  }
+  return true;
+}
+
+export type ServerResponse = {
   statusCode: number;
   payload?: any;
 };
 
-function ServerResponse(statusCode: number = 200, payload?: any) {
+export function ServerResponse(statusCode: number = 200, payload?: any) {
   return {
     payload,
     statusCode,
@@ -269,13 +312,18 @@ function NotAdminResponse() {
   return ServerResponse(error.status, error.toJSON());
 }
 
+export function routeNotFoundResponse(route: string[]) {
+  const error = new RouteNotFoundError(route);
+  return ServerResponse(error.status, error.toJSON());
+}
+
 function hasAdminAccess(token: ParsedToken) {
   return token && token.type === 'secret';
 }
 
 export class Session {
   db: TriplitDB<any>;
-  constructor(public server: Server, public token: ParsedToken) {
+  constructor(public server: TriplitServer, public token: ParsedToken) {
     if (!token) throw new Error('Token is required');
     // TODO: figure out admin middleware
     const variables = {};
@@ -303,7 +351,10 @@ export class Session {
       }
       return ServerResponse(200);
     } catch (e) {
-      return ServerResponse(500);
+      if (isTriplitError(e)) return errorResponse(e);
+      return errorResponse(e, {
+        fallbackMessage: 'An unknown error occured clearing the database.',
+      });
     }
   }
 
@@ -342,7 +393,7 @@ export class Session {
         );
       await this.db.migrate([migration], direction);
     } catch (e) {
-      if (e instanceof TriplitError) return errorResponse(e);
+      if (isTriplitError(e)) return errorResponse(e);
       return errorResponse(new TriplitError('Error applying migration'));
     }
     return ServerResponse(200);
@@ -351,10 +402,12 @@ export class Session {
   async getCollectionStats() {
     if (!hasAdminAccess(this.token)) return NotAdminResponse();
     const stats = await this.db.getCollectionStats();
-    const payload = Array.from(stats).map(([collection, numEntities]) => ({
-      collection,
-      numEntities,
-    }));
+    const payload = Array.from(stats)
+      .filter(([collection]) => collection !== '_metadata')
+      .map(([collection, numEntities]) => ({
+        collection,
+        numEntities,
+      }));
     return ServerResponse(200, payload);
   }
 
@@ -387,16 +440,22 @@ export class Session {
         new TriplitError('{ query: CollectionQuery } missing from request body')
       );
     try {
-      return ServerResponse(200, await this.db.fetchTriples(query));
+      return ServerResponse(
+        200,
+        await this.db.fetchTriples(query, {
+          skipRules: hasAdminAccess(this.token),
+        })
+      );
     } catch (e) {
       return errorResponse(e as Error);
     }
   }
 
   async fetch(query: CollectionQuery<any, any>) {
-    if (!hasAdminAccess(this.token)) return NotAdminResponse();
     try {
-      const result = await this.db.fetch(query);
+      const result = await this.db.fetch(query, {
+        skipRules: hasAdminAccess(this.token),
+      });
       const schema = await this.db.getSchema();
       const { collectionName } = query;
       const collectionSchema = schema?.collections[collectionName]?.schema;
@@ -415,14 +474,15 @@ export class Session {
   }
 
   async insert(collectionName: string, entity: any) {
-    if (!hasAdminAccess(this.token)) return NotAdminResponse();
     try {
       const schema = await this.db.getSchema();
       const collectionSchema = schema?.collections[collectionName]?.schema;
       const insertEntity = collectionSchema
         ? collectionSchema.convertJSONToJS(entity)
         : entity;
-      const txResult = await this.db.insert(collectionName, insertEntity);
+      const txResult = await this.db.insert(collectionName, insertEntity, {
+        skipRules: hasAdminAccess(this.token),
+      });
       const serializableResult = {
         ...txResult,
         output: collectionSchema
@@ -438,32 +498,36 @@ export class Session {
   }
 
   async bulkInsert(inserts: Record<string, any[]>) {
-    if (!hasAdminAccess(this.token)) return NotAdminResponse();
     try {
       const schema = await this.db.getSchema();
-      // @ts-ignore
-      const txResult = await this.db.transact(async (tx) => {
-        const output = Object.keys(inserts).reduce(
-          (acc, collectionName) => ({ ...acc, [collectionName]: [] }),
-          {}
-        ) as Record<string, any[]>;
-        for (const [collectionName, entities] of Object.entries(inserts)) {
-          const collectionSchema = schema?.collections[collectionName]?.schema;
-          for (const entity of entities) {
-            const insertEntity = collectionSchema
-              ? collectionSchema.convertJSONToJS(entity)
-              : entity;
-            const insertedEntity = await tx.insert(
-              collectionName,
-              insertEntity
-            );
-            output[collectionName].push(
-              collectionSchema.convertJSToJSON(insertedEntity)
-            );
+      const txResult = await this.db.transact(
+        async (tx) => {
+          const output = Object.keys(inserts).reduce(
+            (acc, collectionName) => ({ ...acc, [collectionName]: [] }),
+            {}
+          ) as Record<string, any[]>;
+          for (const [collectionName, entities] of Object.entries(inserts)) {
+            const collectionSchema =
+              schema?.collections[collectionName]?.schema;
+            for (const entity of entities) {
+              const insertEntity = collectionSchema
+                ? collectionSchema.convertJSONToJS(entity)
+                : entity;
+              const insertedEntity = await tx.insert(
+                collectionName,
+                insertEntity
+              );
+              output[collectionName].push(
+                collectionSchema
+                  ? collectionSchema.convertJSToJSON(insertedEntity)
+                  : insertedEntity
+              );
+            }
           }
-        }
-        return output;
-      });
+          return output;
+        },
+        { skipRules: hasAdminAccess(this.token) }
+      );
       const serializableResult = {
         ...txResult,
       };
@@ -480,7 +544,6 @@ export class Session {
     entityId: string,
     patches: (['set', Attribute, Value] | ['delete', Attribute])[]
   ) {
-    if (!hasAdminAccess(this.token)) return NotAdminResponse();
     try {
       const schema = await this.db.getSchema();
       const collectionSchema = schema?.collections[collectionName]?.schema;
@@ -512,7 +575,8 @@ export class Session {
               throw new TriplitError(`Invalid patch type: ${patch[0]}`);
             }
           }
-        }
+        },
+        { skipRules: hasAdminAccess(this.token) }
       );
       return ServerResponse(200, txResult);
     } catch (e) {
@@ -523,9 +587,10 @@ export class Session {
   }
 
   async delete(collectionName: string, entityId: string) {
-    if (!hasAdminAccess(this.token)) return NotAdminResponse();
     try {
-      const txResult = await this.db.delete(collectionName, entityId);
+      const txResult = await this.db.delete(collectionName, entityId, {
+        skipRules: hasAdminAccess(this.token),
+      });
       return ServerResponse(200, txResult);
     } catch (e) {
       return errorResponse(e, {
@@ -536,7 +601,7 @@ export class Session {
 }
 
 function errorResponse(e: unknown, options?: { fallbackMessage?: string }) {
-  if (e instanceof TriplitError) {
+  if (isTriplitError(e)) {
     return ServerResponse(e.status, e.toJSON());
   }
   const generalError = new TriplitError(
@@ -545,4 +610,27 @@ function errorResponse(e: unknown, options?: { fallbackMessage?: string }) {
   );
   console.log(e);
   return ServerResponse(generalError.status, generalError.toJSON());
+}
+
+function throttle(callback: () => void, delay: number) {
+  let wait = false;
+  let refire = false;
+  function refireOrReset() {
+    if (refire) {
+      callback();
+      refire = false;
+      setTimeout(refireOrReset, delay);
+    } else {
+      wait = false;
+    }
+  }
+  return function () {
+    if (!wait) {
+      callback();
+      wait = true;
+      setTimeout(refireOrReset, delay);
+    } else {
+      refire = true;
+    }
+  };
 }

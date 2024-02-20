@@ -61,6 +61,9 @@ describe('schemaful', () => {
             // set type
             setString: S.Set(S.String()),
             setNumber: S.Set(S.Number()),
+            nullableSet: S.Set(S.String(), {
+              nullable: true,
+            }),
             // record type
             record: S.Record({
               attr1: S.String(),
@@ -77,6 +80,10 @@ describe('schemaful', () => {
             defaultUuid: S.String({ default: S.Default.uuid() }),
             // subqueries
             subquery: S.Query({ collectionName: 'test2' as const, where: [] }),
+            // relations
+            relationOne: S.RelationOne('test', { where: [] }),
+            relationMany: S.RelationMany('test', { where: [] }),
+            relationById: S.RelationById('test', 'test-id'),
           }),
         },
       },
@@ -112,6 +119,13 @@ describe('schemaful', () => {
     expectEntityParamInTx
       .toHaveProperty('setNumber')
       .toEqualTypeOf<Set<number> | undefined>();
+
+    expectEntityParam
+      .toHaveProperty('nullableSet')
+      .toEqualTypeOf<Set<string> | null | undefined>();
+    expectEntityParamInTx
+      .toHaveProperty('nullableSet')
+      .toEqualTypeOf<Set<string> | null | undefined>();
 
     // records always have a default so can be undefined
     expectEntityParam
@@ -163,6 +177,15 @@ describe('schemaful', () => {
 
     expectEntityParam.not.toHaveProperty('subquery');
     expectEntityParamInTx.not.toHaveProperty('subquery');
+
+    expectEntityParam.not.toHaveProperty('relationOne');
+    expectEntityParamInTx.not.toHaveProperty('relationOne');
+
+    expectEntityParam.not.toHaveProperty('relationMany');
+    expectEntityParamInTx.not.toHaveProperty('relationMany');
+
+    expectEntityParam.not.toHaveProperty('relationById');
+    expectEntityParamInTx.not.toHaveProperty('relationById');
   });
 
   test.todo('insert: collection param informs entity param'); // Not sure how to test this, but collectionName should narrow the type of entity param
@@ -210,6 +233,7 @@ describe('schemaful', () => {
             // set type
             setString: S.Set(S.String()),
             setNumber: S.Set(S.Number()),
+            nullableSet: S.Set(S.String(), { nullable: true }),
             // record type
             record: S.Record({
               attr1: S.String(),
@@ -226,6 +250,10 @@ describe('schemaful', () => {
             defaultUuid: S.String({ default: S.Default.uuid() }),
             // subqueries
             subquery: S.Query({ collectionName: 'test2' as const, where: [] }),
+            // relations
+            relationOne: S.RelationOne('test', { where: [] }),
+            relationMany: S.RelationMany('test', { where: [] }),
+            relationById: S.RelationById('test', 'test-id'),
           }),
         },
       },
@@ -264,6 +292,13 @@ describe('schemaful', () => {
     expectEntityProxyParamInTx
       .toHaveProperty('setNumber')
       .toEqualTypeOf<Set<number>>();
+
+    expectEntityProxyParam
+      .toHaveProperty('nullableSet')
+      .toEqualTypeOf<Set<string> | null>();
+    expectEntityProxyParamInTx
+      .toHaveProperty('nullableSet')
+      .toEqualTypeOf<Set<string> | null>();
 
     expectEntityProxyParam
       .toHaveProperty('record')
@@ -306,8 +341,16 @@ describe('schemaful', () => {
     expectEntityProxyParamInTx
       .toHaveProperty('defaultUuid')
       .toEqualTypeOf<string>();
-
+    expectEntityProxyParam.toMatchTypeOf<{ readonly id: string }>();
+    expectEntityProxyParamInTx.toMatchTypeOf<{ readonly id: string }>();
     expectEntityProxyParam.not.toHaveProperty('subquery');
+    expectEntityProxyParamInTx.not.toHaveProperty('subquery');
+    expectEntityProxyParam.not.toHaveProperty('relationOne');
+    expectEntityProxyParamInTx.not.toHaveProperty('relationOne');
+    expectEntityProxyParam.not.toHaveProperty('relationMany');
+    expectEntityProxyParamInTx.not.toHaveProperty('relationMany');
+    expectEntityProxyParam.not.toHaveProperty('relationById');
+    expectEntityProxyParamInTx.not.toHaveProperty('relationById');
   });
 
   test('fetch: returns a map of properly typed entities', async () => {
@@ -324,6 +367,7 @@ describe('schemaful', () => {
             // set type
             setString: S.Set(S.String()),
             setNumber: S.Set(S.Number()),
+            nullableSet: S.Set(S.String(), { nullable: true }),
             // record type
             record: S.Record({
               attr1: S.String(),
@@ -342,6 +386,10 @@ describe('schemaful', () => {
             subquery: S.RelationMany('test2', {
               where: [],
             }),
+            // relations
+            relationOne: S.RelationOne('test', { where: [] }),
+            relationMany: S.RelationMany('test', { where: [] }),
+            relationById: S.RelationById('test', 'test-id'),
           }),
         },
         test2: {
@@ -365,6 +413,7 @@ describe('schemaful', () => {
           date: Date;
           setString: Set<string>;
           setNumber: Set<number>;
+          nullableSet: Set<string> | null;
           record: { attr1: string; attr2: string };
           nullableFalse: string;
           nullableTrue: string | null;
@@ -375,6 +424,18 @@ describe('schemaful', () => {
           subquery: QueryResult<
             CollectionQuery<typeof schema.collections, 'test2'>,
             'many'
+          >;
+          relationOne: QueryResult<
+            CollectionQuery<typeof schema.collections, 'test'>,
+            'one'
+          >;
+          relationMany: QueryResult<
+            CollectionQuery<typeof schema.collections, 'test'>,
+            'many'
+          >;
+          relationById: QueryResult<
+            CollectionQuery<typeof schema.collections, 'test'>,
+            'one'
           >;
         }
       >

@@ -1,11 +1,15 @@
-import { CollectionQuery, TripleRow } from '@triplit/db';
+import { CollectionQuery, Timestamp, TripleRow } from '@triplit/db';
 
 type SyncMessage<Type extends string, Payload extends any> = {
   type: Type;
   payload: Payload;
 };
 
-type ServerCloseReason = { type: ServerCloseReasonType; retry: boolean };
+export type ServerCloseReason = {
+  type: ServerCloseReasonType;
+  retry: boolean;
+  message?: string;
+};
 
 /**
  * Reasons for a client side connection close
@@ -17,31 +21,66 @@ export type ClientCloseReasonType =
   | 'CONNECTION_OVERRIDE'
   | 'MANUAL_DISCONNECT'
   | 'NETWORK_OFFLINE';
-export type ServerCloseReasonType = 'SCHEMA_MISMATCH';
+export type ServerCloseReasonType =
+  | 'SCHEMA_MISMATCH'
+  | 'UNAUTHORIZED'
+  | 'INTERNAL_ERROR';
 export type CloseReasonType = ClientCloseReasonType | ServerCloseReasonType;
 export type CloseReason = {
   type: CloseReasonType;
   retry: boolean;
 };
 
+export type ServerTriplesAckMessage = SyncMessage<
+  'TRIPLES_ACK',
+  { txIds: string[]; failedTxIds: string[] }
+>;
+export type ServerTriplesMessage = SyncMessage<
+  'TRIPLES',
+  { triples: TripleRow[]; forQueries: string[] }
+>;
+export type ServrTriplesRequestMessage = SyncMessage<'TRIPLES_REQUEST', {}>;
+export type ServerErrorMessage = SyncMessage<
+  'ERROR',
+  { messageType: ClientSyncMessage['type']; error: any; metadata: any }
+>;
+export type ServerCloseMessage = SyncMessage<'CLOSE', ServerCloseReason>;
+
 export type ServerSyncMessage =
-  | SyncMessage<'TRIPLES_ACK', { txIds: string[] }>
-  | SyncMessage<'TRIPLES', { triples: TripleRow[]; forQueries: string[] }>
-  | SyncMessage<'TRIPLES_REQUEST', {}>
-  | SyncMessage<
-      'ERROR',
-      { messageType: ClientSyncMessage['type']; error: any; metadata: any }
-    >
-  | SyncMessage<'CLOSE', ServerCloseReason>;
+  | ServerTriplesAckMessage
+  | ServerTriplesMessage
+  | ServrTriplesRequestMessage
+  | ServerErrorMessage
+  | ServerCloseMessage;
+
+export type ClientConnectQueryMessage = SyncMessage<
+  'CONNECT_QUERY',
+  {
+    id: string;
+    params: CollectionQuery<any, any>;
+    state?: Timestamp[];
+  }
+>;
+export type ClientDisconnectQueryMessage = SyncMessage<
+  'DISCONNECT_QUERY',
+  { id: string }
+>;
+export type ClientTriplesPendingMessage = SyncMessage<'TRIPLES_PENDING', {}>;
+export type ClientTriplesMessage = SyncMessage<
+  'TRIPLES',
+  { triples: TripleRow[] }
+>;
+export type ClientChunkMessage = SyncMessage<
+  'CHUNK',
+  { data: string; total: number; index: number; id: string }
+>;
 
 export type ClientSyncMessage =
-  | SyncMessage<
-      'CONNECT_QUERY',
-      { id: string; params: CollectionQuery<any, any> }
-    >
-  | SyncMessage<'DISCONNECT_QUERY', { id: string }>
-  | SyncMessage<'TRIPLES_PENDING', {}>
-  | SyncMessage<'TRIPLES', { triples: TripleRow[] }>;
+  | ClientConnectQueryMessage
+  | ClientDisconnectQueryMessage
+  | ClientTriplesPendingMessage
+  | ClientTriplesMessage
+  | ClientChunkMessage;
 
 export type ParsedToken = {
   projectId: string;

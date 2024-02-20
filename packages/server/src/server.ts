@@ -12,13 +12,16 @@ import { useHttpToken, readWSToken } from './middleware/token-reader.js';
 import { rateLimiterMiddlewareWs } from './middleware/rate-limiter.js';
 import url from 'url';
 import sqlite from 'better-sqlite3';
-import { Server } from '@triplit/server-core';
 import {
+  Server as TriplitServer,
+  ServerCloseReason,
   ClientSyncMessage,
   ParseResult,
   ParsedToken,
-} from '@triplit/types/sync';
+} from '@triplit/server-core';
 import { parseAndValidateToken } from '@triplit/server-core/token';
+import { logger } from './logger.js';
+import { Route } from '@triplit/server-core/triplit-server';
 
 function parseClientMessage(
   message: WS.RawData
@@ -51,17 +54,18 @@ export type ServerOptions = {
   storage?: 'sqlite' | 'memory';
   dbOptions?: DBConfig<any>;
   watchMode?: boolean;
+  verboseLogs?: boolean;
 };
 
 export function createServer(options?: ServerOptions) {
   const dbSource =
     options?.storage === 'sqlite' ? setupSqliteStorage() : new MemoryStorage();
-
-  const triplitServers = new Map<string, Server>();
+  if (options?.verboseLogs) logger.verbose = true;
+  const triplitServers = new Map<string, TriplitServer>();
 
   function getServer(projectId: string) {
     if (triplitServers.has(projectId)) return triplitServers.get(projectId)!;
-    const server = new Server(
+    const server = new TriplitServer(
       new DB({
         source: dbSource,
         tenantId: projectId,
@@ -75,6 +79,29 @@ export function createServer(options?: ServerOptions) {
 
   const app = express();
   app.use(express.json());
+  app.use((req, res, next) => {
+    const start = new Date();
+    let send = res.send;
+    res.send = (c) => {
+      const end = new Date();
+      let body = c;
+      try {
+        body = JSON.parse(c);
+      } catch (e) {}
+      const resWithBody = {
+        ...res,
+        body,
+      };
+      logger.logRequestAndResponse(
+        req,
+        resWithBody,
+        end.getTime() - start.getTime()
+      );
+      res.send = send;
+      return res.send(c);
+    };
+    next();
+  });
 
   const wss = new WebSocketServer({
     noServer: true,
@@ -82,7 +109,7 @@ export function createServer(options?: ServerOptions) {
   });
 
   const heartbeatInterval = setInterval(function ping() {
-    // @ts-ignore
+    // @ts-expect-error
     wss.clients.forEach(function each(ws: WS.WebSocket) {
       if (ws.isAlive === false) return ws.terminate();
       ws.isAlive = false;
@@ -90,11 +117,23 @@ export function createServer(options?: ServerOptions) {
     });
   }, 30000);
 
-  function sendMessage(socket: WS.WebSocket, type: string, payload: any) {
+  function sendMessage(
+    socket: WS.WebSocket,
+    type: string,
+    payload: any,
+    options: { dropIfClosed?: boolean } = {}
+  ) {
+    const send = socket.send;
     const message = JSON.stringify({ type, payload });
+    socket.send = (m) => {
+      // @ts-expect-error
+      logger.logMessage('sent', { type, payload });
+      socket.send = send;
+      return socket.send(m);
+    };
     if (socket.readyState === WS.OPEN) {
       socket.send(message);
-    } else {
+    } else if (!options.dropIfClosed) {
       // I think this is unlikely to be hit, but just in case the socket isnt opened yet, queue messages
       const send = () => {
         socket.send(message);
@@ -117,6 +156,18 @@ export function createServer(options?: ServerOptions) {
       metadata,
     };
     sendMessage(socket, 'ERROR', payload);
+  }
+
+  function closeSocket(socket: WS, reason: ServerCloseReason, code?: number) {
+    // Send message informing client of upcoming close, may include message containing reason
+    // @ts-expect-error
+    sendMessage(socket, 'CLOSE', reason, { dropIfClosed: true });
+    // Close connection
+    // Close payload must remain under 125 bytes
+    socket.close(
+      code,
+      JSON.stringify({ type: reason.type, retry: reason.retry })
+    );
   }
 
   wss.on('connection', async (socket: WS.WebSocket) => {
@@ -152,16 +203,18 @@ export function createServer(options?: ServerOptions) {
           new RateLimitExceededError()
         );
       }
+      logger.logMessage('received', parsedMessage);
       session!.dispatchCommand(parsedMessage!);
     });
 
     socket.on('close', (code, reason) => {
       session!.close();
+      // Should this use the closeSocket function?
       socket.close(code, reason);
     });
 
     socket.on('error', (err) => {
-      console.log('error', err);
+      closeSocket(socket, { type: 'INTERNAL_ERROR', retry: false }, 1011);
     });
 
     sendMessage(socket, 'TRIPLES_REQUEST', {});
@@ -171,106 +224,14 @@ export function createServer(options?: ServerOptions) {
 
   const authenticated = express.Router();
   authenticated.use(useHttpToken);
-
   // app.use(rateLimiterMiddleware);
-
-  authenticated.post('/queryTriples', async (req, res) => {
-    const server = getServer(process.env.PROJECT_ID!);
-    const session = server.createSession(req.token!);
-    const { statusCode, payload } = await session.queryTriples(req.body);
-    res.status(statusCode).json(payload);
-  });
-
-  authenticated.post('/clear', async (req, res) => {
-    const server = getServer(process.env.PROJECT_ID!);
-    const session = server.createSession(req.token!);
-    const { statusCode, payload } = await session.clearDB(req.body);
-    res.status(statusCode).json(payload);
-  });
-
-  authenticated.get('/migration/status', async (req, res) => {
-    const server = getServer(process.env.PROJECT_ID!);
-    const session = server.createSession(req.token!);
-    const { statusCode, payload } = await session.getMigrationStatus();
-    res.status(statusCode).json(payload);
-  });
-
-  authenticated.post('/migration/apply', async (req, res) => {
-    const server = getServer(process.env.PROJECT_ID!);
-    const session = server.createSession(req.token!);
-    const { statusCode, payload } = await session.applyMigration(req.body);
-    res.status(statusCode).json(payload);
-  });
-
-  authenticated.get('/stats', async (req, res) => {
-    const server = getServer(process.env.PROJECT_ID!);
-    const session = server.createSession(req.token!);
-    const { statusCode, payload } = await session.getCollectionStats();
-    res.status(statusCode).json(payload);
-  });
-
-  authenticated.get('/schema', async (req, res) => {
-    const server = getServer(process.env.PROJECT_ID!);
-    const session = server.createSession(req.token!);
-    const { statusCode, payload } = await session.getSchema(req.query);
-    res.status(statusCode).json(payload);
-  });
-
-  authenticated.post('/fetch', async (req, res) => {
-    const server = getServer(process.env.PROJECT_ID!);
-    const session = server.createSession(req.token!);
-    const { query } = req.body;
-    const { statusCode, payload } = await session.fetch(query);
-    res.status(statusCode).json(payload);
-  });
-
-  authenticated.post('/insert', async (req, res) => {
-    const server = getServer(process.env.PROJECT_ID!);
-    const session = server.createSession(req.token!);
-    const { collectionName, entity } = req.body;
-    const { statusCode, payload } = await session.insert(
-      collectionName,
-      entity
-    );
-    res.status(statusCode).json(payload);
-  });
-
-  authenticated.post('/bulk-insert', async (req, res) => {
-    const server = getServer(process.env.PROJECT_ID!);
-    const session = server.createSession(req.token!);
-    const { statusCode, payload } = await session.bulkInsert(req.body);
-    res.status(statusCode).json(payload);
-  });
-
-  authenticated.post('/update', async (req, res) => {
-    const server = getServer(process.env.PROJECT_ID!);
-    const session = server.createSession(req.token!);
-    const { collectionName, entityId, patches } = req.body;
-    const { statusCode, payload } = await session.update(
-      collectionName,
-      entityId,
-      patches
-    );
-    res.status(statusCode).json(payload);
-  });
-
-  authenticated.post('/delete', async (req, res) => {
-    const server = getServer(process.env.PROJECT_ID!);
-    const session = server.createSession(req.token!);
-    const { collectionName, entityId } = req.body;
-    const { statusCode, payload } = await session.delete(
-      collectionName,
-      entityId
-    );
-    res.status(statusCode).json(payload);
-  });
+  const triplitServer = getServer(process.env.PROJECT_ID!);
 
   authenticated.post('/message', async (req, res) => {
     try {
-      const server = getServer(process.env.PROJECT_ID!);
       const { message, options } = req.body;
       const { clientId } = options;
-      const session = server.getConnection(clientId);
+      const session = triplitServer.getConnection(clientId);
       if (!session) {
         throw new Error('NO CONNECTION OPEN!');
       }
@@ -280,6 +241,16 @@ export function createServer(options?: ServerOptions) {
       console.error(e);
       return res.sendStatus(500);
     }
+  });
+
+  authenticated.post('*', async (req, res) => {
+    const path = req.path.split('/').slice(1) as Route; // ignore first empty string from split
+    const { statusCode, payload } = await triplitServer.handleRequest(
+      path,
+      req.body,
+      req.token!
+    );
+    res.status(statusCode).json(payload);
   });
 
   // set up a server sent event stream
@@ -296,12 +267,10 @@ export function createServer(options?: ServerOptions) {
       }
     );
     if (error) {
-      console.error(error);
       return res.sendStatus(401);
     }
-    const server = getServer(process.env.PROJECT_ID!);
 
-    const connection = server.openConnection(token, {
+    const connection = triplitServer.openConnection(token, {
       clientId: client as string,
       clientSchemaHash: schema ? parseInt(schema as string) : undefined,
       syncSchema: syncSchema === 'true',
@@ -341,7 +310,7 @@ export function createServer(options?: ServerOptions) {
   app.use('/', authenticated);
 
   wss.on('error', (err) => {
-    console.log('error', err);
+    console.log(err);
   });
   wss.on('close', () => {
     clearInterval(heartbeatInterval);
@@ -351,57 +320,63 @@ export function createServer(options?: ServerOptions) {
     const server = app.listen(port, onOpen);
 
     server.on('upgrade', (request, socket, head) => {
-      readWSToken(request)
-        .then(({ data: token, error }) => {
-          if (!token || error) {
-            console.error(error);
-            // TODO: Send 401?
-            socket.end();
-            return;
-          }
-
-          wss.handleUpgrade(request, socket, head, async (socket) => {
-            try {
-              if (request.url) {
-                const parsedUrl = url.parse(request.url!, true);
-                const clientId = parsedUrl.query.client as string;
-                const clientHash = parsedUrl.query.schema
-                  ? parseInt(parsedUrl.query.schema as string)
-                  : undefined;
-                const syncSchema = parsedUrl.query['sync-schema'] === 'true';
-                const server = getServer(process.env.PROJECT_ID!);
-                const connection = server.openConnection(token!, {
-                  clientId,
-                  clientSchemaHash: clientHash,
-                  syncSchema,
-                });
-                // @ts-ignore
-                socket.session = connection;
-                const schemaIncombaitility =
-                  await connection.isClientSchemaCompatible();
-                if (schemaIncombaitility) {
-                  schemaIncombaitility.retry = !!options?.watchMode;
-                  socket.close(1008, JSON.stringify(schemaIncombaitility));
-                  return;
-                }
-              }
-            } catch (e) {
-              console.error(e);
-              // TODO: send info about the error back to the server, at least if its a TriplitError
-              socket.close(
-                1008,
-                JSON.stringify({ type: 'INTERNAL_ERROR', retry: false })
-              );
+      wss.handleUpgrade(request, socket, head, async (socket) => {
+        let token: ParsedToken | undefined = undefined;
+        try {
+          const tokenRes = await readWSToken(request);
+          if (tokenRes.error) throw tokenRes.error;
+          token = tokenRes.data;
+        } catch (e) {
+          closeSocket(
+            socket,
+            {
+              type: 'UNAUTHORIZED',
+              retry: false,
+              message: e instanceof Error ? e.message : undefined,
+            },
+            1008
+          );
+          return;
+        }
+        try {
+          if (request.url) {
+            const parsedUrl = url.parse(request.url!, true);
+            const clientId = parsedUrl.query.client as string;
+            const clientHash = parsedUrl.query.schema
+              ? parseInt(parsedUrl.query.schema as string)
+              : undefined;
+            const syncSchema = parsedUrl.query['sync-schema'] === 'true';
+            const server = getServer(process.env.PROJECT_ID!);
+            const connection = server.openConnection(token!, {
+              clientId,
+              clientSchemaHash: clientHash,
+              syncSchema,
+            });
+            // @ts-expect-error
+            socket.session = connection;
+            const schemaIncombaitility =
+              await connection.isClientSchemaCompatible();
+            if (schemaIncombaitility) {
+              schemaIncombaitility.retry = !!options?.watchMode;
+              closeSocket(socket, schemaIncombaitility, 1008);
               return;
             }
+          }
+        } catch (e) {
+          closeSocket(
+            socket,
+            {
+              type: 'INTERNAL_ERROR',
+              retry: false,
+              message: e instanceof Error ? e.message : undefined,
+            },
+            1011
+          );
+          return;
+        }
 
-            wss.emit('connection', socket, request);
-          });
-        })
-        .catch((e) => {
-          console.error(e);
-          socket.end();
-        });
+        wss.emit('connection', socket, request);
+      });
     });
 
     return {

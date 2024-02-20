@@ -137,10 +137,11 @@ export function getSchemaFromPath(
 export type UpdateTypeFromModel<M extends Model<any> | undefined> =
   M extends Model<any>
     ? {
-        [k in keyof SelectModelFromModel<M>['properties']]: ExtractJSType<
-          M['properties'][k]
-        >;
-      }
+        [k in keyof SelectModelFromModel<M>['properties'] as Exclude<
+          k,
+          'id'
+        >]: ExtractJSType<M['properties'][k]>;
+      } & { readonly id: string }
     : any;
 
 // Used for entity reducer
@@ -258,20 +259,21 @@ export function clientInputToDbModel<M extends Model<any> | undefined>(
 
 // TODO: perform a pass on this to see how we can improve its types
 export function timestampedObjectToPlainObject<O extends TimestampedObject>(
-  obj: O
+  obj: O,
+  maintainKeys?: boolean
 ): UnTimestampedObject<O> {
   if (typeof obj !== 'object' || obj === null) {
     return obj;
   }
   if (isTimestampedVal(obj)) {
     // @ts-expect-error
-    return obj[0];
+    return timestampedObjectToPlainObject(obj[0]);
   }
   if (obj instanceof Array) {
     // @ts-expect-error
     return obj
       .map((v) => timestampedObjectToPlainObject(v))
-      .filter((v) => v !== undefined);
+      .filter((v) => !!maintainKeys || v !== undefined);
   }
   if (obj instanceof Map) {
     // @ts-expect-error
@@ -285,7 +287,7 @@ export function timestampedObjectToPlainObject<O extends TimestampedObject>(
     .map(([key, val]) => {
       return [key, timestampedObjectToPlainObject(val)];
     })
-    .filter(([_key, val]) => val !== undefined);
+    .filter(([_key, val]) => !!maintainKeys || val !== undefined);
   //TODO: result statically typed as any
   const result = Object.fromEntries(entries);
   return result;

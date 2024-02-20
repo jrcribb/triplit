@@ -1,5 +1,104 @@
 # @triplit/server
 
+## 0.3.21
+
+### Patch Changes
+
+- Updated dependencies [9651552]
+- Updated dependencies [43626b6]
+- Updated dependencies [9a7fe03]
+- Updated dependencies [5ea23b8]
+- Updated dependencies [480f8eb]
+  - @triplit/db@0.3.18
+  - @triplit/server-core@0.3.21
+
+## 0.3.20
+
+### Patch Changes
+
+- Updated dependencies [458fc03]
+- Updated dependencies [fde0f56]
+- Updated dependencies [10bb3eb]
+  - @triplit/db@0.3.17
+  - @triplit/server-core@0.3.20
+
+## 0.3.19
+
+### Patch Changes
+
+- Updated dependencies [3fe5761]
+- Updated dependencies [6bf47f6]
+- Updated dependencies [3fe5761]
+  - @triplit/server-core@0.3.19
+  - @triplit/db@0.3.16
+
+## 0.3.18
+
+### Patch Changes
+
+- Updated dependencies [554aaa6]
+  - @triplit/db@0.3.15
+  - @triplit/server-core@0.3.18
+
+## 0.3.17
+
+### Patch Changes
+
+- Updated dependencies [2e1a2ad]
+  - @triplit/server-core@0.3.17
+
+## 0.3.16
+
+### Patch Changes
+
+- 75a765c: use types from server-core and remove dep
+
+  add logs for requests and websocket message
+
+- 391d77f: refactor Triplit REST API routing into server-core and use in node server package
+- Updated dependencies [391d77f]
+- Updated dependencies [75a765c]
+- Updated dependencies [33cc09c]
+  - @triplit/server-core@0.3.16
+  - @triplit/db@0.3.14
+
+## 0.3.15
+
+### Patch Changes
+
+- Updated dependencies [623ca55]
+  - @triplit/server-core@0.3.15
+
+## 0.3.14
+
+### Patch Changes
+
+- 0bd7759: Improve indexeddb performance and prevent ghost attributes from deleted entities
+- b21dacf: include sync closing as part of message passing and improve logs of close reason
+- Updated dependencies [6ebf160]
+- Updated dependencies [78edb1d]
+- Updated dependencies [0bd7759]
+- Updated dependencies [b21dacf]
+  - @triplit/server-core@0.3.14
+  - @triplit/db@0.3.13
+
+## 0.3.13
+
+### Patch Changes
+
+- Updated dependencies [f2b0f1f]
+  - @triplit/db@0.3.12
+  - @triplit/server-core@0.3.13
+
+## 0.3.12
+
+### Patch Changes
+
+- Updated dependencies [9e222c8]
+- Updated dependencies [ed225fd]
+  - @triplit/db@0.3.11
+  - @triplit/server-core@0.3.12
+
 ## 0.3.11
 
 ### Patch Changes

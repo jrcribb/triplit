@@ -1,5 +1,94 @@
 # @triplit/client
 
+## 0.3.21
+
+### Patch Changes
+
+- e0334d1: Add query builder to RemoteClient
+- Updated dependencies [9651552]
+- Updated dependencies [9a7fe03]
+- Updated dependencies [5ea23b8]
+- Updated dependencies [480f8eb]
+  - @triplit/db@0.3.18
+
+## 0.3.20
+
+### Patch Changes
+
+- Updated dependencies [458fc03]
+- Updated dependencies [10bb3eb]
+  - @triplit/db@0.3.17
+
+## 0.3.19
+
+### Patch Changes
+
+- 3fe5761: Improve triple fetch error handling
+- Updated dependencies [6bf47f6]
+- Updated dependencies [3fe5761]
+  - @triplit/db@0.3.16
+
+## 0.3.18
+
+### Patch Changes
+
+- Updated dependencies [554aaa6]
+  - @triplit/db@0.3.15
+
+## 0.3.17
+
+### Patch Changes
+
+- 9898891: fixup set serialization in the RemoteClient
+
+## 0.3.16
+
+### Patch Changes
+
+- 962cbfc: fixup sync bug breaking pagination
+
+## 0.3.15
+
+### Patch Changes
+
+- 7d75647: fixup broken triple filter
+
+## 0.3.14
+
+### Patch Changes
+
+- 195c4a8: handle non json websocket close reasons
+- 195c4a8: dont use TextEncoder api for chunking
+- Updated dependencies [33cc09c]
+  - @triplit/db@0.3.14
+
+## 0.3.13
+
+### Patch Changes
+
+- 78edb1d: Improve error messaging
+- 0bd7759: Improve indexeddb performance and prevent ghost attributes from deleted entities
+- b21dacf: include sync closing as part of message passing and improve logs of close reason
+- Updated dependencies [78edb1d]
+- Updated dependencies [0bd7759]
+  - @triplit/db@0.3.13
+
+## 0.3.12
+
+### Patch Changes
+
+- Updated dependencies [f2b0f1f]
+  - @triplit/db@0.3.12
+
+## 0.3.11
+
+### Patch Changes
+
+- fd213a5: Add bulkInsert method to RemoteClient
+- Updated dependencies [9e222c8]
+- Updated dependencies [ed225fd]
+  - @triplit/db@0.3.11
+
 ## 0.3.10
 
 ### Patch Changes

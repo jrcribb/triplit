@@ -1,5 +1,164 @@
 # @triplit/cli
 
+## 0.3.26
+
+### Patch Changes
+
+- 270ba6a: Add support for nullable sets in codegen
+- 04a22c8: Apply defaults to flags
+- Updated dependencies [9651552]
+- Updated dependencies [43626b6]
+- Updated dependencies [9a7fe03]
+- Updated dependencies [5ea23b8]
+- Updated dependencies [e0334d1]
+- Updated dependencies [480f8eb]
+- Updated dependencies [ed2d2f7]
+  - @triplit/console@0.3.24
+  - @triplit/db@0.3.18
+  - @triplit/server-core@0.3.21
+  - @triplit/client@0.3.21
+  - @triplit/server@0.3.21
+
+## 0.3.25
+
+### Patch Changes
+
+- Updated dependencies [458fc03]
+- Updated dependencies [fde0f56]
+- Updated dependencies [10bb3eb]
+  - @triplit/db@0.3.17
+  - @triplit/server-core@0.3.20
+  - @triplit/client@0.3.20
+  - @triplit/console@0.3.23
+  - @triplit/server@0.3.20
+
+## 0.3.24
+
+### Patch Changes
+
+- Updated dependencies [3fe5761]
+- Updated dependencies [6bf47f6]
+- Updated dependencies [3fe5761]
+- Updated dependencies [3fe5761]
+  - @triplit/server-core@0.3.19
+  - @triplit/db@0.3.16
+  - @triplit/client@0.3.19
+  - @triplit/console@0.3.22
+  - @triplit/server@0.3.19
+
+## 0.3.23
+
+### Patch Changes
+
+- Updated dependencies [554aaa6]
+  - @triplit/db@0.3.15
+  - @triplit/client@0.3.18
+  - @triplit/console@0.3.21
+  - @triplit/server@0.3.18
+  - @triplit/server-core@0.3.18
+
+## 0.3.22
+
+### Patch Changes
+
+- Updated dependencies [9898891]
+  - @triplit/client@0.3.17
+  - @triplit/console@0.3.20
+
+## 0.3.21
+
+### Patch Changes
+
+- 434c825: fixup set serialization in the RemoteClient
+- Updated dependencies [2e1a2ad]
+  - @triplit/server-core@0.3.17
+  - @triplit/console@0.3.19
+  - @triplit/server@0.3.17
+
+## 0.3.20
+
+### Patch Changes
+
+- Updated dependencies [962cbfc]
+  - @triplit/client@0.3.16
+  - @triplit/console@0.3.18
+
+## 0.3.19
+
+### Patch Changes
+
+- Updated dependencies [7d75647]
+  - @triplit/client@0.3.15
+  - @triplit/console@0.3.17
+
+## 0.3.18
+
+### Patch Changes
+
+- 75a765c: add [-v verbose] flag for dev server logging to `dev` command
+- 391d77f: Use POST instead of GET for triplit server routes
+- Updated dependencies [75a765c]
+- Updated dependencies [195c4a8]
+- Updated dependencies [391d77f]
+- Updated dependencies [391d77f]
+- Updated dependencies [195c4a8]
+- Updated dependencies [33cc09c]
+  - @triplit/server@0.3.16
+  - @triplit/client@0.3.14
+  - @triplit/console@0.3.16
+  - @triplit/db@0.3.14
+
+## 0.3.17
+
+### Patch Changes
+
+- @triplit/console@0.3.15
+- @triplit/server@0.3.15
+
+## 0.3.16
+
+### Patch Changes
+
+- e3d42ed: Use dotenv expand
+
+## 0.3.15
+
+### Patch Changes
+
+- 78edb1d: Improve error messaging
+- 0bd7759: Improve indexeddb performance and prevent ghost attributes from deleted entities
+- Updated dependencies [78edb1d]
+- Updated dependencies [0bd7759]
+- Updated dependencies [b21dacf]
+  - @triplit/client@0.3.13
+  - @triplit/db@0.3.13
+  - @triplit/console@0.3.14
+  - @triplit/server@0.3.14
+
+## 0.3.14
+
+### Patch Changes
+
+- d9831f5: Handle schemaless case in `triplit seed`
+- Updated dependencies [f2b0f1f]
+  - @triplit/db@0.3.12
+  - @triplit/client@0.3.12
+  - @triplit/console@0.3.13
+  - @triplit/server@0.3.13
+
+## 0.3.13
+
+### Patch Changes
+
+- fd213a5: add 'seed' command for easy remote database seeding
+- Updated dependencies [9e222c8]
+- Updated dependencies [ed225fd]
+- Updated dependencies [fd213a5]
+  - @triplit/db@0.3.11
+  - @triplit/client@0.3.11
+  - @triplit/console@0.3.12
+  - @triplit/server@0.3.12
+
 ## 0.3.12
 
 ### Patch Changes

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import dotenv from 'dotenv';
-dotenv.config();
+import dotenvExpand from 'dotenv-expand';
+dotenvExpand.expand(dotenv.config());
 import {
   bgGreenBright,
   bold,
@@ -59,7 +60,7 @@ async function execute(args: string[], flags: {}) {
 
   if (!isCommandInfo(command)) {
     if (commandArgs.length > 0) {
-      console.error('Could not find command: ' + args.join(' '));
+      console.error(red('Could not find command: ' + args.join(' ')));
     }
 
     await printDirectoryHelp(
@@ -69,6 +70,10 @@ async function execute(args: string[], flags: {}) {
     return;
   }
   const cmdDef = await getCommandDefinition(command);
+  if (cmdDef.preRelease && !process.env.ENABLE_PRE_RELEASE) {
+    console.error(`Could not find command: ${bold(cmdDef.name)}.`);
+    return;
+  }
   // @ts-ignore
   if (flags.help || flags.h) {
     printCommandHelp(cmdDef.name, cmdDef);
@@ -81,7 +86,17 @@ async function execute(args: string[], flags: {}) {
     const cmdFlagsDefs = Object.entries(
       (cmdDef.flags as Record<string, Flag>) ?? {}
     );
-    unaliasedFlags = Object.entries(flags).reduce(
+    // Apply defaults to flags if one is provided and the flag is not already set
+    const flagsWithDefaults = cmdFlagsDefs.reduce(
+      (flags, [flagName, flagInput]) => {
+        if ('default' in flagInput && !(flagName in flags)) {
+          flags[flagName] = flagInput.default;
+        }
+        return flags;
+      },
+      flags
+    );
+    unaliasedFlags = Object.entries(flagsWithDefaults).reduce(
       (acc, [flagName, flagInput]) => {
         const flagDef = cmdFlagsDefs.find(
           ([name, { char }]) => name === flagName || char === flagName
@@ -113,6 +128,10 @@ async function execute(args: string[], flags: {}) {
       args: commandArgs,
       ctx,
     });
+    if (typeof result === 'string') {
+      console.error(red(result));
+      process.exit(1);
+    }
     if (result) {
       ctx = { ...ctx, ...result };
     }
@@ -132,6 +151,8 @@ async function execute(args: string[], flags: {}) {
         [name]: commandArgs,
       };
     }
+  } else {
+    parsedCommandArgs = commandArgs;
   }
 
   const result = await cmdDef.run({
@@ -146,7 +167,10 @@ async function execute(args: string[], flags: {}) {
 
 async function printDirectoryHelp(name: string, commands: CommandTree) {
   console.log(`Available commands for ${bold(name)}`);
-  const commandDefs = await getCommandsWithDefinition(commands, []);
+  let commandDefs = await getCommandsWithDefinition(commands, []);
+  if (!process.env.ENABLE_PRE_RELEASE) {
+    commandDefs = commandDefs.filter((cmd) => !cmd.preRelease);
+  }
   console.log(
     commandDefs
       .map((cmd) => `  ${bold(cmd.name)} - ${cmd.description}`)

@@ -3,43 +3,58 @@ import {
   InvalidSetTypeError,
   NotImplementedError,
   DBSerializationError,
+  JSONValueParseError,
+  JSToJSONValueParseError,
 } from '../errors.js';
 import { TimestampType, ValueType } from './base.js';
 import { CollectionInterface } from './collection.js';
 import {
   CollectionAttributeDefinition,
+  UserTypeOptions,
   VALUE_TYPE_KEYS,
   ValueAttributeDefinition,
 } from './serialization.js';
 import { ExtractJSType } from './type.js';
 import { ChangeTracker } from '../db-transaction.js';
+import { TypeWithOptions } from './value.js';
 
 const SET_OPERATORS = ['=', '!='] as const;
 type SetOperators = typeof SET_OPERATORS;
 
-export type SetType<Items extends ValueType<any>> = CollectionInterface<
+export type SetType<
+  Items extends ValueType<any>,
+  TypeOptions extends UserTypeOptions = {}
+> = CollectionInterface<
   'set',
-  Set<ExtractJSType<Items>>,
+  TypeWithOptions<Set<ExtractJSType<Items>>, TypeOptions>,
   Record<string, boolean>,
   Record<string, [boolean, TimestampType]>, // TODO: should be based on the type of the key
   SetOperators
 >;
 
-export function SetType<Items extends ValueType<any>>(
-  items: Items
-): SetType<Items> {
+export function SetType<
+  Items extends ValueType<any>,
+  TypeOptions extends UserTypeOptions = {}
+>(
+  items: Items,
+  options: TypeOptions = {} as TypeOptions
+): SetType<Items, TypeOptions> {
   if (!VALUE_TYPE_KEYS.includes(items.type))
     throw new InvalidSetTypeError(items.type);
   if (items.options?.nullable)
-    throw new InvalidSchemaOptionsError('Set types cannot be nullable');
+    throw new InvalidSchemaOptionsError(
+      'Set types cannot contain nullable types'
+    );
   return {
     type: 'set',
     items,
+    options,
     supportedOperations: SET_OPERATORS,
     toJSON(): CollectionAttributeDefinition {
       return {
         type: this.type,
         items: this.items.toJSON() as ValueAttributeDefinition,
+        options: this.options,
       };
     },
 
@@ -51,18 +66,24 @@ export function SetType<Items extends ValueType<any>>(
           val,
           invalidReason
         );
+      if (options.nullable && val === null) return null;
       return [...val.values()].reduce((acc, key) => {
         return { ...acc, [key as string]: true };
       }, {});
     },
+    // @ts-ignore
     convertJSONToJS(val: any[]) {
-      if (!Array.isArray(val)) throw new Error('Invalid JSON value for set');
+      if (options.nullable && val === null) return null;
+      if (!Array.isArray(val))
+        throw new JSONValueParseError(`set<${this.items.type}>`, val);
       return new Set(val);
     },
     defaultInput() {
       return new Set();
     },
+    // @ts-ignore
     convertDBValueToJS(val) {
+      if (options.nullable && val === null) return null;
       return new Set(
         Object.entries(val)
           .filter(([_k, v]) => !!v)
@@ -70,12 +91,15 @@ export function SetType<Items extends ValueType<any>>(
       );
     },
     convertJSToJSON(val) {
-      if (!(val instanceof Set)) throw new Error('Invalid JS value for set');
+      if (!(val instanceof Set))
+        throw new JSToJSONValueParseError(`set<${this.items.type}>`, val);
       return [...val.values()];
     },
     validateInput(val: any) {
+      if (options.nullable === true && val === null) return;
       // must be a set
-      if (!(val instanceof Set)) return `Expected Set, got ${typeof val}`;
+      if (!(val instanceof Set))
+        return `Expected Set, got ${betterTypeOf(val)}`;
       const values = Array.from(val.values());
       // cannot have null values
       if (values.includes(null)) return 'Set cannot contain null values';
@@ -96,11 +120,19 @@ export function SetType<Items extends ValueType<any>>(
   };
 }
 
+function betterTypeOf(value: any): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  if (value instanceof Set) return 'set';
+  if (value instanceof Map) return 'map';
+  return typeof value;
+}
+
 class SetUpdateProxy<T> {
   constructor(
     public changeTracker: ChangeTracker,
     private prefix: string,
-    public schema: SetType<ValueType<any>>
+    public schema: SetType<ValueType<any>, any>
   ) {}
   add(value: T) {
     const serializedValue = this.schema.items.convertInputToDBValue(
@@ -150,19 +182,25 @@ function getSetFromChangeTracker(
 export function createSetProxy<T>(
   changeTracker: ChangeTracker,
   propPointer: string,
-  schema: SetType<ValueType<any>>
+  schema: SetType<ValueType<any>, any>
 ): Set<T> {
-  const stringSet = getSetFromChangeTracker(changeTracker, propPointer);
-  const set = new Set(
-    [...stringSet].map(
-      (v) =>
-        schema.items.convertDBValueToJS(
-          // @ts-ignore
-          v
-        ) as T
-    )
-  );
-  const proxy = new SetUpdateProxy<T>(changeTracker, propPointer, schema);
+  let set;
+  if (schema.options.nullable && changeTracker.get(propPointer) === null) {
+    set = new Set<T>();
+  } else {
+    const stringSet = getSetFromChangeTracker(changeTracker, propPointer);
+    set = new Set(
+      [...stringSet].map(
+        (v) =>
+          schema.items.convertDBValueToJS(
+            // @ts-ignore
+            v
+          ) as T
+      )
+    );
+  }
+
+  const updateProxy = new SetUpdateProxy<T>(changeTracker, propPointer, schema);
   return new Proxy(set, {
     get(target, prop) {
       if (
@@ -177,10 +215,10 @@ export function createSetProxy<T>(
         ) {
           if (
             // @ts-ignore
-            proxy[prop]
+            updateProxy[prop]
           ) {
             // @ts-ignore
-            proxy[prop](...args);
+            updateProxy[prop](...args);
           }
 
           const result =

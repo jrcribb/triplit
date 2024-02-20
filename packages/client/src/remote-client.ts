@@ -9,16 +9,26 @@ import {
   createUpdateProxy,
   Attribute,
   Value,
+  TriplitError,
 } from '@triplit/db';
 import {
   ClientFetchResult,
   ClientFetchResultEntity,
   ClientQuery,
   ClientSchema,
+  RemoteClientQueryBuilder,
   prepareFetchByIdQuery,
   prepareFetchOneQuery,
 } from './utils/query.js';
 
+function parseError(error: string) {
+  try {
+    const jsonError = JSON.parse(error);
+    return TriplitError.fromJson(jsonError);
+  } catch (e) {
+    return new TriplitError(error);
+  }
+}
 // Interact with remote via http api, totally separate from your local database
 export class RemoteClient<M extends ClientSchema | undefined> {
   constructor(
@@ -30,8 +40,8 @@ export class RemoteClient<M extends ClientSchema | undefined> {
   }
 
   private async sendRequest(uri: string, method: string, body: any) {
-    if (!this.options.server) throw new Error('No server url provided');
-    if (!this.options.token) throw new Error('No token provided');
+    if (!this.options.server) throw new TriplitError('No server url provided');
+    if (!this.options.token) throw new TriplitError('No token provided');
     const res = await fetch(this.options.server + uri, {
       method,
       headers: {
@@ -40,7 +50,8 @@ export class RemoteClient<M extends ClientSchema | undefined> {
       },
       body: JSON.stringify(body),
     });
-    if (!res.ok) return { data: undefined, error: await res.text() };
+    if (!res.ok)
+      return { data: undefined, error: parseError(await res.text()) };
     return { data: await res.json(), error: undefined };
   }
 
@@ -50,7 +61,7 @@ export class RemoteClient<M extends ClientSchema | undefined> {
     const { data, error } = await this.sendRequest('/fetch', 'POST', {
       query,
     });
-    if (error) throw new Error(error);
+    if (error) throw error;
     return deserializeHTTPFetchResult(query, data.result, this.options.schema);
   }
 
@@ -61,7 +72,7 @@ export class RemoteClient<M extends ClientSchema | undefined> {
     const { data, error } = await this.sendRequest('/fetch', 'POST', {
       query,
     });
-    if (error) throw new Error(error);
+    if (error) throw error;
     const deserialized = deserializeHTTPFetchResult(
       query,
       data.result,
@@ -81,7 +92,7 @@ export class RemoteClient<M extends ClientSchema | undefined> {
     const { data, error } = await this.sendRequest('/fetch', 'POST', {
       query,
     });
-    if (error) throw new Error(error);
+    if (error) throw error;
     const deserialized = deserializeHTTPFetchResult(
       query,
       data.result,
@@ -94,11 +105,38 @@ export class RemoteClient<M extends ClientSchema | undefined> {
     collectionName: CN,
     object: InsertTypeFromModel<ModelFromModels<M, CN>>
   ) {
+    // we need to convert Sets to arrays before sending to the server
+    const schema = this.options.schema?.[collectionName]?.schema;
+    const jsonEntity = schema ? schema!.convertJSToJSON(object) : object;
     const { data, error } = await this.sendRequest('/insert', 'POST', {
       collectionName,
-      entity: object,
+      entity: jsonEntity,
     });
-    if (error) throw new Error(error);
+    if (error) throw error;
+    return data;
+  }
+
+  async bulkInsert(bulk: BulkInsert<M>) {
+    // we need to convert Sets to arrays before sending to the server
+    const jsonBulkInsert = this.options.schema
+      ? Object.fromEntries(
+          Object.entries(bulk).map(([collectionName, entities]) => [
+            collectionName,
+            entities?.map((entity: any) =>
+              this.options.schema![collectionName]?.schema.convertJSToJSON(
+                entity
+              )
+            ),
+          ])
+        )
+      : bulk;
+
+    const { data, error } = await this.sendRequest(
+      '/bulk-insert',
+      'POST',
+      jsonBulkInsert
+    );
+    if (error) throw error;
     return data;
   }
 
@@ -130,7 +168,7 @@ export class RemoteClient<M extends ClientSchema | undefined> {
       entityId,
       patches,
     });
-    if (error) throw new Error(error);
+    if (error) throw error;
     return data;
   }
 
@@ -142,8 +180,14 @@ export class RemoteClient<M extends ClientSchema | undefined> {
       collectionName,
       entityId,
     });
-    if (error) throw new Error(error);
+    if (error) throw error;
     return data;
+  }
+
+  query<CN extends CollectionNameFromModels<M>>(
+    collectionName: CN
+  ): RemoteClientQueryBuilder<M, CN> {
+    return RemoteClientQueryBuilder<M, CN>(collectionName);
   }
 }
 
@@ -169,9 +213,7 @@ function deserializeHTTPEntity<CQ extends ClientQuery<any, any>>(
   const collectionSchema = schema?.[collectionName]?.schema;
 
   const deserializedEntity = collectionSchema
-    ? (collectionSchema.convertDBValueToJS(
-        entity
-      ) as ClientFetchResultEntity<CQ>)
+    ? (collectionSchema.convertJSONToJS(entity) as ClientFetchResultEntity<CQ>)
     : entity;
   if (!include) return deserializedEntity;
   const includeKeys = Object.keys(include);
@@ -200,3 +242,12 @@ function deserializeHTTPEntity<CQ extends ClientQuery<any, any>>(
   }
   return deserializedEntity;
 }
+
+export type BulkInsert<M extends ClientSchema | undefined> =
+  M extends ClientSchema
+    ? {
+        [CN in CollectionNameFromModels<M>]?: InsertTypeFromModel<
+          ModelFromModels<M, CN>
+        >[];
+      }
+    : Record<string, any>;

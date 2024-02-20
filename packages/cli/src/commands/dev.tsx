@@ -38,6 +38,11 @@ export default Command({
       description: 'Watch for schema changes',
       hidden: true,
     }),
+    verbose: Flag.Boolean({
+      char: 'v',
+      description: 'Verbose logging',
+      hidden: true,
+    }),
   },
   async run({ flags }) {
     const consolePort = flags.consolePort || 6542;
@@ -88,6 +93,7 @@ export default Command({
         schema,
       },
       watchMode: !!flags.watch,
+      verboseLogs: !!flags.verbose,
     });
     let watcher: chokidar.FSWatcher | undefined = undefined;
     let remoteSchemaUnsubscribe = undefined;
@@ -217,15 +223,20 @@ export default Command({
           <Box flexDirection="column" gap={1}>
             <Box flexDirection="column">
               <Text bold underline>
-                Service Key
+                Service Token
               </Text>
               <Text wrap="end">{serviceKey}</Text>
             </Box>
             <Box flexDirection="column">
               <Text bold underline>
-                Anon Token
+                Anonymous Token
               </Text>
               <Text wrap="end">{anonKey}</Text>
+            </Box>
+            <Box flexDirection="column">
+              <Text bold underline>
+                Logs {flags.verbose ? '(verbose)' : ''}
+              </Text>
             </Box>
           </Box>
         </Box>

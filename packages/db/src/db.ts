@@ -135,7 +135,7 @@ export interface DBConfig<M extends Models<any, any> | undefined> {
 }
 
 export const DEFAULT_STORE_KEY = 'default';
-const QUERY_CACHE_ENABLED = true;
+const QUERY_CACHE_ENABLED = false;
 
 export type CollectionFromModels<
   M extends Models<any, any> | undefined,
@@ -173,6 +173,7 @@ export interface DBFetchOptions {
   skipRules?: boolean;
   scope?: string[];
   stateVector?: Map<string, number>;
+  noCache?: boolean;
 }
 
 export function ruleToTuple(
@@ -205,7 +206,6 @@ export type FetchByIdQueryParams<
 type SchemaChangeCallback<M extends Models<any, any> | undefined> = (
   schema: StoreSchema<M> | undefined
 ) => void;
-
 
 type TxOutput<Output> = {
   txId: string | undefined;
@@ -404,6 +404,7 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     beforeUpdate: [],
     beforeDelete: [],
   };
+  private _pendingSchemaRequest: Promise<void> | null;
 
   constructor({
     schema,
@@ -430,6 +431,7 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
       ? { version: schema.version ?? 0, collections: schema.collections }
       : undefined;
 
+    this._pendingSchemaRequest = null;
     this.tripleStore = new TripleStore({
       storage: sourcesMap,
       tenantId,
@@ -463,10 +465,18 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
         this.tripleStore.tupleStore.subscribe(
           { prefix: ['EAT', appendCollectionToId('_metadata', '_schema')] },
           async (storeWrites) => {
+            // If there are deletes clear cached data and update if there are sets
+            // NOTE: IF WE ADD GARBAGE COLLECITON ENSURE THIS IS STILL CORRECT
+            if (Object.values(storeWrites).some((w) => !!w.remove?.length)) {
+              this.schema = undefined;
+              this._schema = undefined;
+            }
+
             // This assumes we are properly using tombstoning, so only looking at set operations
             const schemaTriples = Object.values(storeWrites).flatMap(
               (w) => w.set?.map((s) => indexToTriple(s)) ?? []
             );
+            if (!schemaTriples.length) return;
 
             // Initialize schema entity
             if (!this._schema) {
@@ -590,8 +600,11 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
 
   async getSchema(): Promise<StoreSchema<M> | undefined> {
     await this.ensureMigrated;
+    if (this._pendingSchemaRequest) await this._pendingSchemaRequest;
     if (!this._schema) {
-      await this.loadSchemaData();
+      this._pendingSchemaRequest = this.loadSchemaData();
+      await this._pendingSchemaRequest;
+      this._pendingSchemaRequest = null;
     }
     return this.schema;
   }
@@ -639,7 +652,8 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
       {
         schema: (await this.getSchema())?.collections,
         includeTriples: false,
-        cache: QUERY_CACHE_ENABLED ? this.cache : undefined,
+        cache:
+          QUERY_CACHE_ENABLED && !options?.noCache ? this.cache : undefined,
       }
     );
   }

@@ -1,5 +1,84 @@
 # @triplit/react
 
+## 0.3.21
+
+### Patch Changes
+
+- Updated dependencies [e0334d1]
+  - @triplit/client@0.3.21
+
+## 0.3.20
+
+### Patch Changes
+
+- @triplit/client@0.3.20
+
+## 0.3.19
+
+### Patch Changes
+
+- Updated dependencies [3fe5761]
+  - @triplit/client@0.3.19
+
+## 0.3.18
+
+### Patch Changes
+
+- @triplit/client@0.3.18
+
+## 0.3.17
+
+### Patch Changes
+
+- 9898891: fixup query used in useEntity hook
+- Updated dependencies [9898891]
+  - @triplit/client@0.3.17
+
+## 0.3.16
+
+### Patch Changes
+
+- Updated dependencies [962cbfc]
+  - @triplit/client@0.3.16
+
+## 0.3.15
+
+### Patch Changes
+
+- Updated dependencies [7d75647]
+  - @triplit/client@0.3.15
+
+## 0.3.14
+
+### Patch Changes
+
+- Updated dependencies [195c4a8]
+- Updated dependencies [195c4a8]
+  - @triplit/client@0.3.14
+
+## 0.3.13
+
+### Patch Changes
+
+- 0bd7759: Improve indexeddb performance and prevent ghost attributes from deleted entities
+- Updated dependencies [78edb1d]
+- Updated dependencies [0bd7759]
+- Updated dependencies [b21dacf]
+  - @triplit/client@0.3.13
+
+## 0.3.12
+
+### Patch Changes
+
+- @triplit/client@0.3.12
+
+## 0.3.11
+
+### Patch Changes
+
+- Updated dependencies [fd213a5]
+  - @triplit/client@0.3.11
+
 ## 0.3.10
 
 ### Patch Changes

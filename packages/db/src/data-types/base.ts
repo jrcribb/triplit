@@ -39,7 +39,7 @@ export type ValueType<TO extends UserTypeOptions> =
   | DateType<TO>;
 export type DataType =
   | ValueType<any>
-  | SetType<ValueType<any>>
+  | SetType<ValueType<any>, any>
   | RecordType<{ [k: string]: DataType }>
   | QueryType<any, any>;
 
@@ -94,7 +94,10 @@ export function typeFromJSON(serializedType?: AttributeDefinition): DataType {
     case 'date':
       return DateType(serializedType.options);
     case 'set':
-      return SetType(typeFromJSON(serializedType.items));
+      return SetType(
+        typeFromJSON(serializedType.items),
+        serializedType.options
+      );
     case 'query':
       return QueryType(serializedType.query, serializedType.cardinality);
     case 'record':

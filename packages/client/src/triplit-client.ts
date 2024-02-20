@@ -11,6 +11,7 @@ import {
   InsertTypeFromModel,
   Storage,
   FetchByIdQueryParams,
+  FetchResult,
 } from '@triplit/db';
 import { getUserId } from './token.js';
 import { UnrecognizedFetchPolicyError } from './errors.js';
@@ -135,6 +136,8 @@ export interface ClientOptions<M extends ClientSchema | undefined> {
     fetch?: FetchOptions;
     subscription?: SubscriptionOptions;
   };
+
+  autoConnect?: boolean;
 }
 
 // default policy is local-and-remote and no timeout
@@ -170,6 +173,7 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
       storage,
       defaultQueryOptions,
     } = options ?? {};
+    const autoConnect = options?.autoConnect ?? true;
     const clock = new DurableClock('cache', clientId);
     this.authOptions = { token, claimsPath };
     this.db = new DB({
@@ -196,7 +200,7 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
       ...(serverUrl ? mapServerUrlToSyncOptions(serverUrl) : {}),
     };
 
-    this.remote = new RemoteClient({
+    this.remote = new RemoteClient<M>({
       server: serverUrl,
       token,
       schema: this.db.schema?.collections,
@@ -215,8 +219,9 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
     }
 
     this.syncEngine = new SyncEngine(syncOptions, this.db);
+    // Look into how calling connect / disconnect early is handled
     this.db.ensureMigrated.then(() => {
-      this.syncEngine.connect();
+      if (autoConnect) this.syncEngine.connect();
     });
   }
 
@@ -393,8 +398,16 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
     let unsubscribeLocal = () => {};
     let unsubscribeRemote = () => {};
     let hasRemoteFulfilled = false;
-    const clientSubscriptionCallback = (results: any) =>
+    let fulfilledTimeout: NodeJS.Timeout | number | null = null;
+    let results: FetchResult<CQ>;
+    const clientSubscriptionCallback = (newResults: FetchResult<CQ>) => {
+      results = newResults;
+      if (fulfilledTimeout !== null) {
+        clearTimeout(fulfilledTimeout);
+        fulfilledTimeout = null;
+      }
       onResults(results as ClientFetchResult<CQ>, { hasRemoteFulfilled });
+    };
     unsubscribeLocal = this.db.subscribe(
       query,
       clientSubscriptionCallback,
@@ -407,10 +420,15 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
     if (scope.includes('cache')) {
       const onFulfilled = () => {
         hasRemoteFulfilled = true;
-        opts.onRemoteFulfilled?.();
-        // TODO we should manually call the db subscription callback with
-        // the remote status just in case there are no new results but
-        // we also don't want to call it with stale results
+        if (fulfilledTimeout !== null) {
+          clearTimeout(fulfilledTimeout);
+        }
+        // This is a hack to make sure we don't call onRemoteFulfilled before
+        // the local subscription callback has had a chance to refire
+        fulfilledTimeout = setTimeout(() => {
+          onResults(results as ClientFetchResult<CQ>, { hasRemoteFulfilled });
+          opts.onRemoteFulfilled?.();
+        }, 250);
       };
       unsubscribeRemote = this.syncEngine.subscribe(query, onFulfilled);
     }
