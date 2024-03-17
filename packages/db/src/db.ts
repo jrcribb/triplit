@@ -4,15 +4,12 @@ import {
   Models,
   InsertTypeFromModel,
   timestampedSchemaToSchema,
-  Schema,
 } from './schema.js';
 import { AsyncTupleStorageApi, TupleStorageApi } from '@triplit/tuple-database';
 import CollectionQueryBuilder, {
   fetch,
   FetchResult,
   FetchResultEntity,
-  MaybeReturnTypeFromQuery,
-  ReturnTypeFromQuery,
   subscribe,
   subscribeTriples,
 } from './collection-query.js';
@@ -45,8 +42,7 @@ import {
 } from './data-types/serialization.js';
 import { copyHooks, triplesToObject } from './utils.js';
 import { EAV, indexToTriple, TripleRow } from './triple-store-utils.js';
-import { TripleStore, TripleStoreApi } from './triple-store.js';
-import { TripleStoreTransaction } from './triple-store-transaction.js';
+import { TripleStore } from './triple-store.js';
 
 export interface Rule<M extends Model<any>> {
   filter: QueryWhere<M>;
@@ -71,12 +67,18 @@ export type CreateCollectionOperation = [
     name: string;
     schema: { [path: string]: AttributeDefinition };
     rules?: CollectionRules<any>;
+    optional?: string[];
   }
 ];
 export type DropCollectionOperation = ['drop_collection', { name: string }];
 export type AddAttributeOperation = [
   'add_attribute',
-  { collection: string; path: string[]; attribute: AttributeDefinition }
+  {
+    collection: string;
+    path: string[];
+    attribute: AttributeDefinition;
+    optional?: boolean;
+  }
 ];
 export type DropAttributeOperation = [
   'drop_attribute',
@@ -98,6 +100,10 @@ export type DropRuleOperation = [
   'drop_rule',
   { collection: string; scope: string; id: string }
 ];
+export type SetAttributeOptionalOperation = [
+  'set_attribute_optional',
+  { collection: string; path: string[]; optional: boolean }
+];
 
 type DBOperation =
   | CreateCollectionOperation
@@ -107,7 +113,8 @@ type DBOperation =
   | AlterAttributeOptionOperation
   | DropAttributeOptionOperation
   | AddRuleOperation
-  | DropRuleOperation;
+  | DropRuleOperation
+  | SetAttributeOptionalOperation;
 
 export type Migration = {
   up: DBOperation[];
@@ -639,10 +646,14 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
 
   async fetch<Q extends CollectionQuery<M, any>>(
     query: Q,
-    options: DBFetchOptions = {}
+    options: DBFetchOptions = { noCache: true }
   ) {
     await this.ensureMigrated;
-    const { query: fetchQuery } = await prepareQuery(this, query, options);
+    const schema = (await this.getSchema())?.collections as M;
+    const fetchQuery = prepareQuery(query, schema, {
+      skipRules: options.skipRules,
+      variables: this.variables,
+    });
 
     return await fetch<M, Q>(
       options.scope
@@ -650,10 +661,11 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
         : this.tripleStore,
       fetchQuery,
       {
-        schema: (await this.getSchema())?.collections,
+        schema,
         includeTriples: false,
         cache:
           QUERY_CACHE_ENABLED && !options?.noCache ? this.cache : undefined,
+        skipRules: options.skipRules,
       }
     );
   }
@@ -663,7 +675,11 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     options: DBFetchOptions = {}
   ) {
     await this.ensureMigrated;
-    const { query: fetchQuery } = await prepareQuery(this, query, options);
+    const schema = (await this.getSchema())?.collections as M;
+    const fetchQuery = prepareQuery(query, schema, {
+      skipRules: options.skipRules,
+      variables: this.variables,
+    });
     return [
       ...(
         await fetch<M, Q>(
@@ -672,8 +688,9 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
             : this.tripleStore,
           fetchQuery,
           {
-            schema: (await this.getSchema())?.collections,
+            schema: schema,
             includeTriples: true,
+            stateVector: options.stateVector,
           }
         )
       ).triples.values(),
@@ -734,11 +751,11 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
   ) {
     const startSubscription = async () => {
       await this.ensureMigrated;
-      let { query: subscriptionQuery } = await prepareQuery(
-        this,
-        query,
-        options
-      );
+      const schema = (await this.getSchema())?.collections as M;
+      let subscriptionQuery = prepareQuery(query, schema, {
+        skipRules: options.skipRules,
+        variables: this.variables,
+      });
 
       const unsub = subscribe<M, Q>(
         options.scope
@@ -747,7 +764,8 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
         subscriptionQuery,
         onResults,
         onError,
-        (await this.getSchema())?.collections
+        schema,
+        { skipRules: options.skipRules, stateVector: options.stateVector }
       );
       return unsub;
     };
@@ -768,11 +786,11 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
   ) {
     const startSubscription = async () => {
       await this.ensureMigrated;
-      let { query: subscriptionQuery } = await prepareQuery(
-        this,
-        query,
-        options
-      );
+      const schema = (await this.getSchema())?.collections as M;
+      let subscriptionQuery = prepareQuery(query, schema, {
+        skipRules: options.skipRules,
+        variables: this.variables,
+      });
 
       const unsub = subscribeTriples<M, Q>(
         options.scope
@@ -781,8 +799,8 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
         subscriptionQuery,
         (tripMap) => onResults([...tripMap.values()].flat()),
         onError,
-        (await this.getSchema())?.collections,
-        options.stateVector
+        schema,
+        { skipRules: options.skipRules, stateVector: options.stateVector }
       );
       return unsub;
     };
@@ -864,6 +882,12 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     });
   }
 
+  async setAttributeOptional(params: SetAttributeOptionalOperation[1]) {
+    await this.transact(async (tx) => {
+      await tx.setAttributeOptional(params);
+    });
+  }
+
   private async applySchemaMigration(
     migration: Migration,
     direction: 'up' | 'down',
@@ -904,6 +928,9 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
               break;
             case 'drop_rule':
               await tx.dropRule(operation[1]);
+              break;
+            case 'set_attribute_optional':
+              await tx.setAttributeOptional(operation[1]);
               break;
             default:
               throw new InvalidMigrationOperationError(

@@ -18,7 +18,7 @@ import { ExtractJSType } from './type.js';
 import { ChangeTracker } from '../db-transaction.js';
 import { TypeWithOptions } from './value.js';
 
-const SET_OPERATORS = ['=', '!='] as const;
+const SET_OPERATORS = ['=', '!=', 'has', '!has'] as const;
 type SetOperators = typeof SET_OPERATORS;
 
 export type SetType<
@@ -47,9 +47,10 @@ export function SetType<
     );
   return {
     type: 'set',
+    supportedOperations: SET_OPERATORS,
+    context: {},
     items,
     options,
-    supportedOperations: SET_OPERATORS,
     toJSON(): CollectionAttributeDefinition {
       return {
         type: this.type,
@@ -79,6 +80,8 @@ export function SetType<
       return new Set(val);
     },
     defaultInput() {
+      // TODO: support user defined defaults
+      if (this.context.optional) return undefined;
       return new Set();
     },
     // @ts-ignore
@@ -91,6 +94,7 @@ export function SetType<
       );
     },
     convertJSToJSON(val) {
+      if (options.nullable && val === null) return null;
       if (!(val instanceof Set))
         throw new JSToJSONValueParseError(`set<${this.items.type}>`, val);
       return [...val.values()];
@@ -172,7 +176,15 @@ function getSetFromChangeTracker(
   changeTracker: ChangeTracker,
   setPointer: string
 ) {
-  const baseValues = Object.entries(changeTracker.get(setPointer))
+  const currentSet = changeTracker.get(setPointer);
+
+  // Handles both nullable sets and a set that hasnt been defined yet (ie data migrations)
+  if (!currentSet) {
+    return new Set();
+  }
+
+  const baseValues = Object.entries(currentSet)
+
     .filter(([_k, v]) => !!v)
     .map(([k, _v]) => k);
 
@@ -184,21 +196,16 @@ export function createSetProxy<T>(
   propPointer: string,
   schema: SetType<ValueType<any>, any>
 ): Set<T> {
-  let set;
-  if (schema.options.nullable && changeTracker.get(propPointer) === null) {
-    set = new Set<T>();
-  } else {
-    const stringSet = getSetFromChangeTracker(changeTracker, propPointer);
-    set = new Set(
-      [...stringSet].map(
-        (v) =>
-          schema.items.convertDBValueToJS(
-            // @ts-ignore
-            v
-          ) as T
-      )
-    );
-  }
+  const stringSet = getSetFromChangeTracker(changeTracker, propPointer);
+  const set = new Set(
+    [...stringSet].map(
+      (v) =>
+        schema.items.convertDBValueToJS(
+          // @ts-ignore
+          v
+        ) as T
+    )
+  );
 
   const updateProxy = new SetUpdateProxy<T>(changeTracker, propPointer, schema);
   return new Proxy(set, {

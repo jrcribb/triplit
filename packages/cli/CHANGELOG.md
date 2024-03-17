@@ -1,5 +1,113 @@
 # @triplit/cli
 
+## 0.3.33
+
+### Patch Changes
+
+- 4844c5d: add project manage command
+- be76fc9: fixup description for clear command
+- Updated dependencies [10b4249]
+- Updated dependencies [3989757]
+- Updated dependencies [3989757]
+- Updated dependencies [3989757]
+  - @triplit/client@0.3.28
+  - @triplit/db@0.3.24
+  - @triplit/server-core@0.3.27
+  - @triplit/console@0.3.31
+  - @triplit/server@0.3.27
+
+## 0.3.32
+
+### Patch Changes
+
+- Updated dependencies [aff9054]
+  - @triplit/client@0.3.27
+  - @triplit/console@0.3.30
+
+## 0.3.31
+
+### Patch Changes
+
+- 2916748: disable subscription check for deploy command
+- 1c2a894: add clear remote db command
+- 99c705a: add link and project create commands
+- Updated dependencies [a049f47]
+- Updated dependencies [a049f47]
+- Updated dependencies [66705ae]
+- Updated dependencies [a049f47]
+  - @triplit/server-core@0.3.26
+  - @triplit/client@0.3.26
+  - @triplit/console@0.3.29
+  - @triplit/db@0.3.23
+  - @triplit/server@0.3.26
+
+## 0.3.30
+
+### Patch Changes
+
+- Updated dependencies [dba43e3]
+- Updated dependencies [557e10f]
+- Updated dependencies [2d41a65]
+  - @triplit/console@0.3.28
+  - @triplit/db@0.3.22
+  - @triplit/client@0.3.25
+  - @triplit/server@0.3.25
+  - @triplit/server-core@0.3.25
+
+## 0.3.29
+
+### Patch Changes
+
+- 45e09f7: add message pointing cli users to dashboard on successful deployment
+- Updated dependencies [25ba609]
+- Updated dependencies [3d36ab6]
+  - @triplit/db@0.3.21
+  - @triplit/client@0.3.24
+  - @triplit/console@0.3.27
+  - @triplit/server@0.3.24
+  - @triplit/server-core@0.3.24
+
+## 0.3.28
+
+### Patch Changes
+
+- 6a25f68: point to prod api server
+- c684c0a: point to dashboard in upgrade cmd
+- 9e1e0aa: add REST api to v2 worker
+- Updated dependencies [e01131d]
+- Updated dependencies [b07bba6]
+- Updated dependencies [b26a16b]
+- Updated dependencies [b07bba6]
+  - @triplit/console@0.3.26
+  - @triplit/db@0.3.20
+  - @triplit/server-core@0.3.23
+  - @triplit/client@0.3.23
+  - @triplit/server@0.3.23
+
+## 0.3.27
+
+### Patch Changes
+
+- 944ac26: fixup seed creation option
+- aff7f7f: add support for optional attributes
+- 016fbd8: Add schema viewing commands
+- Updated dependencies [2ab8039]
+- Updated dependencies [f248061]
+- Updated dependencies [aff7f7f]
+- Updated dependencies [6aebafe]
+- Updated dependencies [00fbea0]
+- Updated dependencies [71504b0]
+- Updated dependencies [1b8bb22]
+- Updated dependencies [1ef3f46]
+- Updated dependencies [a38389c]
+- Updated dependencies [2ab8039]
+- Updated dependencies [fd652f7]
+  - @triplit/console@0.3.25
+  - @triplit/db@0.3.19
+  - @triplit/server-core@0.3.22
+  - @triplit/client@0.3.22
+  - @triplit/server@0.3.22
+
 ## 0.3.26
 
 ### Patch Changes

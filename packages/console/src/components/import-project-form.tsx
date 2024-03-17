@@ -1,38 +1,15 @@
 import { Button, PasswordInput, Input, FormField } from '@triplit/ui';
 import { useForm } from '@mantine/form';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   getProjectIdFromApiKey,
   JWTPayloadIsOfCorrectForm,
 } from '../utils/server';
-import { consoleClient, formConsolePrimaryKey } from '../../triplit/client';
-import { TokenReadError } from '@triplit/server-core';
 
 export interface ImportProjectFormValues {
   token: string;
   displayName: string;
   server: string;
-}
-
-export async function addProjectToConsole(formValues: ImportProjectFormValues) {
-  const { displayName, token, server } = formValues;
-  try {
-    const projectId = getProjectIdFromApiKey(token);
-    const [protocol, origin] = server.split('://');
-    const primaryKey = formConsolePrimaryKey(projectId, server);
-    await consoleClient.insert('projects', {
-      displayName,
-      token,
-      projectId,
-      server: origin,
-      secure: protocol === 'https',
-      id: primaryKey,
-    });
-    return primaryKey;
-  } catch (e) {
-    console.error(e);
-    throw new TokenReadError();
-  }
 }
 
 export function ImportProjectForm({
@@ -42,17 +19,21 @@ export function ImportProjectForm({
   onSubmit: (values: ImportProjectFormValues) => void;
   projectHint?: ImportProjectFormValues;
 }) {
-  const [imported, setImported] = useState(false);
   const {
     token: tokenHint,
     server: serverHint,
     displayName: displayNameHint,
   } = projectHint ?? {};
+
+  const [imported, setImported] = useState(
+    tokenHint && JWTPayloadIsOfCorrectForm(tokenHint)
+  );
+
   const form = useForm<ImportProjectFormValues>({
     initialValues: {
-      token: '',
-      displayName: '',
-      server: '',
+      token: tokenHint ?? '',
+      displayName: displayNameHint ?? '',
+      server: serverHint ?? '',
     },
 
     validate: {
@@ -64,27 +45,13 @@ export function ImportProjectForm({
       displayName: (value) =>
         value.length < 3 ? 'Display name is too short' : null,
     },
+    initialErrors: {
+      token:
+        tokenHint && !JWTPayloadIsOfCorrectForm(tokenHint)
+          ? 'Service token has malformed metadata, please check that it is correct'
+          : null,
+    },
   });
-
-  useEffect(() => {
-    if (!projectHint) return;
-    if (
-      form.values.token === tokenHint &&
-      form.values.server === serverHint &&
-      form.values.displayName === displayNameHint
-    ) {
-      return;
-    }
-    form.setValues(projectHint ?? {});
-    if (tokenHint && JWTPayloadIsOfCorrectForm(tokenHint)) {
-      setImported(true);
-    } else {
-      form.setFieldError(
-        'token',
-        'Service token has malformed metadata, please check that it is correct'
-      );
-    }
-  }, [projectHint, tokenHint, serverHint, displayNameHint, form]);
 
   const importSecretKey = useCallback(() => {
     try {

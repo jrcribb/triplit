@@ -10,6 +10,11 @@ import {
   Attribute,
   Value,
   TriplitError,
+  EntityId,
+  constructEntity,
+  TripleRow,
+  timestampedObjectToPlainObject,
+  appendCollectionToId,
 } from '@triplit/db';
 import {
   ClientFetchResult,
@@ -29,13 +34,24 @@ function parseError(error: string) {
     return new TriplitError(error);
   }
 }
+
+export type RemoteClientOptions<M extends ClientSchema | undefined> = {
+  server?: string;
+  token?: string;
+  schema?: M;
+  schemaFactory?: () => M | Promise<M>;
+};
+
 // Interact with remote via http api, totally separate from your local database
 export class RemoteClient<M extends ClientSchema | undefined> {
-  constructor(
-    public options: { server?: string; token?: string; schema?: M }
-  ) {}
+  constructor(private options: RemoteClientOptions<M>) {}
 
-  updateOptions(options: { server?: string; token?: string; schema?: M }) {
+  // Hack: use schemaFactory to get schema if it's not ready from provider
+  private async schema() {
+    return this.options.schema || (await this.options.schemaFactory?.());
+  }
+
+  updateOptions(options: RemoteClientOptions<M>) {
     this.options = { ...this.options, ...options };
   }
 
@@ -62,7 +78,17 @@ export class RemoteClient<M extends ClientSchema | undefined> {
       query,
     });
     if (error) throw error;
-    return deserializeHTTPFetchResult(query, data.result, this.options.schema);
+    return deserializeHTTPFetchResult(query, data.result, await this.schema());
+  }
+
+  private async queryTriples<CQ extends ClientQuery<M, any>>(
+    query: CQ
+  ): Promise<TripleRow[]> {
+    const { data, error } = await this.sendRequest('/queryTriples', 'POST', {
+      query,
+    });
+    if (error) throw error;
+    return data;
   }
 
   async fetchOne<CQ extends ClientQuery<M, any>>(
@@ -76,7 +102,7 @@ export class RemoteClient<M extends ClientSchema | undefined> {
     const deserialized = deserializeHTTPFetchResult(
       query,
       data.result,
-      this.options.schema
+      await this.schema()
     );
     const entity = [...deserialized.values()][0];
     if (!entity) return null;
@@ -96,7 +122,7 @@ export class RemoteClient<M extends ClientSchema | undefined> {
     const deserialized = deserializeHTTPFetchResult(
       query,
       data.result,
-      this.options.schema
+      await this.schema()
     );
     return deserialized.get(id);
   }
@@ -106,8 +132,19 @@ export class RemoteClient<M extends ClientSchema | undefined> {
     object: InsertTypeFromModel<ModelFromModels<M, CN>>
   ) {
     // we need to convert Sets to arrays before sending to the server
-    const schema = this.options.schema?.[collectionName]?.schema;
-    const jsonEntity = schema ? schema!.convertJSToJSON(object) : object;
+    const schema = await this.schema();
+    const collectionSchema = schema?.[collectionName]?.schema;
+    const jsonEntity = collectionSchema
+      ? Object.fromEntries(
+          Object.entries(object).map(([attribute, value]) => [
+            attribute,
+            collectionSchema.properties[attribute].convertJSToJSON(
+              value,
+              schema
+            ),
+          ])
+        )
+      : object;
     const { data, error } = await this.sendRequest('/insert', 'POST', {
       collectionName,
       entity: jsonEntity,
@@ -118,13 +155,19 @@ export class RemoteClient<M extends ClientSchema | undefined> {
 
   async bulkInsert(bulk: BulkInsert<M>) {
     // we need to convert Sets to arrays before sending to the server
-    const jsonBulkInsert = this.options.schema
+    const schema = await this.schema();
+    const jsonBulkInsert = schema
       ? Object.fromEntries(
           Object.entries(bulk).map(([collectionName, entities]) => [
             collectionName,
             entities?.map((entity: any) =>
-              this.options.schema![collectionName]?.schema.convertJSToJSON(
-                entity
+              Object.fromEntries(
+                Object.entries(entity).map(([attribute, value]) => [
+                  attribute,
+                  schema[collectionName]?.schema.properties[
+                    attribute
+                  ].convertJSToJSON(value, schema),
+                ])
               )
             ),
           ])
@@ -140,6 +183,22 @@ export class RemoteClient<M extends ClientSchema | undefined> {
     return data;
   }
 
+  async insertTriples(triples: any[]) {
+    const { data, error } = await this.sendRequest('/insert-triples', 'POST', {
+      triples,
+    });
+    if (error) throw error;
+    return data;
+  }
+
+  async deleteTriples(entityAttributes: [EntityId, Attribute][]) {
+    const { data, error } = await this.sendRequest('/delete-triples', 'POST', {
+      entityAttributes,
+    });
+    if (error) throw error;
+    return data;
+  }
+
   async update<CN extends CollectionNameFromModels<M>>(
     collectionName: CN,
     entityId: string,
@@ -147,13 +206,28 @@ export class RemoteClient<M extends ClientSchema | undefined> {
       entity: UpdateTypeFromModel<ModelFromModels<M, CN>>
     ) => void | Promise<void>
   ) {
-    const collectionSchema = this.options.schema?.[collectionName]?.schema;
-    const entity = {};
-    const changes = new ChangeTracker(entity);
+    /**
+     * This queries the current entity so we can construct "patches"
+     * Patches are basically tuples (ie triples w/o timestamps), so we should just call them tuples
+     * The way our updater works right now, non assignment operations (ie set.add(), etc) should have their value loaded as to not conflict with possibly "undefined" values in the proxy
+     * We should refactor this though, because we shouldnt require pre-loading data to make an update (@wernst has some ideas)
+     */
+    const schema = await this.schema();
+    const collectionSchema = schema?.[collectionName]?.schema;
+    const entityQuery = prepareFetchByIdQuery<M, CN>(collectionName, entityId);
+    const triples = await this.queryTriples(entityQuery);
+    // TODO we should handle errors or non-existent entities
+    const entity = constructEntity(
+      triples,
+      appendCollectionToId(collectionName, entityId)
+    );
+    const entityData = timestampedObjectToPlainObject(entity?.data as any);
+    const changes = new ChangeTracker(entityData);
     const updateProxy: any = createUpdateProxy(
       changes,
-      entity,
-      collectionSchema
+      entityData,
+      schema,
+      collectionName
     );
     await updater(updateProxy);
     const changeTuples = changes.getTuples();
@@ -213,33 +287,11 @@ function deserializeHTTPEntity<CQ extends ClientQuery<any, any>>(
   const collectionSchema = schema?.[collectionName]?.schema;
 
   const deserializedEntity = collectionSchema
-    ? (collectionSchema.convertJSONToJS(entity) as ClientFetchResultEntity<CQ>)
+    ? (collectionSchema.convertJSONToJS(
+        entity,
+        schema
+      ) as ClientFetchResultEntity<CQ>)
     : entity;
-  if (!include) return deserializedEntity;
-  const includeKeys = Object.keys(include);
-  if (includeKeys.length === 0) return deserializedEntity;
-  for (const key of includeKeys) {
-    // Get query from schema or from include
-    let cardinality: any;
-    let query: any;
-    if (include[key] === null) {
-      const schemaItem = schema?.[collectionName]?.schema?.properties?.[key];
-      query = schemaItem?.query;
-      cardinality = schemaItem?.cardinality;
-    } else {
-      query = include[key];
-    }
-    if (!query) continue;
-    const relationData =
-      cardinality === 'one'
-        ? deserializeHTTPEntity(query, deserializedEntity[key], schema)
-        : deserializeHTTPFetchResult(
-            query, // could be null (part of the schema)
-            deserializedEntity[key],
-            schema
-          );
-    deserializedEntity[key] = relationData;
-  }
   return deserializedEntity;
 }
 

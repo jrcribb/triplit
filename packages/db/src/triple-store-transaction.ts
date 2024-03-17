@@ -31,6 +31,7 @@ import {
   TripleStoreBeforeInsertHook,
   TripleStoreAfterCommitHook,
   indexToTriple,
+  findAllClientIds,
 } from './triple-store-utils.js';
 import { copyHooks } from './utils.js';
 
@@ -161,6 +162,10 @@ export class TripleStoreTransaction implements TripleStoreApi {
     );
   }
 
+  findAllClientIds(): Promise<string[]> {
+    return findAllClientIds(this.tupleTx);
+  }
+
   async insertTriple(tripleRow: TripleRow): Promise<void> {
     await this.insertTriples([tripleRow]);
   }
@@ -214,7 +219,6 @@ export class TripleStoreTransaction implements TripleStoreApi {
       const { id: id, attribute, value, timestamp } = triple;
       tx.remove(['EAT', id, attribute, timestamp]);
       tx.remove(['AVE', attribute, value, id, timestamp]);
-      // tx.remove(['VAE', value, attribute, id, timestamp]);
       tx.remove([
         'clientTimestamp',
         timestamp[1],
@@ -297,8 +301,23 @@ export class TripleStoreTransaction implements TripleStoreApi {
 
   async expireEntity(id: EntityId) {
     const existingTriples = await this.findByEntity(id);
+    // reduce triples to just the highest timestamp for each attribute
+    const attributeTimestamps = new Map<string, TripleRow>();
+    for (const triple of existingTriples) {
+      const attributeKey = JSON.stringify(triple.attribute);
+      const currentTimestamp = attributeTimestamps.get(attributeKey)?.timestamp;
+      if (
+        !currentTimestamp ||
+        timestampCompare(triple.timestamp, currentTimestamp) > 0
+      ) {
+        attributeTimestamps.set(attributeKey, triple);
+      }
+    }
     await this.expireEntityAttributes(
-      existingTriples.map(({ attribute, id }) => ({ id, attribute }))
+      [...attributeTimestamps.values()].map(({ attribute, id }) => ({
+        id,
+        attribute,
+      }))
     );
   }
 

@@ -1,5 +1,94 @@
 # @triplit/console
 
+## 0.3.31
+
+### Patch Changes
+
+- Updated dependencies [10b4249]
+- Updated dependencies [3989757]
+- Updated dependencies [3989757]
+- Updated dependencies [3989757]
+  - @triplit/client@0.3.28
+  - @triplit/db@0.3.24
+  - @triplit/server-core@0.3.27
+  - @triplit/react@0.3.28
+
+## 0.3.30
+
+### Patch Changes
+
+- Updated dependencies [aff9054]
+  - @triplit/client@0.3.27
+  - @triplit/react@0.3.27
+
+## 0.3.29
+
+### Patch Changes
+
+- 66705ae: allow deep-linking to console, allowing current state to persist through refreshes
+- Updated dependencies [a049f47]
+- Updated dependencies [a049f47]
+- Updated dependencies [a049f47]
+  - @triplit/server-core@0.3.26
+  - @triplit/client@0.3.26
+  - @triplit/db@0.3.23
+  - @triplit/react@0.3.26
+
+## 0.3.28
+
+### Patch Changes
+
+- dba43e3: fix handling of required attributes with default in create entity form
+- Updated dependencies [557e10f]
+- Updated dependencies [2d41a65]
+  - @triplit/db@0.3.22
+  - @triplit/client@0.3.25
+  - @triplit/server-core@0.3.25
+  - @triplit/react@0.3.25
+
+## 0.3.27
+
+### Patch Changes
+
+- Updated dependencies [25ba609]
+- Updated dependencies [3d36ab6]
+  - @triplit/db@0.3.21
+  - @triplit/client@0.3.24
+  - @triplit/server-core@0.3.24
+  - @triplit/react@0.3.24
+
+## 0.3.26
+
+### Patch Changes
+
+- e01131d: fixup undefined accession error in a schemaless filter
+- Updated dependencies [b07bba6]
+- Updated dependencies [b26a16b]
+- Updated dependencies [b07bba6]
+  - @triplit/db@0.3.20
+  - @triplit/server-core@0.3.23
+  - @triplit/client@0.3.23
+  - @triplit/react@0.3.23
+
+## 0.3.25
+
+### Patch Changes
+
+- 2ab8039: add support for setting values as undefined from console
+- 6aebafe: add basic pagination to console
+- 00fbea0: fixup overflow styles for large amounts of data
+- Updated dependencies [f248061]
+- Updated dependencies [aff7f7f]
+- Updated dependencies [71504b0]
+- Updated dependencies [1b8bb22]
+- Updated dependencies [1ef3f46]
+- Updated dependencies [2ab8039]
+- Updated dependencies [fd652f7]
+  - @triplit/db@0.3.19
+  - @triplit/server-core@0.3.22
+  - @triplit/client@0.3.22
+  - @triplit/react@0.3.22
+
 ## 0.3.24
 
 ### Patch Changes

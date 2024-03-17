@@ -2,6 +2,7 @@ import {
   COLLECTION_TYPE_KEYS,
   VALUE_TYPE_KEYS,
 } from './data-types/serialization.js';
+import { Models } from './schema.js';
 
 export const STATUS_CODES = {
   Success: 200,
@@ -193,11 +194,17 @@ export class NoSchemaRegisteredError extends TriplitError {
   }
 }
 
-export class ModelNotFoundError extends TriplitError {
-  constructor(modelName: string, existingKeys: string[], ...args: any[]) {
+export class CollectionNotFoundError extends TriplitError {
+  constructor(
+    collectionName: string,
+    collections: Models<any, any>,
+    ...args: any[]
+  ) {
     super(...args);
-    this.name = 'ModelNotFoundError';
-    this.baseMessage = `Could not find a model with name ${modelName} in your schema. Valid collections are: [${existingKeys
+    this.name = 'CollectionNotFoundError';
+    this.baseMessage = `Could not find a collection with name ${collectionName} in your schema. Valid collections are: [${Object.keys(
+      collections
+    )
       .map((k) => `'${k}'`)
       .join(', ')}].`;
     this.status = STATUS_CODES['Bad Request'];
@@ -236,17 +243,6 @@ export class InvalidSchemaType extends TriplitError {
     super(...args);
     this.name = 'InvalidSchemaType';
     this.baseMessage = `The type '${type}' is not a valid type for a Triplit schema.`;
-    this.status = STATUS_CODES['Bad Request'];
-  }
-}
-
-export class SchemaPathDoesNotExistError extends TriplitError {
-  constructor(path: string[], ...args: any[]) {
-    super(...args);
-    this.name = 'SchemaPathDoesNotExistError';
-    this.baseMessage = `The path '${path.join(
-      '.'
-    )}' does not exist in the schema.`;
     this.status = STATUS_CODES['Bad Request'];
   }
 }
@@ -375,7 +371,7 @@ export class TripleStoreOptionsError extends TriplitError {
 
 export class QueryClauseFormattingError extends TriplitError {
   constructor(
-    clauseType: 'order' | 'where' | 'select' | 'syncStatus',
+    clauseType: 'order' | 'where' | 'select' | 'syncStatus' | 'after',
     clause: any,
     ...args: any[]
   ) {
@@ -384,6 +380,15 @@ export class QueryClauseFormattingError extends TriplitError {
     this.baseMessage = `The ${clauseType} clause is not formatted correctly.
     
     Received: ${JSON.stringify(clause)}`;
+    this.status = STATUS_CODES['Bad Request'];
+  }
+}
+
+export class AfterClauseWithNoOrderError extends TriplitError {
+  constructor(...args: any[]) {
+    super(...args);
+    this.name = 'AfterClauseWithNoOrderError';
+    this.baseMessage = `The 'after' clause must be used after an 'order' clause.`;
     this.status = STATUS_CODES['Bad Request'];
   }
 }
@@ -460,6 +465,15 @@ export class JSToJSONValueParseError extends TriplitError {
     this.baseMessage = `Failed to tranform to JSON from the provided ${type} input: ${JSON.stringify(
       value
     )}`;
+    this.status = STATUS_CODES['Bad Request'];
+  }
+}
+
+export class InvalidQueryCardinalityError extends TriplitError {
+  constructor(cardinality: string, ...args: any[]) {
+    super(...args);
+    this.name = 'InvalidQueryCardinalityError';
+    this.baseMessage = `The cardinality ${cardinality} is not valid for the query type.`;
     this.status = STATUS_CODES['Bad Request'];
   }
 }

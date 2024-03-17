@@ -2,7 +2,7 @@ import {
   InvalidEntityIdError,
   InvalidInternalEntityIdError,
   InvalidSchemaPathError,
-  ModelNotFoundError,
+  CollectionNotFoundError,
   NoSchemaRegisteredError,
   SessionVariableNotFoundError,
   ValueSchemaMismatchError,
@@ -33,6 +33,11 @@ import { DataType } from './data-types/base.js';
 import { Attribute, Value } from './triple-store-utils.js';
 
 const ID_SEPARATOR = '#';
+
+export interface QueryPreparationOptions {
+  skipRules?: boolean;
+  variables?: Record<string, any>;
+}
 
 export function validateExternalId(id: string): Error | undefined {
   if (!id) {
@@ -87,7 +92,11 @@ export function replaceVariable(
   if (typeof target !== 'string') return target;
   if (!target.startsWith('$')) return target;
   const varKey = target.slice(1);
-  if (!(varKey in variables)) throw new SessionVariableNotFoundError(target);
+  if (!(varKey in variables)) {
+    console.warn(new SessionVariableNotFoundError(target));
+    // TODO should we throw here? or will there be other issues with undefined
+    return undefined;
+  }
   return variables[varKey];
 }
 
@@ -96,7 +105,6 @@ export function replaceVariablesInQuery<
     Pick<CollectionQuery<any, any>, 'where' | 'entityId' | 'vars'>
   >
 >(query: Q): Q {
-  // const variables = { ...(db.variables ?? {}), ...(query.vars ?? {}) };
   const where = query.where
     ? replaceVariablesInFilterStatements(query.where, query.vars ?? {})
     : undefined;
@@ -135,14 +143,12 @@ export function mapFilterStatements<M extends Model<any> | undefined>(
     statement: SubQueryFilter | FilterStatement<M>
   ) => SubQueryFilter | FilterStatement<M>
 ): QueryWhere<M> {
-  return statements.map((filter) => {
-    // TODO this doesn't feel right to just exclude sub-queries here
-    if ('exists' in filter) return filter;
-    if (!(filter instanceof Array) && 'filters' in filter) {
-      filter.filters = mapFilterStatements(filter.filters, mapFunction);
-      return filter;
+  return statements.map((statement) => {
+    if ('exists' in statement) return statement;
+    if (!(statement instanceof Array) && 'filters' in statement) {
+      statement.filters = mapFilterStatements(statement.filters, mapFunction);
     }
-    return mapFunction(filter);
+    return mapFunction(statement as FilterStatement<M>);
   });
 }
 
@@ -188,22 +194,24 @@ export async function overrideStoredSchema(
   tripleStore: TripleStore,
   schema: StoreSchema<Models<any, any>>
 ) {
-  const existingTriples = await tripleStore.findByEntity(
-    appendCollectionToId('_metadata', '_schema')
-  );
-  await tripleStore.deleteTriples(existingTriples);
+  await tripleStore.transact(async (tx) => {
+    const existingTriples = await tx.findByEntity(
+      appendCollectionToId('_metadata', '_schema')
+    );
+    await tx.deleteTriples(existingTriples);
 
-  const triples = schemaToTriples(schema);
-  // TODO use tripleStore.setValues
-  const ts = await tripleStore.clock.getNextTimestamp();
-  const normalizedTriples = triples.map(([e, a, v]) => ({
-    id: e,
-    attribute: a,
-    value: v,
-    timestamp: ts,
-    expired: false,
-  }));
-  await tripleStore.insertTriples(normalizedTriples);
+    const triples = schemaToTriples(schema);
+    // TODO use tripleStore.setValues
+    const ts = await tx.clock.getNextTimestamp();
+    const normalizedTriples = triples.map(([e, a, v]) => ({
+      id: e,
+      attribute: a,
+      value: v,
+      timestamp: ts,
+      expired: false,
+    }));
+    await tx.insertTriples(normalizedTriples);
+  });
 }
 
 export function validateTriple(
@@ -224,7 +232,7 @@ export function validateTriple(
 
   const model = schema[modelName];
   if (!model) {
-    throw new ModelNotFoundError(modelName as string, Object.keys(schema));
+    throw new CollectionNotFoundError(modelName as string, schema);
   }
 
   const valueSchema = getSchemaFromPath(model.schema, path);
@@ -296,19 +304,21 @@ export function mergeQueries<M extends Models<any, any> | undefined>(
   return { ...queryA, ...queryB, where: mergedWhere, select: mergedSelect };
 }
 
-export async function prepareQuery<
+export function prepareQuery<
   M extends Models<any, any> | undefined,
   Q extends CollectionQuery<M, any>
->(tx: DB<M> | DBTransaction<M>, query: Q, options: DBFetchOptions) {
+>(query: Q, schema: M, options: QueryPreparationOptions = {}) {
   let fetchQuery = { ...query };
-  const collectionSchema = await getCollectionSchema(
-    tx,
+  const collectionSchema = schema?.[
     fetchQuery.collectionName
-  );
+  ] as CollectionFromModels<M, any>;
   if (collectionSchema && !options.skipRules) {
     fetchQuery = addReadRulesToQuery<M, Q>(fetchQuery, collectionSchema);
   }
-  fetchQuery.vars = { ...tx.variables, ...(fetchQuery.vars ?? {}) };
+  fetchQuery.vars = {
+    ...(options.variables ?? {}),
+    ...(fetchQuery.vars ?? {}),
+  };
   fetchQuery.where = mapFilterStatements(
     fetchQuery.where ?? [],
     (statement) => {
@@ -318,6 +328,13 @@ export async function prepareQuery<
       return [prop, op, val instanceof Date ? val.toISOString() : val];
     }
   );
+  if (fetchQuery.after)
+    fetchQuery.after = [
+      fetchQuery.after[0] instanceof Date
+        ? fetchQuery.after[0].toISOString()
+        : fetchQuery.after[0],
+      appendCollectionToId(fetchQuery.collectionName, fetchQuery.after[1]),
+    ];
   if (collectionSchema) {
     // If we dont have a field selection, select all fields
     // Helps guard against 'include' injection causing issues as well
@@ -346,21 +363,18 @@ export async function prepareQuery<
       const subquery = { ...attributeType.query };
       subquery.where = [...subquery.where, [path.join('.'), op, val]];
       return {
-        exists: subquery,
+        exists: prepareQuery(subquery, schema, options),
       };
     });
 
     if (fetchQuery.include) {
-      await addSubsSelectsFromIncludes(
-        fetchQuery,
-        (await tx.getSchema())!.collections
-      );
+      addSubsSelectsFromIncludes(fetchQuery, schema);
     }
   }
-  return { query: fetchQuery, collection: collectionSchema };
+  return fetchQuery;
 }
 
-async function addSubsSelectsFromIncludes<
+function addSubsSelectsFromIncludes<
   M extends Models<any, any>,
   CN extends CollectionNameFromModels<M>
 >(query: CollectionQuery<M, CN>, schema: M) {
@@ -380,7 +394,7 @@ async function addSubsSelectsFromIncludes<
     if (!query.select) query.select = [];
     let additionalQuery = extraQuery;
     if (additionalQuery && additionalQuery.include) {
-      additionalQuery = await addSubsSelectsFromIncludes(
+      additionalQuery = addSubsSelectsFromIncludes(
         { ...extraQuery, collectionName: attributeType.query.collectionName },
         schema
       );

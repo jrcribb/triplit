@@ -44,8 +44,10 @@ import {
   mapStaticTupleToEAV,
   TripleStoreBeforeCommitHook,
   TripleStoreAfterCommitHook,
+  findAllClientIds,
 } from './triple-store-utils.js';
 import { copyHooks } from './utils.js';
+import { TRIPLE_STORE_MIGRATIONS } from './triple-store-migrations.js';
 
 function isTupleStorage(object: any): object is AsyncTupleStorageApi {
   if (typeof object !== 'object') return false;
@@ -82,6 +84,7 @@ export interface TripleStoreApi {
     scanDirection: 'lt' | 'lte' | 'gt' | 'gte',
     timestamp: Timestamp | undefined
   ): Promise<TripleRow[]>;
+  findAllClientIds(): Promise<string[]>;
 
   findByEAT(
     [entityId, attribute]: [entityId?: EntityId, attribute?: Attribute],
@@ -156,7 +159,9 @@ async function addIndexesToTransaction(
               attribute,
               value,
             ],
-            { expired: isExpired }
+            {
+              expired: isExpired,
+            }
           );
         }
       },
@@ -259,36 +264,9 @@ export class TripleStore implements TripleStoreApi {
   }
 
   async ensureStorageIsMigrated() {
-    // Check if any EAV tuples exist and migrate them to EAT
-    // @ts-ignore
-    const existingTuples = (await this.tupleStore.scan({
-      prefix: ['EAV'],
-    })) as {
-      key: ['EAV', EntityId, Attribute, Value, Timestamp];
-      value: TripleMetadata;
-    }[];
-
-    if (existingTuples.length === 0) return;
-
-    const tuplesToInsert: EATIndex[] = [];
-    for (const tuple of existingTuples) {
-      const [_index, id, attribute, value, timestamp] = tuple.key;
-      const { expired } = tuple.value;
-      tuplesToInsert.push({
-        key: ['EAT', id, attribute, timestamp],
-        value: [value, expired],
-      });
+    for (const migrate of TRIPLE_STORE_MIGRATIONS) {
+      await migrate(this.tupleStore);
     }
-    await this.tupleStore.autoTransact(async (tx) => {
-      // Delete old EAV tuples
-      for (const tuple of existingTuples) {
-        tx.remove(tuple.key);
-      }
-      // Insert new EAT tuples
-      for (const tuple of tuplesToInsert) {
-        await tx.set(tuple.key, tuple.value);
-      }
-    }, undefined);
   }
 
   beforeInsert(callback: TripleStoreBeforeInsertHook) {
@@ -358,6 +336,10 @@ export class TripleStore implements TripleStoreApi {
 
   findMaxClientTimestamp(clientId: string) {
     return findMaxClientTimestamp(this.tupleStore, clientId);
+  }
+
+  findAllClientIds() {
+    return findAllClientIds(this.tupleStore);
   }
 
   findByClientTimestamp(

@@ -1,6 +1,7 @@
-import { DB, TriplitError } from '@triplit/db';
+import { DB, DurableClock, TriplitError } from '@triplit/db';
 import {
   MalformedMessagePayloadError,
+  Route,
   Server as TriplitServer,
 } from '@triplit/server-core';
 import {
@@ -9,6 +10,8 @@ import {
   ClientSyncMessage,
   ParsedToken,
 } from '@triplit/types/sync.js';
+import DurableObjectStore from '@triplit/db/storage/durable-object-tuple-store';
+
 export interface Env {
   // Example binding to KV. Learn more at https://developers.cloudflare.com/workers/runtime-apis/kv/
   // MY_KV_NAMESPACE: KVNamespace;
@@ -56,7 +59,10 @@ export class TriplitDurableObject implements DurableObject {
   triplitServer: TriplitServer;
   constructor(readonly state: DurableObjectState, readonly env: Env) {
     this.db = new DB({
-      schema,
+      schema: { collections: schema },
+      clock: new DurableClock(),
+      source: new DurableObjectStore(state.storage),
+      tenantId: 'server',
     });
     this.triplitServer = new TriplitServer(this.db);
   }
@@ -88,6 +94,21 @@ export class TriplitDurableObject implements DurableObject {
     }
     if (upgradeHeader === 'websocket') {
       return this.handleWebSocketUpgrade(request, token);
+    }
+    if (request.method === 'POST') {
+      let path = new URL(request.url).pathname.slice(1).split('/');
+      const body = await parseBodyIfExists(request);
+      const { statusCode, payload } = await this.triplitServer.handleRequest(
+        path as Route,
+        body,
+        token
+      );
+      return new Response(JSON.stringify(payload), {
+        status: statusCode,
+        headers: {
+          'content-type': 'application/json;charset=UTF-8',
+        },
+      });
     }
     return new Response('Hello world from Triplit Cloud V2');
   }
@@ -167,6 +188,7 @@ export class TriplitDurableObject implements DurableObject {
 function handleWebSocketUpgradeFailure(reason: string): Response {
   const webSocketPair = new WebSocketPair();
   const [client, server] = Object.values(webSocketPair);
+  server.accept();
   const response = new Response(null, {
     status: 101,
     // @ts-ignore
@@ -229,4 +251,12 @@ function sendErrorMessage(
     metadata,
   };
   sendMessage(socket, 'ERROR', payload);
+}
+
+export async function parseBodyIfExists(request: Request) {
+  try {
+    return await request.json();
+  } catch (e) {
+    return undefined;
+  }
 }

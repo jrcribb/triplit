@@ -329,16 +329,20 @@ export class SyncEngine {
                 await outboxOperator.deleteTriples(triplesToEvict);
               }
             }
-
-            // Filter out failures, tell server there are unsent triples
-            const triplesToSend = (
-              await this.getTriplesToSend(outboxOperator)
-            ).filter((t) => !failuresSet.has(JSON.stringify(t.timestamp)));
-            if (triplesToSend.length) this.signalOutboxTriples();
           });
           for (const txId of txIds) {
             this.txCommits$.next(txId);
           }
+
+          // Filter out failures, tell server there are unsent triples
+          // Would be nice to not load all these into memory
+          // However for most workloads its hopefully not that much data
+          const triplesToSend = (
+            await this.getTriplesToSend(
+              this.db.tripleStore.setStorageScope(['outbox'])
+            )
+          ).filter((t) => !failuresSet.has(JSON.stringify(t.timestamp)));
+          if (triplesToSend.length) this.signalOutboxTriples();
         } finally {
           // After processing, clean state (ACK received)
           for (const txId of txIds) {
@@ -528,7 +532,7 @@ export class SyncEngine {
    * @param txId
    */
   async retry(txId: string) {
-    const timestamp = JSON.parse(txId);
+    const timestamp: Timestamp = JSON.parse(txId);
     const triplesToSend = await this.db.tripleStore
       .setStorageScope(['outbox'])
       .findByClientTimestamp(await this.db.getClientId(), 'eq', timestamp);
@@ -610,10 +614,11 @@ export class SyncEngine {
       // Simpler to serialize triples and reconstruct entities on the client
       const triples = await this.getRemoteTriples(query);
       const entities = constructEntities(triples);
+      const schema = (await this.db.getSchema())?.collections;
       return new Map(
         [...entities].map(([id, entity]) => [
           stripCollectionFromId(id),
-          convertEntityToJS(entity.data as any),
+          convertEntityToJS(entity.data as any, schema),
         ])
       ) as ClientFetchResult<CQ>;
     } catch (e) {

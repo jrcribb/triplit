@@ -1,8 +1,8 @@
 import { TriplitClient } from '@triplit/client';
 import { useQuery } from '@triplit/react';
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo, useState, useCallback, useEffect } from 'react';
 import '@glideapps/glide-data-grid/dist/index.css';
-import { CreateEntityForm } from '.';
+import { CreateEntitySheet } from '.';
 import { consoleClient } from '../../triplit/client';
 import { ColumnDef } from '@tanstack/react-table';
 import {
@@ -16,7 +16,6 @@ import { Plus } from 'lucide-react';
 import {
   SchemaAttributeSheet,
   addOrUpdateAttributeFormOpenAtom,
-  attributeToUpdateAtom,
 } from './schema-attribute-sheet';
 import { ColumnMenu } from './column-menu';
 import { DeleteAttributeDialog } from './delete-attribute-dialog';
@@ -100,6 +99,8 @@ async function deleteAttribute(
   }
 }
 
+const PAGE_SIZE = 25;
+
 export function DataViewer({
   client,
   schema,
@@ -116,9 +117,7 @@ export function DataViewer({
   );
   const [addOrUpdateAttributeFormOpen, setAddOrUpdateAttributeFormOpen] =
     useAtom(addOrUpdateAttributeFormOpenAtom);
-  const [_attributeToUpdate, setAttributeToUpdate] = useAtom(
-    attributeToUpdateAtom
-  );
+  const [attributeToUpdate, setAttributeToUpdate] = useState(null);
   const [selectedAttribute, setSelectedAttribute] = useState<string>('');
   const [selectedCell, setSelectedCell] = useState<string | null>(null);
   const [selectedCollection, _setSelectedCollection] = useSelectedCollection();
@@ -126,6 +125,7 @@ export function DataViewer({
     where: undefined,
     order: undefined,
   });
+  const [limit, setLimit] = useState(PAGE_SIZE);
   const { results: selectedEntities } = useQuery(
     consoleClient,
     consoleClient.query('selections').where([
@@ -136,14 +136,25 @@ export function DataViewer({
   const collectionSchema = schema?.collections?.[selectedCollection];
   const filters = JSON.parse(urlQueryState.where ?? '[]');
   const order = JSON.parse(urlQueryState.order ?? '[]');
+  const noFilters = filters.length === 0;
 
-  const { results: orderedAndFilteredResults } = useQuery(
-    client,
-    client
-      .query(selectedCollection)
-      .order(...order)
-      .where(filters)
+  const query = useMemo(
+    () =>
+      client
+        .query(selectedCollection)
+        .order(...order)
+        .where(filters)
+        .limit(noFilters ? limit : Infinity),
+    // only apply a limit if we have no filters
+    [selectedCollection, order, filters, limit, noFilters]
   );
+
+  // TODO remove localOnly when we get rid of the whole-collection query above
+  const {
+    results: orderedAndFilteredResults,
+    fetchingRemote,
+    fetching,
+  } = useQuery(client, query, { localOnly: true });
 
   const { results: allResults } = useQuery(
     client,
@@ -153,6 +164,12 @@ export function DataViewer({
     () => Array.from(orderedAndFilteredResults ?? []),
     [orderedAndFilteredResults]
   );
+
+  const hasMoreEntitiesToShow =
+    noFilters &&
+    allResults &&
+    orderedAndFilteredResults &&
+    allResults.size > orderedAndFilteredResults.size;
 
   const uniqueAttributes: Set<string> = useMemo(() => {
     const attributes = new Set<string>();
@@ -198,6 +215,10 @@ export function DataViewer({
     projectId,
     allVisibleEntitiesAreSelected,
   ]);
+
+  useEffect(() => {
+    setLimit(PAGE_SIZE);
+  }, [selectedCollection]);
 
   const idColumn: ColumnDef<any> = useMemo(
     () => ({
@@ -259,26 +280,29 @@ export function DataViewer({
       selectedEntities,
     ]
   );
-  const dataColumns = useMemo(() => {
-    const cols: ColumnDef<any>[] = [];
-    Array.from(uniqueAttributes)
+  const dataColumns: ColumnDef<any>[] = useMemo(() => {
+    return Array.from(uniqueAttributes)
       .filter((attr) => attr !== 'id')
-      .forEach((attr) => {
+      .map((attr) => {
         const typeDef =
           collectionSchema?.schema?.properties?.[
             attr as keyof (typeof collectionSchema)['schema']['properties']
           ];
         const isQueryColumn = typeDef && typeDef.type === 'query';
-        cols.push({
+        return {
           cell: ({ row, column }) => {
             const cellKey = `${row.getValue('id')}_${column.id}`;
+            const isOptional = !!collectionSchema?.schema.optional?.includes(
+              //@ts-expect-error
+              attr
+            );
             if (isQueryColumn)
               return (
                 <RelationCell
                   queryDef={typeDef}
                   onClickRelationLink={() => {
                     const where = typeDef?.query?.where;
-                    const whereWithVariablesReplaced = where.map(
+                    const whereWithVariablesReplaced = where?.map(
                       ([attribute, operator, value]) => {
                         let parsedVal = value;
                         if (typeof value === 'string' && value.startsWith('$'))
@@ -308,6 +332,7 @@ export function DataViewer({
                 entityId={row.getValue('id')}
                 client={client}
                 value={row.getValue(attr)}
+                optional={isOptional}
               />
             );
           },
@@ -337,9 +362,8 @@ export function DataViewer({
             );
           },
           accessorKey: attr,
-        });
+        };
       });
-    return cols;
   }, [
     uniqueAttributes,
     collectionSchema,
@@ -358,7 +382,10 @@ export function DataViewer({
           <div className="flex flex-col justify-center items-center h-full">
             <Tooltip label="Insert attribute">
               <Button
-                onClick={() => setAddOrUpdateAttributeFormOpen(true)}
+                onClick={() => {
+                  setAddOrUpdateAttributeFormOpen(true);
+                  setAttributeToUpdate(null);
+                }}
                 variant={'ghost'}
                 className="h-auto py-1"
               >
@@ -379,10 +406,12 @@ export function DataViewer({
     [sortedAndFilteredEntities]
   );
   return (
-    <div className="flex flex-col w-full h-full">
+    <div className="flex flex-col max-w-full items-start h-screen overflow-hidden">
       {collectionSchema && (
         <>
           <SchemaAttributeSheet
+            attributeToUpdate={attributeToUpdate}
+            key={attributeToUpdate ? attributeToUpdate.name : 'new'}
             open={addOrUpdateAttributeFormOpen}
             onOpenChange={setAddOrUpdateAttributeFormOpen}
             collectionName={selectedCollection}
@@ -452,14 +481,22 @@ export function DataViewer({
           sortedAndFilteredEntities.length
         } of ${allResults?.size ?? 0}`}</div>
 
-        <CreateEntityForm
+        <CreateEntitySheet
+          key={selectedCollection}
           collectionDefinition={collectionSchema}
           collection={selectedCollection}
           inferredAttributes={Array.from(uniqueAttributes)}
           client={client}
         />
       </div>
-      <DataTable columns={columns} data={flatFilteredEntities} />
+      <DataTable
+        columns={columns}
+        data={flatFilteredEntities}
+        showLoadMore={hasMoreEntitiesToShow}
+        onLoadMore={() => {
+          setLimit((prev) => prev + PAGE_SIZE);
+        }}
+      />
     </div>
   );
 }

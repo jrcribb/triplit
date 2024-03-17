@@ -1,5 +1,58 @@
 # @triplit/server-core
 
+## 0.3.27
+
+### Patch Changes
+
+- 3989757: Fixup bugs in subquery serialization
+- Updated dependencies [3989757]
+  - @triplit/db@0.3.24
+
+## 0.3.26
+
+### Patch Changes
+
+- a049f47: Fix bug with remote update
+- Updated dependencies [a049f47]
+  - @triplit/db@0.3.23
+
+## 0.3.25
+
+### Patch Changes
+
+- Updated dependencies [557e10f]
+- Updated dependencies [2d41a65]
+  - @triplit/db@0.3.22
+
+## 0.3.24
+
+### Patch Changes
+
+- Updated dependencies [25ba609]
+  - @triplit/db@0.3.21
+
+## 0.3.23
+
+### Patch Changes
+
+- b26a16b: add additional context to router handler
+- Updated dependencies [b07bba6]
+- Updated dependencies [b07bba6]
+  - @triplit/db@0.3.20
+
+## 0.3.22
+
+### Patch Changes
+
+- 1b8bb22: add logs to incoming and outgoing server messages
+- Updated dependencies [f248061]
+- Updated dependencies [aff7f7f]
+- Updated dependencies [71504b0]
+- Updated dependencies [1ef3f46]
+- Updated dependencies [2ab8039]
+- Updated dependencies [fd652f7]
+  - @triplit/db@0.3.19
+
 ## 0.3.21
 
 ### Patch Changes

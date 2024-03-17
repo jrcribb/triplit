@@ -76,6 +76,18 @@ async function dropDefaultOption(
   });
 }
 
+async function makeAttributeOptional(
+  client: TriplitClient<any>,
+  collectionName: string,
+  attributeName: string
+) {
+  await client.db.setAttributeOptional({
+    collection: collectionName,
+    path: [attributeName],
+    optional: true,
+  });
+}
+
 function getDefaultOptionsFromType(type: ValueTypeKeys) {
   if (type === 'date') return ['Value', 'now'];
   if (type === 'string') return ['Value', 'uuid'];
@@ -86,93 +98,71 @@ type NewAttributeFormProps = {
   client: TriplitClient<any>;
   collectionName: string;
   collectionSchema: CollectionDefinition;
+  attributeToUpdate:
+    | null
+    | ((
+        | ValueAttributeDefinition
+        | CollectionAttributeDefinition
+        | RecordAttributeDefinition
+      ) & {
+        name: string;
+      });
 };
 export const addOrUpdateAttributeFormOpenAtom = atom(false);
 
-export const attributeToUpdateAtom = atom<
-  | ((
-      | ValueAttributeDefinition
-      | CollectionAttributeDefinition
-      | RecordAttributeDefinition
-    ) & {
-      name: string;
-    })
-  | null
->(null);
-
-export function SchemaAttributeSheet(
-  props: NewAttributeFormProps & ComponentProps<typeof Sheet>
-) {
-  const { client, collectionName, collectionSchema } = props;
-  const [attributeToUpdate, setAttributeToUpdate] = useAtom(
-    attributeToUpdateAtom
-  );
+export function SchemaAttributeSheet({
+  attributeToUpdate,
+  client,
+  collectionName,
+  collectionSchema,
+}: NewAttributeFormProps & ComponentProps<typeof Sheet>) {
   const editing = !!attributeToUpdate;
   const [open, setOpen] = useAtom(addOrUpdateAttributeFormOpenAtom);
-  const [attributeName, setAttributeName] = useState('');
-  const [attributeBaseType, setAttributeBaseType] =
-    useState<AllTypes>('string');
-  const [hasDefault, setHasDefault] = useState(false);
-  const [setType, setSetType] = useState<ValueTypeKeys>('string');
+  const [attributeName, setAttributeName] = useState(
+    attributeToUpdate?.name ?? ''
+  );
+  const [attributeBaseType, setAttributeBaseType] = useState<AllTypes>(
+    attributeToUpdate?.type ?? 'string'
+  );
+  const [hasDefault, setHasDefault] = useState(
+    attributeToUpdate?.options?.default !== undefined
+  );
+  const [setType, setSetType] = useState<ValueTypeKeys>(
+    attributeToUpdate?.items?.type ?? 'string'
+  );
   const [defaultType, setDefaultType] = useState<'Value' | 'now' | 'uuid'>(
-    'Value'
+    typeof attributeToUpdate?.options?.default === 'object'
+      ? attributeToUpdate.options.default.func
+      : 'Value'
+  );
+  const [isOptional, setIsOptional] = useState(
+    !!(
+      collectionSchema.schema.optional &&
+      collectionSchema.schema.optional.includes(attributeToUpdate?.name)
+    )
   );
   const [recordKeyTypes, setRecordKeyTypes] = useState<
     Record<string, [string, ValueTypeKeys]>
-  >({});
-  const [defaultValue, setDefaultValue] = useState('');
-  const [nullable, setNullable] = useState(false);
+  >(
+    attributeToUpdate?.type === 'record'
+      ? Object.fromEntries(
+          Object.entries(attributeToUpdate.properties).map(([key, value]) => [
+            key,
+            [key, (value as ValueAttributeDefinition).type],
+          ])
+        )
+      : {}
+  );
 
-  function setDefaults() {
-    setAttributeName('');
-    setRecordKeyTypes({});
-    setAttributeBaseType('string');
-    setSetType('string');
-    setDefaultType('Value');
-    setDefaultValue('');
-    setNullable(false);
-    setHasDefault(false);
-  }
-
-  useEffect(() => {
-    if (attributeToUpdate) {
-      setAttributeName(attributeToUpdate.name);
-      setAttributeBaseType(attributeToUpdate.type);
-      if (attributeToUpdate.type === 'record') {
-        setRecordKeyTypes(
-          Object.fromEntries(
-            Object.entries(attributeToUpdate.properties).map(([key, value]) => [
-              key,
-              [key, value.type],
-            ])
-          )
-        );
-        return;
-      }
-      setNullable(attributeToUpdate?.options?.nullable ?? false);
-
-      if (attributeToUpdate.type === 'set') {
-        setSetType(attributeToUpdate.items.type);
-        return;
-      }
-
-      if (attributeToUpdate?.options?.default === undefined) {
-        setHasDefault(false);
-        setDefaultType('Value');
-        setDefaultValue('');
-        return;
-      }
-      setHasDefault(true);
-      if (typeof attributeToUpdate.options.default === 'object') {
-        setDefaultType(attributeToUpdate.options.default.func);
-      } else {
-        setDefaultType('Value');
-        setDefaultValue(String(attributeToUpdate.options.default));
-      }
-    } else {
-      setDefaults();
-    }
-  }, [attributeToUpdate]);
+  const [defaultValue, setDefaultValue] = useState(
+    attributeToUpdate?.options?.default &&
+      typeof attributeToUpdate?.options?.default !== 'object'
+      ? String(attributeToUpdate.options.default)
+      : ''
+  );
+  const [nullable, setNullable] = useState(
+    attributeToUpdate?.options?.nullable ?? false
+  );
 
   const formToAttributeDefinition = useCallback(() => {
     const baseAttribute = { type: attributeBaseType };
@@ -210,6 +200,7 @@ export function SchemaAttributeSheet(
     } as AttributeDefinition;
   }, [
     attributeBaseType,
+    collectionSchema,
     setType,
     recordKeyTypes,
     nullable,
@@ -229,7 +220,6 @@ export function SchemaAttributeSheet(
         updatedAttribute
       );
       setOpen(false);
-      setDefaults();
       return;
     }
     if (
@@ -237,6 +227,13 @@ export function SchemaAttributeSheet(
       attributeToUpdate.options?.default !== undefined
     ) {
       await dropDefaultOption(client, collectionName, attributeName);
+    }
+    const isAlreadyOptional = collectionSchema.schema.optional?.includes(
+      // @ts-expect-error
+      attributeName
+    );
+    if (!isAlreadyOptional && isOptional) {
+      await makeAttributeOptional(client, collectionName, attributeName);
     }
     await updateAttributeOptions(
       client,
@@ -247,12 +244,13 @@ export function SchemaAttributeSheet(
 
     setOpen(false);
   }, [
-    setDefaults,
     attributeToUpdate,
     client,
     attributeName,
     collectionName,
     formToAttributeDefinition,
+    collectionSchema,
+    isOptional,
   ]);
 
   return (
@@ -260,7 +258,6 @@ export function SchemaAttributeSheet(
       open={open}
       onOpenChange={(open) => {
         setOpen(open);
-        if (!open) setAttributeToUpdate(null);
       }}
     >
       <SheetContent className="text-sm sm:max-w-[40%] overflow-y-auto">
@@ -391,101 +388,111 @@ export function SchemaAttributeSheet(
               </div>
             </div>
           </div>
-          {attributeBaseType !== 'record' && (
-            <>
-              <hr className="col-span-full mt-10 mb-5" />
-              <div className="font-bold">Options</div>
-              <div className="flex flex-col gap-5 col-span-2">
-                {attributeBaseType !== 'set' && (
-                  <div className="flex flex-col gap-3">
-                    <div className="flex flex-row items-center gap-3">
-                      <Checkbox
-                        className="w-5 h-5"
-                        checked={hasDefault}
-                        onCheckedChange={setHasDefault}
-                      />
-                      <div className="flex flex-row justify-between items-center w-full">
-                        <Label>Default value</Label>
-                        <div className="text-muted-foreground">Optional</div>
-                      </div>
-                    </div>
-                    {hasDefault && (
-                      <>
-                        <div className="flex flex-row gap-2">
-                          <Select
-                            value={defaultType}
-                            onValueChange={setDefaultType}
-                            data={getDefaultOptionsFromType(attributeBaseType)}
-                          />
-                          {defaultType === 'Value' &&
-                            attributeBaseType === 'string' && (
-                              <Input
-                                type="text"
-                                value={defaultValue}
-                                onChange={(e) => {
-                                  setDefaultValue(e.target.value);
-                                }}
-                              />
-                            )}
-                          {defaultType === 'Value' &&
-                            attributeBaseType === 'boolean' && (
-                              <Select
-                                data={['true', 'false']}
-                                placeholder='e.g. "Hello", 9, null'
-                                value={String(defaultValue)}
-                                onValueChange={(value) => {
-                                  setDefaultValue(value === 'false');
-                                }}
-                              />
-                            )}
-                          {defaultType === 'Value' &&
-                            attributeBaseType === 'number' && (
-                              <Input
-                                type="number"
-                                value={String(defaultValue)}
-                                onChange={(e) => {
-                                  setDefaultValue(e.target.valueAsNumber);
-                                }}
-                              />
-                            )}
-                          {defaultType === 'Value' &&
-                            attributeBaseType === 'date' && (
-                              <Input
-                                type="datetime-local"
-                                value={defaultValue}
-                                onChange={(e) => {
-                                  setDefaultValue(e.target.value);
-                                }}
-                              />
-                            )}
-                        </div>
-                        <div className="text-muted-foreground">
-                          A default value can either be a literal value e.g.{' '}
-                          <Code>"Hello", 9, null</Code> or a Triplit-provided
-                          function. If left empty, the attribute will be
-                          undefined by default.
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
+
+          <hr className="col-span-full mt-10 mb-5" />
+          <div className="font-bold">Options</div>
+          <div className="flex flex-col gap-5 col-span-2">
+            <div className="flex flex-row items-center gap-3">
+              <Checkbox
+                className="w-5 h-5"
+                checked={isOptional}
+                disabled={
+                  !!(
+                    attributeToUpdate &&
+                    collectionSchema.schema.optional?.includes(
+                      // @ts-expect-error
+                      attributeToUpdate.name
+                    )
+                  )
+                }
+                onCheckedChange={setIsOptional}
+              />
+              <Label>Optional</Label>
+            </div>
+            {attributeBaseType !== 'set' && attributeBaseType !== 'record' && (
+              <div className="flex flex-col gap-3">
                 <div className="flex flex-row items-center gap-3">
                   <Checkbox
                     className="w-5 h-5"
-                    checked={nullable}
-                    disabled={
-                      attributeToUpdate && attributeToUpdate?.options?.nullable
-                    }
-                    onCheckedChange={setNullable}
+                    checked={hasDefault}
+                    onCheckedChange={setHasDefault}
                   />
-                  <div className="flex flex-row justify-between items-center w-full">
-                    <Label>Nullable</Label>
-                    <div className="text-muted-foreground">Optional</div>
-                  </div>
+                  <Label>Default value</Label>
                 </div>
+                {hasDefault && (
+                  <>
+                    <div className="flex flex-row gap-2">
+                      <Select
+                        value={defaultType}
+                        onValueChange={setDefaultType}
+                        data={getDefaultOptionsFromType(attributeBaseType)}
+                      />
+                      {defaultType === 'Value' &&
+                        attributeBaseType === 'string' && (
+                          <Input
+                            type="text"
+                            value={defaultValue}
+                            onChange={(e) => {
+                              setDefaultValue(e.target.value);
+                            }}
+                          />
+                        )}
+                      {defaultType === 'Value' &&
+                        attributeBaseType === 'boolean' && (
+                          <Select
+                            data={['true', 'false']}
+                            placeholder='e.g. "Hello", 9, null'
+                            value={String(defaultValue)}
+                            onValueChange={(value) => {
+                              setDefaultValue(value === 'false');
+                            }}
+                          />
+                        )}
+                      {defaultType === 'Value' &&
+                        attributeBaseType === 'number' && (
+                          <Input
+                            type="number"
+                            value={String(defaultValue)}
+                            onChange={(e) => {
+                              setDefaultValue(e.target.valueAsNumber);
+                            }}
+                          />
+                        )}
+                      {defaultType === 'Value' &&
+                        attributeBaseType === 'date' && (
+                          <Input
+                            type="datetime-local"
+                            value={defaultValue}
+                            onChange={(e) => {
+                              setDefaultValue(e.target.value);
+                            }}
+                          />
+                        )}
+                    </div>
+                    <div className="text-muted-foreground">
+                      A default value can either be a literal value e.g.{' '}
+                      <Code>"Hello", 9, null</Code> or a Triplit-provided
+                      function. If left empty, the attribute will be undefined
+                      by default.
+                    </div>
+                  </>
+                )}
               </div>
-            </>
-          )}
+            )}
+            {attributeBaseType !== 'record' && (
+              <div className="flex flex-row items-center gap-3">
+                <Checkbox
+                  className="w-5 h-5"
+                  checked={nullable}
+                  disabled={
+                    attributeToUpdate && attributeToUpdate?.options?.nullable
+                  }
+                  onCheckedChange={setNullable}
+                />
+                <Label>Nullable</Label>
+              </div>
+            )}
+          </div>
         </div>
         <hr className="col-span-full mt-10 mb-5" />
 

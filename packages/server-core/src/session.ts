@@ -6,8 +6,8 @@ import {
   CollectionQuery,
   Attribute,
   Value,
-  getSchemaFromPath,
-  Timestamp,
+  appendCollectionToId,
+  EntityId,
 } from '@triplit/db';
 import {
   QuerySyncError,
@@ -53,6 +53,7 @@ export class Connection {
     messageType: Msg['type'],
     payload: Msg['payload']
   ) {
+    this.session.server.logger.log('Sending message', { messageType, payload });
     for (const listener of this.listeners) {
       listener(messageType, payload);
     }
@@ -96,9 +97,7 @@ export class Connection {
       (results) => {
         const triples = results ?? [];
         const triplesForClient = triples.filter(
-          ({ timestamp: [t, client] }) =>
-            client !== this.options.clientId &&
-            (!clientStates.has(client) || clientStates.get(client)! < t)
+          ({ timestamp: [_t, client] }) => client !== this.options.clientId
         );
         // We should always send triples to client even if there are none
         // so that the client knows that the query has been fulfilled by the remote
@@ -233,6 +232,7 @@ export class Connection {
   }
 
   dispatchCommand(message: ClientSyncMessage) {
+    this.session.server.logger.log('Received message', message);
     try {
       switch (message.type) {
         case 'CONNECT_QUERY':
@@ -338,6 +338,7 @@ export class Session {
     return new Connection(this, connectionParams);
   }
 
+  // TODO: ensure data that we store in memory is invalidated when the db is "cleared"
   async clearDB({ full }: { full?: boolean }) {
     if (!hasAdminAccess(this.token)) return NotAdminResponse();
     try {
@@ -346,14 +347,20 @@ export class Session {
         await this.db.clear();
       } else {
         // Just delete triples
-        const allTriples = await this.db.tripleStore.findByEntity();
-        await this.db.tripleStore.deleteTriples(allTriples);
+        await this.db.tripleStore.transact(async (tx) => {
+          const allTriples = await tx.findByEntity();
+          // Filter out synced metadata
+          const dataTriples = allTriples.filter(
+            ({ id }) => !id.includes('_metadata')
+          );
+          await tx.deleteTriples(dataTriples);
+        });
       }
       return ServerResponse(200);
     } catch (e) {
       if (isTriplitError(e)) return errorResponse(e);
       return errorResponse(e, {
-        fallbackMessage: 'An unknown error occured clearing the database.',
+        fallbackMessage: 'An unknown error occurred clearing the database.',
       });
     }
   }
@@ -456,13 +463,15 @@ export class Session {
       const result = await this.db.fetch(query, {
         skipRules: hasAdminAccess(this.token),
       });
-      const schema = await this.db.getSchema();
+      const schema = (await this.db.getSchema())?.collections;
       const { collectionName } = query;
-      const collectionSchema = schema?.collections[collectionName]?.schema;
+      const collectionSchema = schema?.[collectionName]?.schema;
       const data = new Map(
         [...result.entries()].map(([id, entity]) => [
           id,
-          collectionSchema ? collectionSchema.convertJSToJSON(entity) : entity,
+          collectionSchema
+            ? collectionSchema.convertJSToJSON(entity, schema)
+            : entity,
         ])
       );
       return ServerResponse(200, {
@@ -475,10 +484,10 @@ export class Session {
 
   async insert(collectionName: string, entity: any) {
     try {
-      const schema = await this.db.getSchema();
-      const collectionSchema = schema?.collections[collectionName]?.schema;
+      const schema = (await this.db.getSchema())?.collections;
+      const collectionSchema = schema?.[collectionName]?.schema;
       const insertEntity = collectionSchema
-        ? collectionSchema.convertJSONToJS(entity)
+        ? collectionSchema.convertJSONToJS(entity, schema)
         : entity;
       const txResult = await this.db.insert(collectionName, insertEntity, {
         skipRules: hasAdminAccess(this.token),
@@ -486,20 +495,20 @@ export class Session {
       const serializableResult = {
         ...txResult,
         output: collectionSchema
-          ? collectionSchema.convertJSToJSON(txResult.output)
+          ? collectionSchema.convertJSToJSON(txResult.output, schema)
           : txResult.output,
       };
       return ServerResponse(200, serializableResult);
     } catch (e) {
       return errorResponse(e, {
-        fallbackMessage: 'Could not insert entity. An unknown error occured.',
+        fallbackMessage: 'Could not insert entity. An unknown error occurred.',
       });
     }
   }
 
   async bulkInsert(inserts: Record<string, any[]>) {
     try {
-      const schema = await this.db.getSchema();
+      const schema = (await this.db.getSchema())?.collections;
       const txResult = await this.db.transact(
         async (tx) => {
           const output = Object.keys(inserts).reduce(
@@ -507,11 +516,10 @@ export class Session {
             {}
           ) as Record<string, any[]>;
           for (const [collectionName, entities] of Object.entries(inserts)) {
-            const collectionSchema =
-              schema?.collections[collectionName]?.schema;
+            const collectionSchema = schema?.[collectionName]?.schema;
             for (const entity of entities) {
               const insertEntity = collectionSchema
-                ? collectionSchema.convertJSONToJS(entity)
+                ? collectionSchema.convertJSONToJS(entity, schema)
                 : entity;
               const insertedEntity = await tx.insert(
                 collectionName,
@@ -519,7 +527,7 @@ export class Session {
               );
               output[collectionName].push(
                 collectionSchema
-                  ? collectionSchema.convertJSToJSON(insertedEntity)
+                  ? collectionSchema.convertJSToJSON(insertedEntity, schema)
                   : insertedEntity
               );
             }
@@ -534,7 +542,37 @@ export class Session {
       return ServerResponse(200, serializableResult);
     } catch (e) {
       return errorResponse(e, {
-        fallbackMessage: 'Could not insert entity. An unknown error occured.',
+        fallbackMessage: 'Could not insert entity. An unknown error occurred.',
+      });
+    }
+  }
+
+  async insertTriples(triples: any[]) {
+    try {
+      if (!hasAdminAccess(this.token)) return NotAdminResponse();
+      await this.db.tripleStore.insertTriples(triples);
+      return ServerResponse(200, {});
+    } catch (e) {
+      return errorResponse(e, {
+        fallbackMessage: 'Could not insert triples. An unknown error occurred.',
+      });
+    }
+  }
+
+  async deleteTriples(entityAttributes: [EntityId, Attribute][]) {
+    try {
+      if (!hasAdminAccess(this.token)) return NotAdminResponse();
+      await this.db.tripleStore.transact(async (tx) => {
+        for (const [entityId, attribute] of entityAttributes) {
+          await tx.deleteTriples(
+            await tx.findByEntityAttribute(entityId, attribute)
+          );
+        }
+      });
+      return ServerResponse(200, {});
+    } catch (e) {
+      return errorResponse(e, {
+        fallbackMessage: 'Could not delete triples. An unknown error occurred.',
       });
     }
   }
@@ -545,34 +583,27 @@ export class Session {
     patches: (['set', Attribute, Value] | ['delete', Attribute])[]
   ) {
     try {
-      const schema = await this.db.getSchema();
-      const collectionSchema = schema?.collections[collectionName]?.schema;
-      if (collectionSchema) {
-        patches.forEach((p) => {
-          if (p[0] === 'set') {
-            const attrSchema = getSchemaFromPath(collectionSchema, p[1]);
-            // @ts-expect-error
-            p[2] = attrSchema.convertJSONToJS(p[2]);
-          }
-        });
-      }
-
-      const txResult = await this.db.update(
-        collectionName,
-        entityId,
-        (entity) => {
+      const txResult = await this.db.transact(
+        async (tx) => {
+          const id = appendCollectionToId(collectionName, entityId);
+          const timestamp = await tx.storeTx.getTransactionTimestamp();
           for (const patch of patches) {
-            const path = patch[1];
-            let current = entity;
-            for (let i = 0; i < path.length - 1; i++) {
-              current = current[path[i]];
-            }
             if (patch[0] === 'delete') {
-              delete current[path[path.length - 1]];
+              tx.storeTx.insertTriple({
+                id,
+                attribute: [collectionName, ...patch[1]],
+                value: null,
+                timestamp,
+                expired: true,
+              });
             } else if (patch[0] === 'set') {
-              current[path[path.length - 1]] = patch[2];
-            } else {
-              throw new TriplitError(`Invalid patch type: ${patch[0]}`);
+              tx.storeTx.insertTriple({
+                id,
+                attribute: [collectionName, ...patch[1]],
+                value: patch[2],
+                timestamp,
+                expired: false,
+              });
             }
           }
         },
@@ -581,7 +612,7 @@ export class Session {
       return ServerResponse(200, txResult);
     } catch (e) {
       return errorResponse(e, {
-        fallbackMessage: 'Could not update entity. An unknown error occured.',
+        fallbackMessage: 'Could not update entity. An unknown error occurred.',
       });
     }
   }
@@ -594,7 +625,7 @@ export class Session {
       return ServerResponse(200, txResult);
     } catch (e) {
       return errorResponse(e, {
-        fallbackMessage: 'Could not delete entity. An unknown error occured.',
+        fallbackMessage: 'Could not delete entity. An unknown error occurred.',
       });
     }
   }
@@ -606,7 +637,7 @@ function errorResponse(e: unknown, options?: { fallbackMessage?: string }) {
   }
   const generalError = new TriplitError(
     options?.fallbackMessage ??
-      'An unknown error occured processing your request.'
+      'An unknown error occurred processing your request.'
   );
   console.log(e);
   return ServerResponse(generalError.status, generalError.toJSON());

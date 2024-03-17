@@ -1,5 +1,65 @@
 # @triplit/client
 
+## 0.3.28
+
+### Patch Changes
+
+- 10b4249: allow for async schema initializaion in remote client
+- 3989757: Fixup bugs with subquery deserialization
+- Updated dependencies [3989757]
+  - @triplit/db@0.3.24
+
+## 0.3.27
+
+### Patch Changes
+
+- aff9054: Fix update proxy to pass in correctly shaped entity data
+
+## 0.3.26
+
+### Patch Changes
+
+- a049f47: preload entity on remote update, hotfix for remote non assignment updates
+- Updated dependencies [a049f47]
+  - @triplit/db@0.3.23
+
+## 0.3.25
+
+### Patch Changes
+
+- Updated dependencies [557e10f]
+- Updated dependencies [2d41a65]
+  - @triplit/db@0.3.22
+
+## 0.3.24
+
+### Patch Changes
+
+- 3d36ab6: Move outbox read for sync signal to prevent transaction conflicts
+- Updated dependencies [25ba609]
+  - @triplit/db@0.3.21
+
+## 0.3.23
+
+### Patch Changes
+
+- Updated dependencies [b07bba6]
+- Updated dependencies [b07bba6]
+  - @triplit/db@0.3.20
+
+## 0.3.22
+
+### Patch Changes
+
+- 1ef3f46: fixup inserting nullable sets over remote client
+- Updated dependencies [f248061]
+- Updated dependencies [aff7f7f]
+- Updated dependencies [71504b0]
+- Updated dependencies [1ef3f46]
+- Updated dependencies [2ab8039]
+- Updated dependencies [fd652f7]
+  - @triplit/db@0.3.19
+
 ## 0.3.21
 
 ### Patch Changes

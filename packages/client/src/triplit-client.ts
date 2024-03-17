@@ -203,7 +203,7 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
     this.remote = new RemoteClient<M>({
       server: serverUrl,
       token,
-      schema: this.db.schema?.collections,
+      schemaFactory: async () => (await this.db.getSchema())?.collections as M,
     });
     this.db.onSchemaChange((schema) => {
       this.remote.updateOptions({ schema: schema?.collections });
@@ -402,10 +402,6 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
     let results: FetchResult<CQ>;
     const clientSubscriptionCallback = (newResults: FetchResult<CQ>) => {
       results = newResults;
-      if (fulfilledTimeout !== null) {
-        clearTimeout(fulfilledTimeout);
-        fulfilledTimeout = null;
-      }
       onResults(results as ClientFetchResult<CQ>, { hasRemoteFulfilled });
     };
     unsubscribeLocal = this.db.subscribe(

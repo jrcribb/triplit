@@ -85,6 +85,16 @@ export class Server {
           resp = await session.bulkInsert(params);
           break;
         }
+        case 'insert-triples': {
+          const { triples } = params;
+          resp = await session.insertTriples(triples);
+          break;
+        }
+        case 'delete-triples': {
+          const { entityAttributes } = params;
+          resp = await session.deleteTriples(entityAttributes);
+          break;
+        }
         case 'update': {
           const { collectionName, entityId, patches } = params;
           resp = await session.update(collectionName, entityId, patches);
@@ -106,7 +116,12 @@ export class Server {
     } catch (e: any) {
       const error = isTriplitError(e)
         ? e
-        : new TriplitError('An unknown error occured');
+        : new TriplitError(
+            `An unknown error occurred while handling the request: ${route.join(
+              '/'
+            )}`,
+            e
+          );
       this.logger.error('Error handling request', {
         route,
         params,
@@ -128,6 +143,8 @@ const TRIPLIT_SEGEMENTS = [
   'fetch',
   'insert',
   'bulk-insert',
+  'insert-triples',
+  'delete-triples',
   'update',
   'delete',
 ] as const;

@@ -31,10 +31,19 @@ it('codegen can generate a schema from migrations', async () => {
         record: S.Record({
           attr1: S.String(),
           attr2: S.String(),
+          attr3: S.Optional(S.String()),
         }),
+        // optional
+        optional: S.Optional(S.String()),
+        optionalSet: S.Optional(S.Set(S.String())),
+        optionalNumber: S.Optional(S.Number()),
+        optionalBoolean: S.Optional(S.Boolean()),
+        optionalRecord: S.Optional(S.Record({})),
         // nullable
         nullableFalse: S.String({ nullable: false }),
         nullableTrue: S.String({ nullable: true }),
+        nullableNumber: S.Number({ nullable: true }),
+        nullableDate: S.Date({ nullable: true }),
         // default values
         defaultValue: S.String({ default: 'default' }),
         defaultNull: S.String({ default: null }),
@@ -78,6 +87,7 @@ it('codegen can generate a schema from migrations', async () => {
     },
   } satisfies Models<any, any>;
   const jsonSchema = schemaToJSON({ collections: schema, version: 0 })!;
+  // console.log(jsonSchema.collections.test.schema);
   // Create a migration
   const migration = createMigration({}, jsonSchema.collections, 1, 0, '');
   if (!migration) throw new Error('migration is undefined');
@@ -90,6 +100,7 @@ it('codegen can generate a schema from migrations', async () => {
     collections: codegenSchema,
     version: 0,
   })!;
+  // console.log(codegenSchemaJSON.collections.test.schema);
 
   // Check no migration will be created
   expect(
@@ -417,6 +428,300 @@ describe('migration creation', () => {
           ],
         ]);
       });
+    });
+
+    it('can create a migration that sets an attribute to be optional', () => {
+      const schemaA = {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            attr1: S.String(),
+            attr2: S.String(),
+          }),
+        },
+      } satisfies Models<any, any>;
+      const schemaB = {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            attr1: S.String(),
+            attr2: S.Optional(S.String()),
+          }),
+        },
+      } satisfies Models<any, any>;
+      const jsonSchemaA = schemaToJSON({ collections: schemaA, version: 0 })!;
+      const jsonSchemaB = schemaToJSON({ collections: schemaB, version: 0 })!;
+      const migration = createMigration(
+        jsonSchemaA.collections,
+        jsonSchemaB.collections,
+        1,
+        0,
+        ''
+      );
+      expect(migration?.up).toEqual([
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr2'],
+            optional: true,
+          },
+        ],
+      ]);
+      expect(migration?.down).toEqual([
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr2'],
+            optional: false,
+          },
+        ],
+      ]);
+    });
+
+    it('can create a migration that sets an attirbute to be required', () => {
+      const schemaA = {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            attr1: S.Optional(S.String()),
+            attr2: S.String(),
+          }),
+        },
+      } satisfies Models<any, any>;
+      const schemaB = {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            attr1: S.String(),
+            attr2: S.String(),
+          }),
+        },
+      } satisfies Models<any, any>;
+      const jsonSchemaA = schemaToJSON({ collections: schemaA, version: 0 })!;
+      const jsonSchemaB = schemaToJSON({ collections: schemaB, version: 0 })!;
+      const migration = createMigration(
+        jsonSchemaA.collections,
+        jsonSchemaB.collections,
+        1,
+        0,
+        ''
+      );
+      expect(migration?.up).toEqual([
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr1'],
+            optional: false,
+          },
+        ],
+      ]);
+      expect(migration?.down).toEqual([
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr1'],
+            optional: true,
+          },
+        ],
+      ]);
+    });
+
+    it('can create a migration that sets a deep attribute to optional', () => {
+      const schemaA = {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            attr: S.Record({
+              attr1: S.String(),
+              attr2: S.String(),
+            }),
+          }),
+        },
+      } satisfies Models<any, any>;
+      const schemaB = {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            attr: S.Record({
+              attr1: S.String(),
+              attr2: S.Optional(S.String()),
+            }),
+          }),
+        },
+      } satisfies Models<any, any>;
+      const jsonSchemaA = schemaToJSON({ collections: schemaA, version: 0 })!;
+      const jsonSchemaB = schemaToJSON({ collections: schemaB, version: 0 })!;
+      const migration = createMigration(
+        jsonSchemaA.collections,
+        jsonSchemaB.collections,
+        1,
+        0,
+        ''
+      );
+      expect(migration?.up).toEqual([
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr', 'attr2'],
+            optional: true,
+          },
+        ],
+      ]);
+      expect(migration?.down).toEqual([
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr', 'attr2'],
+            optional: false,
+          },
+        ],
+      ]);
+    });
+
+    it('can create a migration that sets a deep attribute to required', () => {
+      const schemaA = {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            attr: S.Record({
+              attr1: S.Optional(S.String()),
+              attr2: S.String(),
+            }),
+          }),
+        },
+      } satisfies Models<any, any>;
+      const schemaB = {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            attr: S.Record({
+              attr1: S.String(),
+              attr2: S.String(),
+            }),
+          }),
+        },
+      } satisfies Models<any, any>;
+      const jsonSchemaA = schemaToJSON({ collections: schemaA, version: 0 })!;
+      const jsonSchemaB = schemaToJSON({ collections: schemaB, version: 0 })!;
+      const migration = createMigration(
+        jsonSchemaA.collections,
+        jsonSchemaB.collections,
+        1,
+        0,
+        ''
+      );
+      expect(migration?.up).toEqual([
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr', 'attr1'],
+            optional: false,
+          },
+        ],
+      ]);
+      expect(migration?.down).toEqual([
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr', 'attr1'],
+            optional: true,
+          },
+        ],
+      ]);
+    });
+
+    it('can create handle mulitple changes to optional', () => {
+      const schemaA = {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            attr1: S.Optional(S.String()),
+            attr2: S.Optional(S.String()),
+            attr3: S.String(),
+            attr4: S.String(),
+          }),
+        },
+      } satisfies Models<any, any>;
+      const schemaB = {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            attr1: S.String(),
+            attr2: S.String(),
+            attr3: S.Optional(S.String()),
+            attr4: S.String(),
+          }),
+        },
+      } satisfies Models<any, any>;
+      const jsonSchemaA = schemaToJSON({ collections: schemaA, version: 0 })!;
+      const jsonSchemaB = schemaToJSON({ collections: schemaB, version: 0 })!;
+      const migration = createMigration(
+        jsonSchemaA.collections,
+        jsonSchemaB.collections,
+        1,
+        0,
+        ''
+      );
+      expect(migration?.up).toEqual([
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr3'],
+            optional: true,
+          },
+        ],
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr1'],
+            optional: false,
+          },
+        ],
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr2'],
+            optional: false,
+          },
+        ],
+      ]);
+      expect(migration?.down).toEqual([
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr2'],
+            optional: true,
+          },
+        ],
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr1'],
+            optional: true,
+          },
+        ],
+        [
+          'set_attribute_optional',
+          {
+            collection: 'test',
+            path: ['attr3'],
+            optional: false,
+          },
+        ],
+      ]);
     });
 
     it('can create a migration that removes an attribute', () => {

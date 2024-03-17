@@ -6,9 +6,14 @@ import {
   QueryOrder,
   QueryWhere,
   RelationSubquery,
+  ValueCursor,
   WhereFilter,
 } from '../../src/query.js';
-import { FetchResult, QueryResult } from '../../src/collection-query.js';
+import {
+  FetchResult,
+  QueryResult,
+  ReturnTypeFromQuery,
+} from '../../src/collection-query.js';
 
 type TransactionAPI<TxDB extends DB<any>> = TxDB extends DB<infer M>
   ? Parameters<Parameters<DB<M>['transact']>[0]>[0]
@@ -68,7 +73,10 @@ describe('schemaful', () => {
             record: S.Record({
               attr1: S.String(),
               attr2: S.String(),
+              attr3: S.Optional(S.String()),
             }),
+            // optional
+            optional: S.Optional(S.String()),
             // nullable
             nullableFalse: S.String({ nullable: false }),
             nullableTrue: S.String({ nullable: true }),
@@ -130,10 +138,21 @@ describe('schemaful', () => {
     // records always have a default so can be undefined
     expectEntityParam
       .toHaveProperty('record')
-      .toEqualTypeOf<{ attr1: string; attr2: string } | undefined>();
+      .toEqualTypeOf<
+        ({ attr1: string; attr2: string } & { attr3?: string }) | undefined
+      >();
     expectEntityParamInTx
       .toHaveProperty('record')
-      .toEqualTypeOf<{ attr1: string; attr2: string } | undefined>();
+      .toEqualTypeOf<
+        ({ attr1: string; attr2: string } & { attr3?: string }) | undefined
+      >();
+
+    expectEntityParam
+      .toHaveProperty('optional')
+      .toEqualTypeOf<string | undefined>();
+    expectEntityParamInTx
+      .toHaveProperty('optional')
+      .toEqualTypeOf<string | undefined>();
 
     expectEntityParam.toHaveProperty('nullableFalse').toEqualTypeOf<string>();
     expectEntityParamInTx
@@ -238,7 +257,10 @@ describe('schemaful', () => {
             record: S.Record({
               attr1: S.String(),
               attr2: S.String(),
+              attr3: S.Optional(S.String()),
             }),
+            // optional
+            optional: S.Optional(S.String()),
             // nullable
             nullableFalse: S.String({ nullable: false }),
             nullableTrue: S.String({ nullable: true }),
@@ -302,10 +324,18 @@ describe('schemaful', () => {
 
     expectEntityProxyParam
       .toHaveProperty('record')
-      .toEqualTypeOf<{ attr1: string; attr2: string }>();
+      .toEqualTypeOf<{ attr1: string; attr2: string } & { attr3?: string }>();
     expectEntityProxyParamInTx
       .toHaveProperty('record')
-      .toEqualTypeOf<{ attr1: string; attr2: string }>();
+      .toEqualTypeOf<{ attr1: string; attr2: string } & { attr3?: string }>();
+
+    expectEntityProxyParam
+      .toHaveProperty('optional')
+      .toEqualTypeOf<string | undefined>();
+
+    expectEntityProxyParamInTx
+      .toHaveProperty('optional')
+      .toEqualTypeOf<string | undefined>();
 
     expectEntityProxyParam
       .toHaveProperty('nullableFalse')
@@ -372,7 +402,10 @@ describe('schemaful', () => {
             record: S.Record({
               attr1: S.String(),
               attr2: S.String(),
+              attr3: S.Optional(S.String()),
             }),
+            // optional
+            optional: S.Optional(S.String()),
             // nullable
             nullableFalse: S.String({ nullable: false }),
             nullableTrue: S.String({ nullable: true }),
@@ -414,7 +447,8 @@ describe('schemaful', () => {
           setString: Set<string>;
           setNumber: Set<number>;
           nullableSet: Set<string> | null;
-          record: { attr1: string; attr2: string };
+          record: { attr1: string; attr2: string } & { attr3?: string };
+          optional: string | undefined;
           nullableFalse: string;
           nullableTrue: string | null;
           defaultValue: string;
@@ -666,6 +700,43 @@ describe('query builder', () => {
       const db = new DB();
       const query = db.query('test');
       expectTypeOf(query.include).parameter(0).toEqualTypeOf<never>();
+    }
+  });
+
+  test('after', () => {
+    const schema = {
+      collections: {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            attr1: S.String(),
+            attr2: S.Boolean(),
+            attr3: S.Number(),
+            // should not include query
+            query: S.Query({ collectionName: 'test2' as const, where: [] }),
+          }),
+        },
+      },
+    };
+    {
+      const db = new DB({ schema });
+      const query = db.query('test');
+      expectTypeOf(query.after)
+        .parameter(0)
+        .toMatchTypeOf<
+          | ValueCursor
+          | ReturnTypeFromQuery<typeof schema.collections, 'test'>
+          | undefined
+        >();
+    }
+    {
+      const db = new DB();
+      const query = db.query('test');
+      expectTypeOf(query.where)
+        .parameter(0)
+        .toMatchTypeOf<
+          string | WhereFilter<undefined> | QueryWhere<undefined>
+        >();
     }
   });
 });

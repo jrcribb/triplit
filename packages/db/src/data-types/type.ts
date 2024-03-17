@@ -1,3 +1,4 @@
+import { Models } from '../schema.js';
 import { Timestamp } from '../timestamp.js';
 import { Operator } from './base.js';
 import { AttributeDefinition } from './serialization.js';
@@ -46,6 +47,8 @@ export type TypeInterface<
 > = {
   readonly type: TypeId;
   readonly supportedOperations: Operators;
+  // Context stores additional runtime information about the type
+  readonly context: Record<string, any>;
   // How the this definition should be serialized
   // it needs to contain enough information to be able to reconstruct the type
   toJSON(): AttributeDefinition; // TOOD: handle proper typing with nulls too
@@ -53,11 +56,14 @@ export type TypeInterface<
   // How to convert the input (e.g. from db.insert(..)) to the internal value
   convertInputToDBValue(val: JSType): DBType;
 
-  convertDBValueToJS(val: DBType): JSType;
+  convertDBValueToJS(
+    val: DBType,
+    schema?: Models<any, any> | undefined
+  ): JSType;
 
-  convertJSONToJS(val: any): JSType;
+  convertJSONToJS(val: any, schema?: Models<any, any> | undefined): JSType;
 
-  convertJSToJSON(val: JSType): any;
+  convertJSToJSON(val: JSType, schema?: Models<any, any> | undefined): any;
 
   // Should return a possible user input value
   defaultInput(): JSType | undefined;

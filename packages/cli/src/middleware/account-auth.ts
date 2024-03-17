@@ -1,16 +1,20 @@
+import { blue, green } from 'ansis/colors';
 import { getSession, storeSession } from '../auth-state.js';
 import { Middleware } from '../middleware.js';
 import { supabase } from '../supabase.js';
 import axios from 'axios';
 
-const MANAGEMENT_API = 'http://localhost:8787';
+export const MANAGEMENT_API_URL =
+  process.env.MANAGEMENT_API_URL ?? 'https://api.triplit.dev';
 
 export const accessTokenMiddleware = Middleware({
   name: 'Access Token',
   run: async ({ flags, args }) => {
     let session = getSession();
     if (!session) {
-      return 'No session found. Run `triplit login` and then retry.';
+      return `\nNo session found. Run ${green(
+        '`triplit login`'
+      )} and then retry.\n`;
     }
     // Check if session is expired
     const now = new Date();
@@ -39,7 +43,7 @@ function makeAPIRequester(token: string) {
     params?: any
   ) {
     const payload = method === 'GET' ? { params } : { data: params };
-    const url = MANAGEMENT_API + path;
+    const url = MANAGEMENT_API_URL + path;
     try {
       const resp = await axios.request({
         method,
@@ -57,9 +61,11 @@ function makeAPIRequester(token: string) {
       if (e.response) {
         throw e.response.data;
       } else if (e.request) {
-        throw `No response was received from server: ${url}. Please ensure you are connected to the internet and are pointing to the correct server.`;
+        throw `No response was received from server: ${blue(
+          url
+        )}. Please ensure you are connected to the internet and are pointing to the correct server.`;
       }
-      throw `An error occured while requesting the remote database: ${e.message}`;
+      throw `An error occurred while requesting the remote database: ${e.message}`;
     }
   };
 }

@@ -1,5 +1,53 @@
 # @triplit/react
 
+## 0.3.28
+
+### Patch Changes
+
+- Updated dependencies [10b4249]
+- Updated dependencies [3989757]
+  - @triplit/client@0.3.28
+
+## 0.3.27
+
+### Patch Changes
+
+- Updated dependencies [aff9054]
+  - @triplit/client@0.3.27
+
+## 0.3.26
+
+### Patch Changes
+
+- Updated dependencies [a049f47]
+  - @triplit/client@0.3.26
+
+## 0.3.25
+
+### Patch Changes
+
+- @triplit/client@0.3.25
+
+## 0.3.24
+
+### Patch Changes
+
+- Updated dependencies [3d36ab6]
+  - @triplit/client@0.3.24
+
+## 0.3.23
+
+### Patch Changes
+
+- @triplit/client@0.3.23
+
+## 0.3.22
+
+### Patch Changes
+
+- Updated dependencies [1ef3f46]
+  - @triplit/client@0.3.22
+
 ## 0.3.21
 
 ### Patch Changes

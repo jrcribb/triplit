@@ -228,8 +228,13 @@ export default class MultiTupleStore<TupleSchema extends KeyValuePair> {
     scope: StorageScope | undefined
   ) {
     try {
-      // @ts-ignore
-      return await transactionalReadWriteAsync()(callback)(
+      return await transactionalReadWriteAsync(5, {
+        exponentialBackoff: true,
+        jitter: true,
+      })(
+        // @ts-ignore
+        callback
+      )(
         // @ts-ignore
         scope
           ? new MultiTupleStore({
@@ -296,7 +301,7 @@ export class ScopedMultiTupleOperator<TupleSchema extends KeyValuePair> {
 
   // get: <T extends Tuple>(tuple: T) => (Extract<TupleSchema, { key: TupleToObject<T>; }> extends unknown ? Extract<TupleSchema, { key: TupleToObject<T>; }>['value'] : never) | undefined;
   // exists: <T extends Tuple>(tuple: T) => boolean;
-  remove(tuple: Tuple) {
+  remove(tuple: TupleSchema['key']) {
     this.txScope.write.forEach((tx) => tx.remove(tuple));
   }
 

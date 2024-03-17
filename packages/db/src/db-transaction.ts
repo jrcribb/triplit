@@ -26,9 +26,11 @@ import {
   InvalidOperationError,
   UnrecognizedPropertyInUpdateError,
   WriteRuleError,
+  CollectionNotFoundError,
+  InvalidSchemaPathError,
 } from './errors.js';
 import { ValuePointer } from '@sinclair/typebox/value';
-import {
+import DB, {
   CollectionNameFromModels,
   CollectionFromModels,
   ModelFromModels,
@@ -45,6 +47,7 @@ import {
   DBHooks,
   DEFAULT_STORE_KEY,
   EntityOpSet,
+  SetAttributeOptionalOperation,
 } from './db.js';
 import {
   validateExternalId,
@@ -63,6 +66,7 @@ import {
   Query,
   constructEntity,
   updateEntity,
+  triplesToEntities,
 } from './query.js';
 import { dbDocumentToTuples } from './utils.js';
 import { typeFromJSON } from './data-types/base.js';
@@ -79,7 +83,7 @@ import {
   TripleStoreAfterCommitHook,
 } from './triple-store-utils.js';
 import { TripleStoreApi } from './triple-store.js';
-import DB, { constructEntities } from './index.js';
+import { RecordType } from './data-types/record.js';
 
 interface TransactionOptions<
   M extends Models<any, any> | undefined = undefined
@@ -126,7 +130,7 @@ async function triplesToEntityOpSet(
   triples: TripleRow[],
   tripleStore: TripleStoreApi
 ): Promise<EntityOpSet> {
-  const deltas = Array.from(constructEntities(triples).entries());
+  const deltas = Array.from(triplesToEntities(triples).entries());
   const opSet: EntityOpSet = { inserts: [], updates: [], deletes: [] };
   for (const [id, delta] of deltas) {
     // default to update
@@ -478,7 +482,9 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
       throw new InvalidInsertDocumentError(
         `The document being inserted must be an object.`
       );
-    const collectionSchema = await getCollectionSchema(this, collectionName);
+
+    const schema = (await this.getSchema())?.collections;
+    const collectionSchema = schema?.[collectionName];
 
     // prep the doc for insert to db
     const defaultValues = collectionSchema
@@ -529,7 +535,8 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     if (!insertedEntity) throw new Error('Malformed id');
     return convertEntityToJS(
       insertedEntity.data as any,
-      collectionSchema?.schema
+      schema,
+      collectionName
     ) as MaybeReturnTypeFromQuery<M, CN>;
   }
 
@@ -540,12 +547,7 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
       entity: UpdateTypeFromModel<ModelFromModels<M, CN>>
     ) => void | Promise<void>
   ) {
-    const collection =
-      collectionName !== '_metadata'
-        ? ((await this.getSchema())?.collections[
-            collectionName
-          ] as CollectionFromModels<M, CN>)
-        : undefined;
+    const schema = (await this.getSchema())?.collections as M;
 
     // TODO: Would be great to plug into the pipeline at any point
     // In this case I want untimestamped values, valid values
@@ -565,13 +567,11 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     }
 
     // Collect changes
-    const collectionSchema = collection?.schema;
     const changes = new ChangeTracker(entity);
-    const updateProxy = createUpdateProxy<typeof collectionSchema>(
-      changes,
-      entity,
-      collectionSchema
-    );
+    const updateProxy =
+      collectionName === '_metadata'
+        ? createUpdateProxy<M, CN>(changes, entity)
+        : createUpdateProxy<M, CN>(changes, entity, schema, collectionName);
 
     // Run updater (runs serialization of values)
     await updater(updateProxy);
@@ -622,11 +622,15 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     query: Q,
     options: DBFetchOptions = {}
   ): Promise<FetchResult<Q>> {
-    const { query: fetchQuery } = await prepareQuery(this, query, options);
+    const schema = (await this.getSchema())?.collections as M;
+    const fetchQuery = prepareQuery(query, schema, {
+      variables: this.variables,
+      skipRules: options.skipRules,
+    });
     // TODO: read scope?
     // See difference between this fetch and db fetch
     return fetch<M, Q>(this.storeTx, fetchQuery, {
-      schema: (await this.getSchema())?.collections,
+      schema,
       includeTriples: false,
     });
   }
@@ -679,18 +683,28 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
   async createCollection(params: CreateCollectionOperation[1]) {
     // Create schema object so it can be updated
     await this.checkOrCreateSchema();
-    const { name: collectionName, schema: schemaJSON, rules } = params;
+    // The set of params here is unfortunately awkward to add to because of the way the schema is stored
+    // We really want schema to encompass properties + optional + whatever else a part of the record type
+    // Keeping the way it is now for backwards compatability though
+    const {
+      name: collectionName,
+      schema: schemaJSON,
+      rules,
+      optional,
+    } = params;
     await this.update(
       this.METADATA_COLLECTION_NAME,
       '_schema',
       async (schemaEntity) => {
         // If there are no collections, create property
         if (!schemaEntity.collections) schemaEntity.collections = {};
+        const sortedOptional = optional ? optional.slice().sort() : undefined;
         // Overwrite collection data
         // Schemas are saved as record types, so translate that here
         const schemaJSONWithType = typeFromJSON({
           type: 'record',
           properties: schemaJSON,
+          optional: sortedOptional,
         }).toJSON();
         const newSchema: any = {
           schema: schemaJSONWithType,
@@ -715,62 +729,85 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
   }
 
   async addAttribute(params: AddAttributeOperation[1]) {
-    const { collection: collectionName, path, attribute } = params;
+    const { collection: collectionName, path, attribute, optional } = params;
+    validatePath(path);
     await this.update(
       this.METADATA_COLLECTION_NAME,
       '_schema',
       async (schema) => {
-        const collectionAttributes = schema.collections[collectionName];
-        if (!collectionAttributes.schema) {
-          // TODO add proper Typescript type here
-          collectionAttributes.schema = { type: 'record', properties: {} };
-        }
+        validateCollectionName(schema.collections, collectionName);
 
-        ValuePointer.Set(
-          collectionAttributes.schema.properties,
-          path.join('/'),
-          attribute
+        const parentPath = path.slice(0, -1);
+        const attrName = path[path.length - 1];
+
+        const parent = getAttribute(
+          parentPath,
+          schema.collections[collectionName]
         );
+        validateIsValidRecordInTraversal(parent, path);
+
+        // Update properties
+        parent.properties[attrName] = attribute;
+
+        updateOptional(parent, attrName, optional ?? false);
       }
     );
   }
 
   async dropAttribute(params: DropAttributeOperation[1]) {
     const { collection: collectionName, path } = params;
-    // Update schema if there is schema
+    validatePath(path);
     await this.update(
       this.METADATA_COLLECTION_NAME,
       '_schema',
       async (schema) => {
-        const collectionAttributes = schema.collections[collectionName];
+        validateCollectionName(schema.collections, collectionName);
+
         const parentPath = path.slice(0, -1);
         const attrName = path[path.length - 1];
-        let attr = parentPath.reduce((acc, curr) => {
-          if (!acc[curr]) acc[curr] = {};
-          return acc[curr];
-        }, collectionAttributes.schema.properties);
-        delete attr[attrName];
+
+        const parent = getAttribute(
+          parentPath,
+          schema.collections[collectionName]
+        );
+        validateIsValidRecordInTraversal(parent, path);
+
+        delete parent.properties[attrName];
+
+        updateOptional(parent, attrName, false);
       }
     );
   }
 
   async alterAttributeOption(params: AlterAttributeOptionOperation[1]) {
     const { collection: collectionName, path, options } = params;
+    validatePath(path);
     await this.update(
       this.METADATA_COLLECTION_NAME,
       '_schema',
       async (schema) => {
-        const collectionAttributes = schema.collections[collectionName];
+        validateCollectionName(schema.collections, collectionName);
+
         const parentPath = path.slice(0, -1);
         const attrName = path[path.length - 1];
-        let attr = parentPath.reduce((acc, curr) => {
-          if (!acc[curr]) acc[curr] = {};
-          return acc[curr];
-        }, collectionAttributes.schema.properties);
+
+        const parent = getAttribute(
+          parentPath,
+          schema.collections[collectionName]
+        );
+        validateIsValidRecordInTraversal(parent, path);
+
+        const attr = parent.properties[attrName];
+        if (!attr)
+          throw new InvalidSchemaPathError(
+            path,
+            'Could not traverse this path'
+          );
+
         for (const [option, value] of Object.entries(options)) {
           // // instantiate this here until we support empty objects
-          if (!attr[attrName].options) attr[attrName].options = {};
-          attr[attrName].options[option] = value;
+          if (!attr.options) attr.options = {};
+          attr.options[option] = value;
         }
       }
     );
@@ -778,20 +815,30 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
 
   async dropAttributeOption(params: DropAttributeOptionOperation[1]) {
     const { collection: collectionName, path, option } = params;
-    // Update schema if there is schema
+    validatePath(path);
     await this.update(
       this.METADATA_COLLECTION_NAME,
       '_schema',
       async (schema) => {
-        const collectionAttributes = schema.collections[collectionName];
-        let attr = path.reduce((acc, curr) => {
-          if (!acc[curr]) acc[curr] = {};
-          return acc[curr];
-        }, collectionAttributes.schema.properties);
+        validateCollectionName(schema.collections, collectionName);
 
-        // instantiate this here until we support empty objects
-        if (!attr.options) attr.options = {};
-        delete attr.options[option];
+        const parentPath = path.slice(0, -1);
+        const attrName = path[path.length - 1];
+
+        const parent = getAttribute(
+          parentPath,
+          schema.collections[collectionName]
+        );
+        validateIsValidRecordInTraversal(parent, path);
+
+        const attr = parent.properties[attrName];
+        if (!attr)
+          throw new InvalidSchemaPathError(
+            path,
+            'Could not traverse this path'
+          );
+
+        if (attr.options) delete attr.options[option];
       }
     );
   }
@@ -821,6 +868,91 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
         delete collectionAttributes.rules[scope][id];
       }
     );
+  }
+
+  async setAttributeOptional(params: SetAttributeOptionalOperation[1]) {
+    const { collection: collectionName, path, optional } = params;
+    validatePath(path);
+    await this.update(
+      this.METADATA_COLLECTION_NAME,
+      '_schema',
+      async (schema) => {
+        validateCollectionName(schema.collections, collectionName);
+
+        const parentPath = path.slice(0, -1);
+        const attrName = path[path.length - 1];
+
+        const parent = getAttribute(
+          parentPath,
+          schema.collections[collectionName]
+        );
+        validateIsValidRecordInTraversal(parent, path);
+
+        if (!parent.properties[attrName]) {
+          throw new InvalidSchemaPathError(
+            path,
+            'Could not traverse this path'
+          );
+        }
+
+        updateOptional(parent, attrName, optional);
+      }
+    );
+  }
+}
+
+// Updates the optional properties of a record type
+// Only use pure assignment operations for arrays
+// Ensure optional is sorted when assigned
+function updateOptional(
+  recordAttr: RecordType<any>,
+  attrName: string,
+  optional: boolean
+) {
+  if (!recordAttr.optional && optional) recordAttr.optional = [attrName];
+  if (recordAttr.optional) {
+    if (!recordAttr.optional.includes(attrName) && optional) {
+      const updatedKeys = [];
+      for (let i = 0; i < recordAttr.optional.length; i++) {
+        updatedKeys.push(recordAttr.optional[i]);
+      }
+      recordAttr.optional = [...updatedKeys, attrName].sort();
+    } else if (recordAttr.optional.includes(attrName) && !optional)
+      recordAttr.optional = recordAttr.optional
+        .filter((attr) => attr !== attrName)
+        .sort();
+  }
+}
+
+function getAttribute(path: string[], collectionAttributes: any) {
+  return path.reduce((acc, curr) => {
+    validateIsValidRecordInTraversal(acc, path);
+    return acc.properties[curr];
+  }, collectionAttributes.schema);
+}
+
+function validateIsValidRecordInTraversal(record: any, path: string[]) {
+  if (!record)
+    throw new InvalidSchemaPathError(path, 'Could not traverse this path');
+  if (!record.properties)
+    throw new InvalidSchemaPathError(
+      path,
+      'This path terminated at a non-record type.'
+    );
+}
+
+function validatePath(path: string[]) {
+  if (path.length === 0)
+    throw new InvalidSchemaPathError(
+      path,
+      'The provided path is empty. Paths must be at least one level deep.'
+    );
+}
+
+function validateCollectionName(collections: any, collectionName: string) {
+  const collectionAttributes = collections[collectionName];
+  if (!collectionAttributes?.schema) {
+    throw new CollectionNotFoundError(collectionName, collections);
   }
 }
 
@@ -868,51 +1000,48 @@ export class ChangeTracker {
   }
 }
 
-export function createUpdateProxy<M extends Model<any> | undefined>(
+export function createUpdateProxy<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+>(
   changeTracker: ChangeTracker,
-  entityObj: Partial<UpdateTypeFromModel<M>>,
+  entityObj: any, // TODO: type this properly, should be an untimestamped entity
   schema?: M,
+  collectionName?: CN,
   prefix: string = ''
-): UpdateTypeFromModel<M> {
-  return new Proxy(entityObj as UpdateTypeFromModel<M>, {
+): UpdateTypeFromModel<ModelFromModels<M, CN>> {
+  function proxyDeleteProperty(prop: string) {
+    const propPointer = [prefix, prop].join('/');
+    // ValuePointer.Set(changeTracker, propPointer, undefined);
+    changeTracker.set(propPointer, undefined);
+    ValuePointer.Delete(entityObj, prop as string);
+    return true;
+  }
+
+  // @ts-expect-error - weird types here
+  const collectionSchema = schema?.[collectionName]?.schema;
+
+  const convertedForRead = convertEntityToJS(
+    entityObj,
+    schema,
+    collectionName
+  ) as UpdateTypeFromModel<ModelFromModels<M, CN>>;
+  return new Proxy(convertedForRead, {
     set: (_target, prop, value) => {
       if (typeof prop === 'symbol') return true;
       const propPointer = [prefix, prop].join('/');
-      if (!schema) {
+      if (!collectionSchema) {
+        if (value === undefined) return proxyDeleteProperty(prop);
         changeTracker.set(propPointer, value);
         return true;
       }
-      const propSchema = getSchemaFromPath(
-        schema,
-        propPointer.slice(1).split('/')
-      );
+      const propPath = propPointer.slice(1).split('/');
+      const propSchema = getSchemaFromPath(collectionSchema, propPath);
       if (!propSchema) {
         throw new UnrecognizedPropertyInUpdateError(propPointer, value);
       }
-      if (propSchema.type === 'set') {
-        if (value === null && propSchema.options.nullable) {
-          changeTracker.set(propPointer, null);
-          return true;
-        }
-        if (!Array.isArray(value) && !(value instanceof Set)) {
-          throw new DBSerializationError(
-            'Set',
-            `Cannot assign a non-array or non-set value to a set.`
-          );
-        }
-        const existingVal = changeTracker.get(propPointer);
-        const setProxy = createSetProxy(changeTracker, propPointer, propSchema);
-
-        if (existingVal !== null) {
-          setProxy.clear();
-        } else {
-          // Set object landmark if empty set or previously null
-          changeTracker.set(propPointer, new Set());
-        }
-        for (const v of value) {
-          setProxy.add(v);
-        }
-        return true;
+      if (propSchema.context.optional && value === undefined) {
+        return proxyDeleteProperty(prop);
       }
       const dbValue = propSchema.convertInputToDBValue(
         // @ts-expect-error Big DataType union results in never as arg type
@@ -923,40 +1052,57 @@ export function createUpdateProxy<M extends Model<any> | undefined>(
     },
     deleteProperty: (_target, prop) => {
       if (typeof prop === 'symbol') return true;
-      if (!!schema)
-        throw new InvalidOperationError(
-          `Cannot delete property ${prop}. If the property is nullable you can set it to null instead.`
-        );
-      const propPointer = [prefix, prop].join('/');
-      // ValuePointer.Set(changeTracker, propPointer, undefined);
-      changeTracker.set(propPointer, undefined);
-      ValuePointer.Delete(entityObj, prop as string);
-      return true;
+      if (collectionSchema) {
+        const propPointer = [prefix, prop].join('/');
+        const propPath = propPointer.slice(1).split('/');
+        const propSchema = getSchemaFromPath(
+          collectionSchema,
+          propPath
+        ) as RecordType<any>;
+        if (!propSchema.context.optional) {
+          throw new InvalidOperationError(
+            `Cannot delete property ${prop} because it is not optional. Please mark this property optional in your schema. If the property is nullable you may also set it to null.`
+          );
+        }
+      }
+      return proxyDeleteProperty(prop);
     },
     get: (_target, prop) => {
       if (typeof prop === 'symbol') return undefined;
       const parentPropPointer = [prefix, prop].join('/');
       const currentValue = changeTracker.get(parentPropPointer);
-      if (currentValue === null) {
-        return null;
-      }
-      const propSchema =
-        schema &&
-        getSchemaFromPath(schema, parentPropPointer.slice(1).split('/'));
+      // Non exitent values should be read as undefined
+      if (currentValue === undefined) return undefined;
+      // Null values will be returned as null (essentially the base case of "return currentValue")
+      if (currentValue === null) return null;
 
+      const propSchema =
+        collectionSchema &&
+        getSchemaFromPath(
+          collectionSchema,
+          parentPropPointer.slice(1).split('/')
+        );
+
+      // Handle sets
       if (propSchema && propSchema.type === 'set') {
         return createSetProxy(changeTracker, parentPropPointer, propSchema);
       }
+
+      // Handle deep objects
       if (typeof currentValue === 'object' && currentValue !== null) {
         return createUpdateProxy(
           changeTracker,
           currentValue,
           schema,
+          collectionName,
           parentPropPointer
         );
       }
 
-      return currentValue;
+      // TODO: fixup access to 'constructor' and other props
+      return propSchema
+        ? propSchema.convertDBValueToJS(currentValue)
+        : currentValue;
     },
   });
 }
