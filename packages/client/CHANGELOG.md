@@ -1,5 +1,72 @@
 # @triplit/client
 
+## 0.3.36
+
+### Patch Changes
+
+- 2ec5ecd: support passing in customer Web Worker url
+
+## 0.3.35
+
+### Patch Changes
+
+- 49c8848: fixup worker-client export
+
+## 0.3.34
+
+### Patch Changes
+
+- 6c75805: add support for bulk inserts using file upload
+- Updated dependencies [1d78145]
+  - @triplit/db@0.3.29
+
+## 0.3.33
+
+### Patch Changes
+
+- f944c0b: allow access to noCache param to toggle experimental VAC
+- Updated dependencies [f944c0b]
+  - @triplit/db@0.3.28
+
+## 0.3.32
+
+### Patch Changes
+
+- eddc659: Add utilities for paginated subscriptions
+- Updated dependencies [5b36d92]
+- Updated dependencies [eddc659]
+- Updated dependencies [753e546]
+- Updated dependencies [7408dca]
+- Updated dependencies [26397d4]
+  - @triplit/db@0.3.27
+
+## 0.3.31
+
+### Patch Changes
+
+- 64349f8: serialize log args with superjson
+
+## 0.3.30
+
+### Patch Changes
+
+- 7e2fdb1: fixup client logs readability
+- Updated dependencies [b5744e9]
+  - @triplit/db@0.3.26
+
+## 0.3.29
+
+### Patch Changes
+
+- 11b811d: Include hasRemoteFulfilled on local only subscriptions
+- 3ddaac3: add utilities for infinite scrolling
+- f911d72: improve error message on remote client parse errors
+- Updated dependencies [654c256]
+- Updated dependencies [3ddaac3]
+- Updated dependencies [da425e6]
+- Updated dependencies [d20f7b4]
+  - @triplit/db@0.3.25
+
 ## 0.3.28
 
 ### Patch Changes

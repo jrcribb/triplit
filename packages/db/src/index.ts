@@ -26,6 +26,7 @@ export type {
   SetAttributeOptionalOperation,
   DBConfig,
   FetchByIdQueryParams,
+  DBFetchOptions,
 } from './db.js';
 export { ChangeTracker, createUpdateProxy } from './db-transaction.js';
 export type { DBTransaction } from './db-transaction.js';
@@ -36,11 +37,21 @@ export {
   constructEntity,
   // TODO
   triplesToEntities as constructEntities,
+  compareCursors,
   QUERY_INPUT_TRANSFORMERS,
 } from './query.js';
 // TS issue occurs if we dont export FilterGroup (i think due to an infered return type somewhere)
-export type { Query, FilterGroup, CollectionQuery } from './query.js';
-export { stripCollectionFromId, appendCollectionToId } from './db-helpers.js';
+export type {
+  Query,
+  FilterGroup,
+  CollectionQuery,
+  ValueCursor,
+} from './query.js';
+export {
+  stripCollectionFromId,
+  appendCollectionToId,
+  logSchemaChangeViolations,
+} from './db-helpers.js';
 export type {
   TripleRow,
   EntityId,

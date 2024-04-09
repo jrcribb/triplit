@@ -1,11 +1,8 @@
 // import { Schema as S } from '@triplit/db';
 
 /**
- * Define your schema here. To use your schema, you can either:
- * - Directly import your schema into your app
- * - Run 'triplit migrate create' to generate migrations (recommended for production apps)
- *
- * For more information on schemas, see the docs: https://www.triplit.dev/docs/schemas
+ * Define your schema here.
+ * For more information on schemas, see the docs: https://www.triplit.dev/docs/database/schemas
  */
 export const schema = {
   // todos: {

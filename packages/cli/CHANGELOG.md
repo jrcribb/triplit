@@ -1,5 +1,119 @@
 # @triplit/cli
 
+## 0.3.43
+
+### Patch Changes
+
+- Updated dependencies [2ec5ecd]
+  - @triplit/client@0.3.36
+  - @triplit/console@0.3.40
+
+## 0.3.42
+
+### Patch Changes
+
+- Updated dependencies [49c8848]
+  - @triplit/client@0.3.35
+  - @triplit/console@0.3.39
+
+## 0.3.41
+
+### Patch Changes
+
+- dc979ae: catch early return for "real" errors in schema push
+- 17b4a79: add file upload support to v2 worker
+- Updated dependencies [1d78145]
+- Updated dependencies [6c75805]
+  - @triplit/db@0.3.29
+  - @triplit/client@0.3.34
+  - @triplit/server@0.3.32
+  - @triplit/console@0.3.38
+  - @triplit/server-core@0.3.32
+
+## 0.3.40
+
+### Patch Changes
+
+- bc94991: add --seed option to dev command
+  - @triplit/console@0.3.37
+
+## 0.3.39
+
+### Patch Changes
+
+- Updated dependencies [f944c0b]
+  - @triplit/client@0.3.33
+  - @triplit/db@0.3.28
+  - @triplit/console@0.3.36
+  - @triplit/server@0.3.31
+  - @triplit/server-core@0.3.31
+
+## 0.3.38
+
+### Patch Changes
+
+- a51bee8: add schema push command
+- Updated dependencies [dea15f5]
+- Updated dependencies [5b36d92]
+- Updated dependencies [eddc659]
+- Updated dependencies [eddc659]
+- Updated dependencies [753e546]
+- Updated dependencies [d71b6f6]
+- Updated dependencies [7408dca]
+- Updated dependencies [26397d4]
+  - @triplit/server-core@0.3.30
+  - @triplit/server@0.3.30
+  - @triplit/db@0.3.27
+  - @triplit/client@0.3.32
+  - @triplit/console@0.3.35
+
+## 0.3.37
+
+### Patch Changes
+
+- Updated dependencies [64349f8]
+  - @triplit/client@0.3.31
+  - @triplit/console@0.3.34
+
+## 0.3.36
+
+### Patch Changes
+
+- Updated dependencies [b5744e9]
+- Updated dependencies [7e2fdb1]
+  - @triplit/db@0.3.26
+  - @triplit/client@0.3.30
+  - @triplit/console@0.3.33
+  - @triplit/server@0.3.29
+  - @triplit/server-core@0.3.29
+
+## 0.3.35
+
+### Patch Changes
+
+- c4501d6: Fixup schema diff command when no diff
+
+## 0.3.34
+
+### Patch Changes
+
+- c430a9b: add initWithSchema flag to `dev` command
+- 1b28ca7: fixup handling of cli flags with defaults
+- 6ccc68c: split seed into 'run' and 'create' commands
+- a5d593d: load schema to dev server by default
+- Updated dependencies [11b811d]
+- Updated dependencies [654c256]
+- Updated dependencies [3ddaac3]
+- Updated dependencies [3ddaac3]
+- Updated dependencies [da425e6]
+- Updated dependencies [d20f7b4]
+- Updated dependencies [f911d72]
+  - @triplit/client@0.3.29
+  - @triplit/db@0.3.25
+  - @triplit/console@0.3.32
+  - @triplit/server@0.3.28
+  - @triplit/server-core@0.3.28
+
 ## 0.3.33
 
 ### Patch Changes

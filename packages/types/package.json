@@ -2,7 +2,8 @@
   "name": "@triplit/types",
   "packageManager": "yarn@3.4.1",
   "scripts": {
-    "build": "tsc"
+    "build": "tsc",
+    "build:watch": "tsc -w"
   },
   "exports": {
     "./*": {
@@ -13,8 +14,5 @@
   },
   "devDependencies": {
     "typescript": "^5.2.2"
-  },
-  "dependencies": {
-    "@triplit/db": "^0.3.0"
   }
 }

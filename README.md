@@ -44,12 +44,99 @@ In `triplit/packages` you can find the various projects that power Triplit:
 - [Client](https://github.com/aspen-cloud/triplit/tree/main/packages/client) - Browser library to interact with local and remote TriplitDBs.
 - [CLI](https://github.com/aspen-cloud/triplit/tree/main/packages/cli) - CLI tool with commands to scaffold a project, run the full-stack development environment, migrate a server, and more.
 - [React](https://github.com/aspen-cloud/triplit/tree/main/packages/react) - React bindings for @triplit/client.
-- [Console](https://github.com/aspen-cloud/triplit/tree/main/packages/console) - React app for viewing and mutating data in Triplit projects and managing their schemas.
+- [Svelte](https://github.com/aspen-cloud/triplit/tree/main/packages/svelte) - Svelte bindings for @triplit/client.
+- [Console](https://github.com/aspen-cloud/triplit/tree/main/packages/console) - App for viewing and mutating data in Triplit projects and managing their schemas.
 - [Server](https://github.com/aspen-cloud/triplit/tree/main/packages/server) - Node server for syncing data between Triplit clients.
 - [Server-core](https://github.com/aspen-cloud/triplit/tree/main/packages/server-core) - Protocol agnostic library for building servers running Triplit.
 - [Docs](https://github.com/aspen-cloud/triplit/tree/main/packages/docs) - Triplit docs, built with Nextra.
 - [Types](https://github.com/aspen-cloud/triplit/tree/main/packages/types) - Shared types for various Triplit projects.
 - [UI](https://github.com/aspen-cloud/triplit/tree/main/packages/ui) - Shared UI components for Triplit frontend projects, built with [shadcn](https://ui.shadcn.com/).
+
+# Quick Start
+
+Start a new project.
+
+```bash
+npm create triplit-app@latest my-app
+```
+
+Or add the dependencies to an existing project.
+
+```bash
+npm install --save-dev @triplit/cli
+npm run triplit init
+```
+
+Define a [schema](https://www.triplit.dev/docs/database/schemas) in `my-app/triplit/schema.ts`.
+
+```ts
+import { Schema as S } from '@triplit/db';
+import { ClientSchema } from '@triplit/client';
+
+export const schema = {
+  todos: {
+    schema: S.Schema({
+      id: S.Id(),
+      text: S.String(),
+      completed: S.Boolean({ default: false }),
+    }),
+  },
+} satisfies ClientSchema;
+```
+
+Start the Triplit development [sync server](https://www.triplit.dev/docs/syncing-data).
+
+```bash
+npm run triplit dev --initWithSchema
+```
+
+This will output some important [environmental variables](https://www.triplit.dev/docs/local-development#additional-environment-variables) that your app will need to sync with the server. Add them to your `.env` file (Vite example below).
+
+```bash
+VITE_TRIPLIT_SERVER_URL=http://localhost:6543
+VITE_TRIPLIT_TOKEN=copied-in-from-triplit-dev
+```
+
+Define a [query](https://www.triplit.dev/docs/fetching-data/queries) in your App (React example below).
+
+```tsx
+import { TriplitClient } from '@triplit/client';
+import { useQuery } from '@triplit/react';
+import { schema } from '../triplit/schema';
+
+const client = new TriplitClient({
+  schema,
+  serverUrl: import.meta.env.VITE_TRIPLIT_SERVER_URL,
+  token: import.meta.env.VITE_TRIPLIT_TOKEN,
+});
+
+function App() {
+  const { results: todos } = useQuery(client.query('todos'));
+
+  return (
+    <div>
+      {Array.from(todos.values()).map((todo) => (
+        <div key={todo.id}>
+          <input
+            type="checkbox"
+            checked={todo.completed}
+            onChange={() =>
+              client.update('todos', todo.id, (todo) => ({
+                todo.completed = !todo.completed,
+              })
+            }
+          />
+          {todo.text}
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+Start your app, open another browser tab, and watch the data sync in real-time.
+
+Read the full getting started guide [here](https://www.triplit.dev/docs/getting-started). For an even more detailed and explanatory tutorial, check out this step-by-step guide to [building a real-time todo app with Triplit, Vite, and React](https://www.triplit.dev/docs/react-tutorial).
 
 # Contact us
 

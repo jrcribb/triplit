@@ -63,9 +63,7 @@ const query = client.query('messages').include('sender');
   id: '1',
   text: 'hello world!',
   sender_id: 'bob',
-  sender: new Map([
-    ['bob', { id: 'bob', name: 'Bob Jones', email: 'bob@triplit.com' }],
-  ]),
+  sender: { id: 'bob', name: 'Bob Jones', email: 'bob@triplit.com' },
 };
 */
 ```
@@ -118,7 +116,7 @@ const query = client.query('users').where('address.city', '=', 'New York');
 
 ### Operators
 
-See the list of [data types](/schemas#data-types) for more information on the operators that can be used in a where clause.
+See the list of [data types](/database/schemas#data-types) for more information on the operators that can be used in a where clause.
 
 ## Order
 
@@ -144,6 +142,45 @@ You may use dot notation to order by attributes of a record.
 ```typescript
 const query = client.query('users').order('address.city', 'ASC');
 ```
+
+### Ordering with relations
+
+If you are using a schema, you can order by attributes of related entities. For example, the following schema defines a relation between `users` and `messages`
+
+```typescript
+const schema = {
+  users: S.Schema({
+    id: S.Id(),
+    name: S.String(),
+    email: S.String(),
+  }),
+  messages: S.Schema({
+    id: S.Id(),
+    text: S.String(),
+    created_at: S.Date({ default: S.Default.now() }),
+    sender_id: S.String(),
+    sender: S.RelationById('users', '$sender_id'),
+  }),
+};
+```
+
+You can then order messages by the name of the sender.
+
+```typescript
+// Order messages by the name of the sender in ascending order
+client.query('messages').order('sender.name', 'ASC');
+
+// Order messages by the name of the sender and then by the created date in descending order
+client.query('messages').order([
+  ['sender.name', 'ASC'],
+  ['created_at', 'DESC'],
+]);
+```
+
+<Callout type="info">
+  Ordering with relations is only supported for one-to-one relations, such as
+  `RelationById` or `RelationOne`.
+</Callout>
 
 ### After
 
@@ -204,7 +241,7 @@ Certain variables are used internally by Triplit to aid with authorization and o
 
 ## Sync state
 
-Triplit's client [storage](/client-database/storage) is split into two areas - an outbox for unsynced updates and a cache for synced updates. Sometimes you may want to indicate that to a user that data has not yet been saved to the server. To do this, you can use the `syncStatus` method. This method accepts a single sync state (`pending`, `confirmed`, `all`) as an argument.
+Triplit's client [storage](/database/storage) is split into two areas - an outbox for unsynced updates and a cache for synced updates. Sometimes you may want to indicate that to a user that data has not yet been saved to the server. To do this, you can use the `syncStatus` method. This method accepts a single sync state (`pending`, `confirmed`, `all`) as an argument.
 
 For example, a messaging app could use two queries to build message sent indicators. In [React](/frameworks/react):
 

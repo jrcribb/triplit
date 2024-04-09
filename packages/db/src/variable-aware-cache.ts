@@ -1,9 +1,10 @@
 import {
   CollectionQuerySchema,
   FetchResult,
+  TimestampedFetchResult,
   subscribeResultsAndTriples,
 } from './collection-query.js';
-import { ModelFromModels } from './db.js';
+import { CollectionNameFromModels, ModelFromModels } from './db.js';
 import { mapFilterStatements } from './db-helpers.js';
 import {
   CollectionQuery,
@@ -31,8 +32,9 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
 
   static canCacheQuery<
     M extends Models<any, any> | undefined,
-    Q extends CollectionQuery<any, any>
-  >(query: Q, model?: ModelFromModels<M> | undefined) {
+    CN extends CollectionNameFromModels<M>,
+    Q extends CollectionQuery<M, CN>
+  >(query: Q, model?: ModelFromModels<M, CN> | undefined) {
     // if (!model) return false;
     if (
       query.where &&
@@ -45,11 +47,10 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
 
     const statements = mapFilterStatements(query.where ?? [], (f) => f).filter(
       isFilterStatement
-    ) as FilterStatement<ModelFromModels<M>>[];
-    const variableStatements: FilterStatement<ModelFromModels<M>>[] =
-      statements.filter(
-        ([, , v]) => typeof v === 'string' && v.startsWith('$')
-      );
+    ) as FilterStatement<M, CN>[];
+    const variableStatements: FilterStatement<M, CN>[] = statements.filter(
+      ([, , v]) => typeof v === 'string' && v.startsWith('$')
+    );
     if (variableStatements.length !== 1) return false;
 
     if (!['=', '<', '<=', '>', '>=', '!='].includes(variableStatements[0][1]))
@@ -64,7 +65,10 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
     return true;
   }
 
-  async createView<Q extends CollectionQuery<Schema, any>>(viewQuery: Q) {
+  async createView<Q extends CollectionQuery<Schema, any>>(
+    viewQuery: Q,
+    schema: Schema
+  ) {
     return new Promise<void>((resolve) => {
       const id = this.viewQueryToId(viewQuery);
       subscribeResultsAndTriples<Schema, Q>(
@@ -73,6 +77,14 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
         ([results, triples]) => {
           this.cache.set(id, { results, triples });
           resolve();
+        },
+        (err) => {
+          console.error('error in view', err);
+          this.cache.delete(id);
+        },
+        schema,
+        {
+          skipRules: true,
         }
       );
     });
@@ -83,9 +95,10 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
   }
 
   async resolveFromCache<Q extends CollectionQuery<Schema, any>>(
-    query: Q
+    query: Q,
+    schema: Schema
   ): Promise<{
-    results: FetchResult<Q>;
+    results: TimestampedFetchResult<Q>;
     triples: Map<string, TripleRow[]>;
   }> {
     const { views, variableFilters } = this.queryToViews(query);
@@ -93,7 +106,7 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
     const id = this.viewQueryToId(views[0]);
     // console.log('attempting to use index for', id);
     if (!this.cache.has(id)) {
-      await this.createView(views[0]);
+      await this.createView(views[0], schema);
     }
     // TODO support multiple variable clauses
     const [prop, op, varStr] = variableFilters[0];
@@ -154,7 +167,7 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
         ...viewResultEntries.slice(end),
       ];
       return {
-        results: new Map(resultEntries) as FetchResult<Q>,
+        results: new Map(resultEntries) as TimestampedFetchResult<Q>,
         triples: new Map(
           resultEntries.map(([id, _]) => [id, view.triples.get(id)!])
         ),
@@ -175,23 +188,24 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
     const resultEntries = viewResultEntries.slice(start, end + 1);
 
     return {
-      results: new Map(resultEntries) as FetchResult<Q>,
+      results: new Map(resultEntries) as TimestampedFetchResult<Q>,
       triples: new Map(
         resultEntries.map(([id, _]) => [id, view.triples.get(id)!])
       ),
     };
   }
 
-  queryToViews<Q extends CollectionQuery<Schema, any>>(query: Q) {
-    const variableFilters: FilterStatement<
-      CollectionQuerySchema<Q> | undefined
-    >[] = [];
+  queryToViews<
+    CN extends CollectionNameFromModels<Schema>,
+    Q extends CollectionQuery<Schema, CN>
+  >(query: Q) {
+    const variableFilters: FilterStatement<Schema, CN>[] = [];
     const nonVariableFilters = query.where
       ? query.where.filter((filter) => {
           if (!(filter instanceof Array)) return true;
           const [prop, _op, val] = filter;
           if (typeof val === 'string' && val.startsWith('$')) {
-            variableFilters.push([prop as string, _op, val]);
+            variableFilters.push([prop, _op, val]);
             return false;
           }
           return true;

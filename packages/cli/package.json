@@ -1,9 +1,10 @@
 {
   "name": "@triplit/cli",
-  "version": "0.3.33",
+  "version": "0.3.43",
   "type": "module",
   "scripts": {
     "build": "tsc",
+    "build:watch": "tsc -w",
     "lint": "tsc --noEmit",
     "lint:strict": "tsc --noEmit --strict",
     "test": "vitest run",

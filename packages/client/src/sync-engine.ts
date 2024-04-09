@@ -30,6 +30,7 @@ import {
 import { Value } from '@sinclair/typebox/value';
 import { ClientFetchResult, ClientQuery } from './utils/query.js';
 import { TripleStoreApi } from 'packages/db/src/triple-store.js';
+import { Logger } from '@triplit/types/logger';
 
 type OnMessageReceivedCallback = (message: ServerSyncMessage) => void;
 type OnMessageSentCallback = (message: ClientSyncMessage) => void;
@@ -65,6 +66,7 @@ export class SyncEngine {
   private messageSentSubscribers: Set<OnMessageSentCallback> = new Set();
 
   private awaitingAck: Set<string> = new Set();
+  logger: Logger;
 
   /**
    *
@@ -72,6 +74,7 @@ export class SyncEngine {
    * @param db the client database to be synced
    */
   constructor(options: SyncOptions, db: DB<any>) {
+    this.logger = options.logger;
     this.syncOptions = options;
     this.syncOptions.secure = options.secure ?? true;
     this.syncOptions.syncSchema = options.syncSchema ?? false;
@@ -169,7 +172,9 @@ export class SyncEngine {
    * @hidden
    */
   subscribe(params: CollectionQuery<any, any>, onQueryFulfilled?: () => void) {
-    const queryHash = Value.Hash(params).toString();
+    // @ts-expect-error
+    const { id: requestId, ...queryParams } = params;
+    const queryHash = Value.Hash(queryParams).toString();
     const id = queryHash;
     this.getQueryState(id).then((queryState) => {
       this.sendMessage({
@@ -270,11 +275,14 @@ export class SyncEngine {
    * Initiate a sync connection with the server
    */
   async connect() {
-    this.closeConnection({ type: 'CONNECTION_OVERRIDE', retry: false });
+    if (this.transport.connectionStatus !== 'CLOSED') {
+      this.closeConnection({ type: 'CONNECTION_OVERRIDE', retry: false });
+    }
     const params = await this.getConnectionParams();
     this.transport.connect(params);
     this.transport.onMessage(async (evt) => {
       const message: ServerSyncMessage = JSON.parse(evt.data);
+      this.logger.debug('received', message);
       for (const handler of this.messageReceivedSubscribers) {
         handler(message);
       }
@@ -293,11 +301,14 @@ export class SyncEngine {
           // this.queryFulfillmentCallbacks.delete(qId);
         }
         if (triples.length !== 0) {
-          await this.db.transact(async (dbTx) => {
-            await dbTx.storeTx
-              .withScope({ read: ['cache'], write: ['cache'] })
-              .insertTriples(triples);
-          });
+          await this.db.transact(
+            async (dbTx) => {
+              await dbTx.storeTx
+                .withScope({ read: ['cache'], write: ['cache'] })
+                .insertTriples(triples);
+            },
+            { skipRules: true }
+          );
         }
       }
 
@@ -364,7 +375,7 @@ export class SyncEngine {
 
       if (message.type === 'CLOSE') {
         const { payload } = message;
-        console.warn(
+        this.logger.info(
           `Closing connection${payload?.message ? `: ${payload.message}` : '.'}`
         );
         const { type, retry } = payload;
@@ -373,7 +384,7 @@ export class SyncEngine {
       }
     });
     this.transport.onOpen(async () => {
-      console.info('sync connection has opened');
+      this.logger.info('sync connection has opened');
       this.resetReconnectTimeout();
       // Cut down on message sending by only signaling if there are triples to send
       const outboxTriples = await this.getTriplesToSend(
@@ -416,14 +427,14 @@ export class SyncEngine {
         }
 
         if (type === 'SCHEMA_MISMATCH') {
-          console.error(
+          this.logger.error(
             'The server has closed the connection because the client schema does not match the server schema. Please update your client schema.'
           );
         }
 
         if (!retry) {
           // early return to prevent reconnect
-          console.warn('Connection will not automatically retry.');
+          this.logger.warn('Connection will not automatically retry.');
           return;
         }
       }
@@ -441,7 +452,7 @@ export class SyncEngine {
     });
     this.transport.onError((evt) => {
       // console.log('error ws', evt);
-      console.error(evt);
+      this.logger.error('transport error', evt);
       // on error, close the connection and attempt to reconnect
       this.transport.close();
     });
@@ -486,10 +497,11 @@ export class SyncEngine {
 
   private async handleErrorMessage(message: any) {
     const { error, metadata } = message.payload;
+    this.logger.error(error.name, metadata);
     switch (error.name) {
       case 'MalformedMessagePayloadError':
       case 'UnrecognizedMessageTypeError':
-        console.warn(
+        this.logger.warn(
           'You sent a malformed message to the server. This might occur if your client is not up to date with the server. Please ensure your client is updated.'
         );
         // TODO: If the message that fails is a triple insert, we should handle that specifically depending on the case
@@ -522,6 +534,7 @@ export class SyncEngine {
 
   private sendMessage(message: ClientSyncMessage) {
     this.transport.sendMessage(message);
+    this.logger.debug('sent', message);
     for (const handler of this.messageSentSubscribers) {
       handler(message);
     }
@@ -545,21 +558,24 @@ export class SyncEngine {
    */
   async rollback(txIds: string | string[]) {
     const txIdList = Array.isArray(txIds) ? txIds : [txIds];
-    await this.db.transact(async (tx) => {
-      const scopedTx = tx.storeTx.withScope({
-        read: ['outbox'],
-        write: ['outbox'],
-      });
-      for (const txId of txIdList) {
-        const timestamp = JSON.parse(txId);
-        const triples = await scopedTx.findByClientTimestamp(
-          await this.db.getClientId(),
-          'eq',
-          timestamp
-        );
-        await scopedTx.deleteTriples(triples);
-      }
-    });
+    await this.db.transact(
+      async (tx) => {
+        const scopedTx = tx.storeTx.withScope({
+          read: ['outbox'],
+          write: ['outbox'],
+        });
+        for (const txId of txIdList) {
+          const timestamp = JSON.parse(txId);
+          const triples = await scopedTx.findByClientTimestamp(
+            await this.db.getClientId(),
+            'eq',
+            timestamp
+          );
+          await scopedTx.deleteTriples(triples);
+        }
+      },
+      { skipRules: true }
+    );
   }
 
   /**
@@ -594,11 +610,14 @@ export class SyncEngine {
   async syncQuery(query: ClientQuery<any, any>) {
     try {
       const triples = await this.getRemoteTriples(query);
-      await this.db.transact(async (dbTx) => {
-        await dbTx.storeTx
-          .withScope({ read: ['cache'], write: ['cache'] })
-          .insertTriples(triples);
-      });
+      await this.db.transact(
+        async (dbTx) => {
+          await dbTx.storeTx
+            .withScope({ read: ['cache'], write: ['cache'] })
+            .insertTriples(triples);
+        },
+        { skipRules: true }
+      );
     } catch (e) {
       if (e instanceof TriplitError) throw e;
       if (e instanceof Error) throw new RemoteSyncFailedError(query, e.message);

@@ -1,5 +1,72 @@
 # @triplit/react
 
+## 0.3.37
+
+### Patch Changes
+
+- Updated dependencies [2ec5ecd]
+  - @triplit/client@0.3.36
+
+## 0.3.36
+
+### Patch Changes
+
+- Updated dependencies [49c8848]
+  - @triplit/client@0.3.35
+
+## 0.3.35
+
+### Patch Changes
+
+- Updated dependencies [6c75805]
+  - @triplit/client@0.3.34
+
+## 0.3.34
+
+### Patch Changes
+
+- 06d302e: fixup useEntity subscription options type
+
+## 0.3.33
+
+### Patch Changes
+
+- f944c0b: allow access to noCache param to toggle experimental VAC
+- Updated dependencies [f944c0b]
+  - @triplit/client@0.3.33
+
+## 0.3.32
+
+### Patch Changes
+
+- eddc659: Add utilities for paginated subscriptions
+- Updated dependencies [eddc659]
+  - @triplit/client@0.3.32
+
+## 0.3.31
+
+### Patch Changes
+
+- Updated dependencies [64349f8]
+  - @triplit/client@0.3.31
+
+## 0.3.30
+
+### Patch Changes
+
+- Updated dependencies [7e2fdb1]
+  - @triplit/client@0.3.30
+
+## 0.3.29
+
+### Patch Changes
+
+- 3ddaac3: add utilities for infinite scrolling
+- Updated dependencies [11b811d]
+- Updated dependencies [3ddaac3]
+- Updated dependencies [f911d72]
+  - @triplit/client@0.3.29
+
 ## 0.3.28
 
 ### Patch Changes

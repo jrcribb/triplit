@@ -6,6 +6,7 @@ import {
   NoSchemaRegisteredError,
   SessionVariableNotFoundError,
   ValueSchemaMismatchError,
+  InvalidOrderClauseError,
 } from './errors.js';
 import {
   QueryWhere,
@@ -17,20 +18,26 @@ import {
 import {
   Model,
   Models,
+  diffSchemas,
+  getSchemaDiffIssues,
+  convertEntityToJS,
   getSchemaFromPath,
   schemaToTriples,
   triplesToSchema,
+  PossibleDataViolations,
 } from './schema.js';
-import { TripleStore, TripleStoreApi } from './triple-store.js';
+import { TripleStoreApi } from './triple-store.js';
 import { VALUE_TYPE_KEYS } from './data-types/serialization.js';
-import DB, {
-  CollectionFromModels,
-  CollectionNameFromModels,
-  DBFetchOptions,
-} from './db.js';
+import DB, { CollectionFromModels, CollectionNameFromModels } from './db.js';
 import { DBTransaction } from './db-transaction.js';
 import { DataType } from './data-types/base.js';
 import { Attribute, Value } from './triple-store-utils.js';
+import {
+  FetchResult,
+  TimestampedFetchResult,
+  validateIdentifier,
+} from './collection-query.js';
+import { Logger } from '@triplit/types/src/logger.js';
 
 const ID_SEPARATOR = '#';
 
@@ -39,6 +46,7 @@ export interface QueryPreparationOptions {
   variables?: Record<string, any>;
 }
 
+const ID_REGEX = /^[a-zA-Z0-9_\-:.]+$/;
 export function validateExternalId(id: string): Error | undefined {
   if (!id) {
     return new InvalidEntityIdError(id, 'id cannot be undefined.');
@@ -46,6 +54,13 @@ export function validateExternalId(id: string): Error | undefined {
   if (String(id).includes(ID_SEPARATOR)) {
     return new InvalidEntityIdError(id, `Id cannot include ${ID_SEPARATOR}.`);
   }
+  // TODO enable this check when we have a better understanding of what is allowed
+  // if (id.match(ID_REGEX) === null) {
+  //   return new InvalidEntityIdError(
+  //     id,
+  //     `Id must match regex ${ID_REGEX.toString()}.`
+  //   );
+  // }
   return;
 }
 
@@ -69,19 +84,27 @@ export function stripCollectionFromId(id: string): string {
 }
 
 export function replaceVariablesInFilterStatements<
-  M extends Model<any> | undefined
->(statements: QueryWhere<M>, variables: Record<string, any>): QueryWhere<M> {
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+>(
+  statements: QueryWhere<M, CN>,
+  variables: Record<string, any>
+): QueryWhere<M, CN> {
   return statements.map((filter) => {
     if ('exists' in filter) return filter;
     if (!(filter instanceof Array)) {
-      filter.filters = replaceVariablesInFilterStatements(
-        filter.filters,
-        variables
-      );
-      return filter;
+      if (!(filter instanceof Array)) {
+        return {
+          ...filter,
+          filters: replaceVariablesInFilterStatements(
+            filter.filters,
+            variables
+          ),
+        };
+      }
     }
     const replacedValue = replaceVariable(filter[2], variables);
-    return [filter[0], filter[1], replacedValue] as FilterStatement<M>;
+    return [filter[0], filter[1], replacedValue] as FilterStatement<M, CN>;
   });
 }
 
@@ -115,9 +138,12 @@ export function replaceVariablesInQuery<
   return { ...query, where, entityId };
 }
 
-export function* filterStatementIterator<M extends Model<any> | undefined>(
-  statements: QueryWhere<M>
-): Generator<FilterStatement<M> | SubQueryFilter> {
+export function* filterStatementIterator<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+>(
+  statements: QueryWhere<M, CN>
+): Generator<FilterStatement<M, CN> | SubQueryFilter> {
   for (const statement of statements) {
     if (!(statement instanceof Array) && 'filters' in statement) {
       yield* filterStatementIterator(statement.filters);
@@ -127,9 +153,12 @@ export function* filterStatementIterator<M extends Model<any> | undefined>(
   }
 }
 
-export function someFilterStatements<M extends Model<any> | undefined>(
-  statements: QueryWhere<M>,
-  someFunction: (statement: SubQueryFilter | FilterStatement<M>) => boolean
+export function someFilterStatements<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+>(
+  statements: QueryWhere<M, CN>,
+  someFunction: (statement: SubQueryFilter | FilterStatement<M, CN>) => boolean
 ): boolean {
   for (const statement of filterStatementIterator(statements)) {
     if (someFunction(statement)) return true;
@@ -137,24 +166,30 @@ export function someFilterStatements<M extends Model<any> | undefined>(
   return false;
 }
 
-export function mapFilterStatements<M extends Model<any> | undefined>(
-  statements: QueryWhere<M>,
+export function mapFilterStatements<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+>(
+  statements: QueryWhere<M, CN>,
   mapFunction: (
-    statement: SubQueryFilter | FilterStatement<M>
-  ) => SubQueryFilter | FilterStatement<M>
-): QueryWhere<M> {
+    statement: SubQueryFilter | FilterStatement<M, CN>
+  ) => SubQueryFilter | FilterStatement<M, CN>
+): QueryWhere<M, CN> {
   return statements.map((statement) => {
     if ('exists' in statement) return statement;
     if (!(statement instanceof Array) && 'filters' in statement) {
       statement.filters = mapFilterStatements(statement.filters, mapFunction);
     }
-    return mapFunction(statement as FilterStatement<M>);
+    return mapFunction(statement as FilterStatement<M, CN>);
   });
 }
 
-export function everyFilterStatement(
-  statements: QueryWhere<any>,
-  everyFunction: (statement: FilterStatement<any>) => boolean
+export function everyFilterStatement<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>
+>(
+  statements: QueryWhere<M, CN>,
+  everyFunction: (statement: FilterStatement<M, CN>) => boolean
 ): boolean {
   return statements.every((filter) => {
     if (!(filter instanceof Array) && 'filters' in filter) {
@@ -190,11 +225,31 @@ export type StoreSchema<M extends Models<any, any> | undefined> =
     ? undefined
     : never;
 
-export async function overrideStoredSchema(
-  tripleStore: TripleStore,
-  schema: StoreSchema<Models<any, any>>
-) {
-  await tripleStore.transact(async (tx) => {
+export async function overrideStoredSchema<M extends Models<any, any>>(
+  db: DB<M>,
+  schema: StoreSchema<M>
+): Promise<{
+  successful: boolean;
+  issues: PossibleDataViolations[];
+}> {
+  if (!schema) return { successful: false, issues: [] };
+  let tripleStore = db.tripleStore;
+  const result = await tripleStore.transact(async (tx) => {
+    const currentSchema = await readSchemaFromTripleStore(tx);
+    let issues: PossibleDataViolations[] = [];
+    if (currentSchema.schema) {
+      const diff = diffSchemas(currentSchema.schema, schema);
+      issues = await getSchemaDiffIssues(db, diff);
+      if (
+        issues.length > 0 &&
+        issues.some((issue) => issue.violatesExistingData)
+      )
+        return { successful: false, issues };
+
+      diff.length > 0 &&
+        db.logger.info(`applying ${diff.length} attribute changes to schema`);
+    }
+
     const existingTriples = await tx.findByEntity(
       appendCollectionToId('_metadata', '_schema')
     );
@@ -211,7 +266,44 @@ export async function overrideStoredSchema(
       expired: false,
     }));
     await tx.insertTriples(normalizedTriples);
+    return { successful: true, issues };
   });
+  return result?.output ?? { successful: false, issues: [] };
+}
+
+export function logSchemaChangeViolations(
+  successful: boolean,
+  issues: PossibleDataViolations[],
+  logger?: Logger
+) {
+  const log = logger ?? console;
+  log.warn(`Found ${issues.length} backwards incompatible schema changes.`);
+  if (successful) {
+    log.info('Schema update successful');
+  } else {
+    log.error('Schema update failed. Please resolve the following issues:');
+    const problematicIssues = issues.filter(
+      (issue) => issue.violatesExistingData
+    );
+    const collectionIssueMap = problematicIssues.reduce((acc, issue) => {
+      const collection = issue.context.collection;
+      const existingIssues = acc.get(collection) ?? [];
+      acc.set(collection, [...existingIssues, issue]);
+      return acc;
+    }, new Map<string, PossibleDataViolations[]>());
+    collectionIssueMap.forEach((issues, collection) => {
+      log.error(`\nCollection: '${collection}'`);
+      issues.forEach(({ issue, violatesExistingData, context, cure }) => {
+        if (!violatesExistingData) return;
+        log.error(
+          `\t'${context.attribute.join('.')}'
+\t\tIssue: ${issue}
+\t\tFix:   ${cure}`
+        );
+      });
+    });
+    log.info('');
+  }
 }
 
 export function validateTriple(
@@ -328,13 +420,17 @@ export function prepareQuery<
       return [prop, op, val instanceof Date ? val.toISOString() : val];
     }
   );
-  if (fetchQuery.after)
+  // TODO: need to find a better place to apply schema transformations (see where too)
+  if (fetchQuery.after) {
+    const [cursor, inclusive] = fetchQuery.after;
     fetchQuery.after = [
-      fetchQuery.after[0] instanceof Date
-        ? fetchQuery.after[0].toISOString()
-        : fetchQuery.after[0],
-      appendCollectionToId(fetchQuery.collectionName, fetchQuery.after[1]),
+      [
+        cursor[0] instanceof Date ? cursor[0].toISOString() : cursor[0],
+        appendCollectionToId(fetchQuery.collectionName, cursor[1]),
+      ],
+      inclusive,
     ];
+  }
   if (collectionSchema) {
     // If we dont have a field selection, select all fields
     // Helps guard against 'include' injection causing issues as well
@@ -366,6 +462,45 @@ export function prepareQuery<
         exists: prepareQuery(subquery, schema, options),
       };
     });
+
+    if (fetchQuery.order) {
+      // Validate that the order by fields
+      fetchQuery.order.every(([field, _direction]) => {
+        if (!schema) return true;
+        const { valid, path, reason } = validateIdentifier(
+          field,
+          schema,
+          fetchQuery.collectionName,
+          (dataType, i, path) => {
+            if (!dataType) return { valid: false, reason: 'Path not found' };
+            if (
+              i === path.length - 1 &&
+              (dataType.type === 'query' ||
+                dataType.type === 'set' ||
+                dataType.type === 'record')
+            ) {
+              return {
+                valid: false,
+                reason: 'Order by field is not sortable',
+              };
+            }
+            if (dataType.type === 'query' && dataType.cardinality !== 'one')
+              return {
+                valid: false,
+                reason:
+                  'Order by field is a query with cardinality not equal to one',
+              };
+            return { valid: true };
+          }
+        );
+        if (!valid) {
+          throw new InvalidOrderClauseError(
+            `Order by field ${field} is not valid: ${reason} at path ${path}`
+          );
+        }
+        return true;
+      });
+    }
 
     if (fetchQuery.include) {
       addSubsSelectsFromIncludes(fetchQuery, schema);
@@ -409,4 +544,18 @@ function addSubsSelectsFromIncludes<
     query.select.push(subquerySelection);
   }
   return query;
+}
+
+export function fetchResultToJS<
+  M extends Models<any, any> | undefined,
+  Q extends CollectionQuery<M, CollectionNameFromModels<M>>
+>(
+  results: TimestampedFetchResult<Q>,
+  schema: M,
+  collectionName: CollectionNameFromModels<M>
+) {
+  results.forEach((entity, id) => {
+    results.set(id, convertEntityToJS(entity, schema, collectionName));
+  });
+  return results as FetchResult<Q>;
 }

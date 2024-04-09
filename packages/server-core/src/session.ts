@@ -8,6 +8,7 @@ import {
   Value,
   appendCollectionToId,
   EntityId,
+  JSONToSchema,
 } from '@triplit/db';
 import {
   QuerySyncError,
@@ -92,6 +93,7 @@ export class Connection {
     const clientStates = new Map(
       (state ?? []).map(([sequence, client]) => [client, sequence])
     );
+    let serverHasRespondedOnce = false;
     const unsubscribe = this.session.db.subscribeTriples(
       this.session.db.query(collectionName, parsedQuery).build(),
       (results) => {
@@ -99,12 +101,15 @@ export class Connection {
         const triplesForClient = triples.filter(
           ({ timestamp: [_t, client] }) => client !== this.options.clientId
         );
-        // We should always send triples to client even if there are none
+        // We should send triples to client even if there are none
         // so that the client knows that the query has been fulfilled by the remote
+        // for the initial query response
+        if (serverHasRespondedOnce && triplesForClient.length === 0) return;
         this.sendResponse('TRIPLES', {
           triples: triplesForClient,
           forQueries: [queryKey],
         });
+        serverHasRespondedOnce = true;
       },
       (error) => {
         console.error(error);
@@ -180,7 +185,11 @@ export class Connection {
     );
     try {
       // If we fail here handle individual failures
-      const resp = await insertTriplesByTransaction(this.session.db, txTriples);
+      const resp = await insertTriplesByTransaction(
+        this.session.db,
+        txTriples,
+        hasAdminAccess(this.session.token)
+      );
       successes = resp.successes;
       failures.push(...resp.failures);
 
@@ -439,6 +448,11 @@ export class Session {
 
     // TODO: better message (maybe error about invalid parameters?)
     return ServerResponse(400, new TriplitError('Invalid format').toJSON());
+  }
+  async overrideSchema(params: { schema: any }) {
+    if (!hasAdminAccess(this.token)) return NotAdminResponse();
+    const result = await this.db.overrideSchema(JSONToSchema(params.schema));
+    return ServerResponse(result.successful ? 200 : 409, result);
   }
 
   async queryTriples({ query }: { query: CollectionQuery<any, any> }) {

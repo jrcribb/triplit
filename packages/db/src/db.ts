@@ -33,6 +33,8 @@ import {
   StoreSchema,
   prepareQuery,
   getSchemaTriples,
+  fetchResultToJS,
+  logSchemaChangeViolations,
 } from './db-helpers.js';
 import { VariableAwareCache } from './variable-aware-cache.js';
 
@@ -43,15 +45,22 @@ import {
 import { copyHooks, triplesToObject } from './utils.js';
 import { EAV, indexToTriple, TripleRow } from './triple-store-utils.js';
 import { TripleStore } from './triple-store.js';
+import { Logger } from '@triplit/types/src/logger.js';
 
-export interface Rule<M extends Model<any>> {
-  filter: QueryWhere<M>;
+export interface Rule<
+  M extends Models<any, any>,
+  CN extends CollectionNameFromModels<M>
+> {
+  filter: QueryWhere<M, CN>;
   description?: string;
 }
 
-export interface CollectionRules<M extends Model<any>> {
-  read?: Record<string, Rule<M>>;
-  write?: Record<string, Rule<M>>;
+export interface CollectionRules<
+  M extends Models<any, any>,
+  CN extends CollectionNameFromModels<M>
+> {
+  read?: Record<string, Rule<M, CN>>;
+  write?: Record<string, Rule<M, CN>>;
   // insert?: Rule<M>[];
   // update?: Rule<M>[];
 }
@@ -66,7 +75,7 @@ export type CreateCollectionOperation = [
   {
     name: string;
     schema: { [path: string]: AttributeDefinition };
-    rules?: CollectionRules<any>;
+    rules?: CollectionRules<any, any>;
     optional?: string[];
   }
 ];
@@ -94,7 +103,7 @@ export type DropAttributeOptionOperation = [
 ];
 export type AddRuleOperation = [
   'add_rule',
-  { collection: string; scope: string; id: string; rule: Rule<any> }
+  { collection: string; scope: string; id: string; rule: Rule<any, any> }
 ];
 export type DropRuleOperation = [
   'drop_rule',
@@ -139,10 +148,10 @@ export interface DBConfig<M extends Models<any, any> | undefined> {
   tenantId?: string;
   clock?: Clock;
   variables?: Record<string, any>;
+  logger?: Logger;
 }
 
 export const DEFAULT_STORE_KEY = 'default';
-const QUERY_CACHE_ENABLED = false;
 
 export type CollectionFromModels<
   M extends Models<any, any> | undefined,
@@ -185,9 +194,9 @@ export interface DBFetchOptions {
 
 export function ruleToTuple(
   collectionName: string,
-  ruleType: keyof CollectionRules<any>,
+  ruleType: keyof CollectionRules<any, any>,
   index: number,
-  rule: Rule<any>
+  rule: Rule<any, any>
 ) {
   return Object.entries(rule).map<EAV>(([key, value]) => [
     '_schema',
@@ -412,6 +421,7 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     beforeDelete: [],
   };
   private _pendingSchemaRequest: Promise<void> | null;
+  logger: Logger;
 
   constructor({
     schema,
@@ -421,7 +431,15 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     migrations,
     clock,
     variables,
+    logger,
   }: DBConfig<M> = {}) {
+    this.logger = logger ?? {
+      info: console.info,
+      warn: console.warn,
+      error: console.error,
+      debug: () => {},
+      scope: () => this.logger,
+    };
     this.variables = variables ?? {};
     // If only one source is provided, use the default key
     const sourcesMap = sources ?? {
@@ -452,6 +470,11 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
       (this.schema = schema);
     this.onSchemaChangeCallbacks = new Set([updateCachedSchemaOnChange]);
 
+    this.logger.debug('Initializing', {
+      schema,
+      migrations,
+      tripleStoreSchema,
+    });
     this.ensureMigrated = this.tripleStore
       .ensureStorageIsMigrated()
       // Apply migrations or overwrite schema
@@ -461,19 +484,28 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
             ? this.migrate(migrations, 'up')
             : this.migrate(migrations.definitions, 'up', migrations.scopes)
           : // .catch((e) => {
-          //   console.error(e);
-          // })
-          tripleStoreSchema
-          ? overrideStoredSchema(this.tripleStore, tripleStoreSchema)
-          : Promise.resolve()
+            //   console.error(e);
+            // })
+            Promise.resolve()
       )
+      .then(async () => {
+        if (!tripleStoreSchema) return;
+        const currentSchema = await readSchemaFromTripleStore(this.tripleStore);
+        if (!currentSchema.schema) {
+          //@ts-expect-error
+          await this.overrideSchema(tripleStoreSchema);
+        } else {
+          //@ts-expect-error
+          this.overrideSchema(tripleStoreSchema);
+        }
+      })
       // Setup schema subscription
       .then(() => {
         this.tripleStore.tupleStore.subscribe(
           { prefix: ['EAT', appendCollectionToId('_metadata', '_schema')] },
           async (storeWrites) => {
             // If there are deletes clear cached data and update if there are sets
-            // NOTE: IF WE ADD GARBAGE COLLECITON ENSURE THIS IS STILL CORRECT
+            // NOTE: IF WE ADD GARBAGE COLLECTION ENSURE THIS IS STILL CORRECT
             if (Object.values(storeWrites).some((w) => !!w.remove?.length)) {
               this.schema = undefined;
               this._schema = undefined;
@@ -502,6 +534,9 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
             }
           }
         );
+      })
+      .then(() => {
+        this.logger.debug('Ready');
       });
   }
 
@@ -622,32 +657,45 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     callback: (tx: DBTransaction<M>) => Promise<Output>,
     options: TransactOptions = {}
   ) {
+    this.logger.debug('transact START', { options });
     await this.ensureMigrated;
     const schema = await this.getSchema();
-    return await this.tripleStore.transact(async (tripTx) => {
-      const tx = new DBTransaction<M>(this, tripTx, this.hooks, {
-        variables: this.variables,
-        schema,
-        skipRules: options.skipRules,
-      });
-      try {
+    try {
+      const resp = await this.tripleStore.transact(async (tripTx) => {
+        const tx = new DBTransaction<M>(this, tripTx, copyHooks(this.hooks), {
+          variables: this.variables,
+          schema,
+          skipRules: options.skipRules,
+          logger: this.logger.scope('tx'),
+        });
         return await callback(tx);
-      } catch (e) {
-        console.error(e);
-        await tx.cancel();
-        throw e;
-      }
-    }, options.storeScope);
+      }, options.storeScope);
+      this.logger.debug('transact RESULT', resp);
+      return resp;
+    } catch (e) {
+      this.logger.error('transact ERROR', e);
+      throw e;
+    } finally {
+      this.logger.debug('transact END');
+    }
   }
 
   updateVariables(variables: Record<string, any>) {
     this.variables = { ...this.variables, ...variables };
   }
 
+  async overrideSchema(schema: StoreSchema<M>) {
+    // @ts-expect-error
+    const { successful, issues } = await overrideStoredSchema(this, schema);
+    logSchemaChangeViolations(successful, issues, this.logger);
+    return { successful, issues };
+  }
+
   async fetch<Q extends CollectionQuery<M, any>>(
     query: Q,
-    options: DBFetchOptions = { noCache: true }
+    options: DBFetchOptions = {}
   ) {
+    this.logger.debug('fetch START', { query });
     await this.ensureMigrated;
     const schema = (await this.getSchema())?.collections as M;
     const fetchQuery = prepareQuery(query, schema, {
@@ -655,19 +703,21 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
       variables: this.variables,
     });
 
-    return await fetch<M, Q>(
+    const noCache = options.noCache === undefined ? true : options.noCache;
+
+    const { results } = await fetch<M, Q>(
       options.scope
         ? this.tripleStore.setStorageScope(options.scope)
         : this.tripleStore,
       fetchQuery,
       {
         schema,
-        includeTriples: false,
-        cache:
-          QUERY_CACHE_ENABLED && !options?.noCache ? this.cache : undefined,
+        cache: noCache ? undefined : this.cache,
         skipRules: options.skipRules,
       }
     );
+    this.logger.debug('fetch END', { query, result: results });
+    return fetchResultToJS(results, schema, fetchQuery.collectionName);
   }
 
   async fetchTriples<Q extends CollectionQuery<M, any>>(
@@ -689,7 +739,6 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
           fetchQuery,
           {
             schema: schema,
-            includeTriples: true,
             stateVector: options.stateVector,
           }
         )
@@ -749,6 +798,7 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     onError?: (error: any) => void | Promise<void>,
     options: DBFetchOptions = {}
   ) {
+    let unsubscribed = false;
     const startSubscription = async () => {
       await this.ensureMigrated;
       const schema = (await this.getSchema())?.collections as M;
@@ -756,16 +806,28 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
         skipRules: options.skipRules,
         variables: this.variables,
       });
-
+      this.logger.debug('subscribe START', { query });
+      const noCache = options.noCache === undefined ? true : options.noCache;
       const unsub = subscribe<M, Q>(
         options.scope
           ? this.tripleStore.setStorageScope(options.scope)
           : this.tripleStore,
         subscriptionQuery,
-        onResults,
-        onError,
+        (...args) => {
+          if (unsubscribed) return;
+          this.logger.debug('subscribe RESULTS', { query, results: args });
+          onResults(...args);
+        },
+        (...args) => {
+          if (unsubscribed) return;
+          onError?.(...args);
+        },
         schema,
-        { skipRules: options.skipRules, stateVector: options.stateVector }
+        {
+          cache: noCache ? undefined : this.cache,
+          skipRules: options.skipRules,
+          stateVector: options.stateVector,
+        }
       );
       return unsub;
     };
@@ -773,6 +835,9 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     const unsubPromise = startSubscription();
 
     return async () => {
+      // Immediately set unsubscribed to true to prevent any new results from being processed
+      unsubscribed = true;
+      this.logger.debug('subscribe END', { query });
       const unsub = await unsubPromise;
       return unsub();
     };
@@ -791,6 +856,7 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
         skipRules: options.skipRules,
         variables: this.variables,
       });
+      const noCache = options.noCache === undefined ? true : options.noCache;
 
       const unsub = subscribeTriples<M, Q>(
         options.scope
@@ -800,7 +866,11 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
         (tripMap) => onResults([...tripMap.values()].flat()),
         onError,
         schema,
-        { skipRules: options.skipRules, stateVector: options.stateVector }
+        {
+          skipRules: options.skipRules,
+          stateVector: options.stateVector,
+          cache: noCache ? undefined : this.cache,
+        }
       );
       return unsub;
     };
@@ -1028,19 +1098,23 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     return maxVersion;
   }
 
-  async getCollectionStats() {
+  async getCollectionStats(): Promise<Map<string, number>> {
+    // Each entity has a hidden _collection attribute which the value
+    // is just the name of the collection it belongs to
+    // e.g. { id: '123', name: 'alice', _collection: 'users'}
     const collectionMetaTriples = await this.tripleStore.findByAttribute([
       '_collection',
     ]);
-    // Aggregates each collection my entity count
-    const stats = collectionMetaTriples.reduce((acc, t) => {
-      const collectionName = t.value;
-      if (!acc.has(collectionName)) {
-        acc.set(collectionName, 0);
-      }
-      acc.set(collectionName, acc.get(collectionName) + 1);
-      return acc;
-    }, new Map());
+
+    const stats = new Map();
+    for (let trip of collectionMetaTriples) {
+      // TODO handle expired indexes e.g. where there are multiple _collection triples
+      // for the same entity
+      if (trip.expired) continue; // Skip expired/deleted entities
+      const collectionName = trip.value as string;
+      stats.set(collectionName, (stats.get(collectionName) ?? 0) + 1);
+    }
+
     return stats;
   }
 

@@ -1,5 +1,44 @@
 # @triplit/db
 
+## 0.3.29
+
+### Patch Changes
+
+- 1d78145: remove insert batching for speed up
+
+## 0.3.28
+
+### Patch Changes
+
+- f944c0b: allow access to noCache param to toggle experimental VAC
+
+## 0.3.27
+
+### Patch Changes
+
+- 5b36d92: update added attribute matching logic to ignore new relations
+- eddc659: - support inclusive after cursors
+  - synchronously ensure unsubscribed queries dont refire
+- 753e546: refactor overrideStoredSchema to return informational object
+- 7408dca: support array of clauses in order by
+- 26397d4: fix bug with replacing variables in filter statements
+
+## 0.3.26
+
+### Patch Changes
+
+- b5744e9: fix bug for manage deletes with write rules
+
+## 0.3.25
+
+### Patch Changes
+
+- 654c256: addressed a bug that errored out fetchDeltaTriples when subscribing to the 'schema' entity in the '\_metadata' collection
+- 3ddaac3: - ensure deletes work properly with limit in fetch and subscription
+  - add gte and lte options for range queries
+- da425e6: fixup schema loading for initially schemaless dbs
+- d20f7b4: add checks for dangerous schema updates when passed directly into the database constructor
+
 ## 0.3.24
 
 ### Patch Changes

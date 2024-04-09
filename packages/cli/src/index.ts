@@ -40,7 +40,7 @@ const { _: args, ...flags } = argv;
 
 await execute(args, flags);
 
-async function execute(args: string[], flags: {}) {
+export async function execute(args: string[], flags: {}) {
   const commands = findCommands(
     fileURLToPath(new URL('.', import.meta.url)) + '/commands'
   );
@@ -89,7 +89,11 @@ async function execute(args: string[], flags: {}) {
     // Apply defaults to flags if one is provided and the flag is not already set
     const flagsWithDefaults = cmdFlagsDefs.reduce(
       (flags, [flagName, flagInput]) => {
-        if ('default' in flagInput && !(flagName in flags)) {
+        if (
+          'default' in flagInput &&
+          !(flagName in flags) &&
+          !(flagInput.char in flags)
+        ) {
           flags[flagName] = flagInput.default;
         }
         return flags;

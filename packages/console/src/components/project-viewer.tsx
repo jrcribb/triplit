@@ -1,11 +1,11 @@
 import { Schema } from '@triplit/db';
 import { TriplitClient } from '@triplit/client';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { CaretDown, GridFour, Selection } from '@phosphor-icons/react';
 import { DataViewer, FullScreenWrapper, Project } from '.';
 import { Button } from '@triplit/ui';
 import { ProjectOptionsMenu } from './project-options-menu';
-import { useEntity } from '@triplit/react';
+import { useConnectionStatus, useEntity } from '@triplit/react';
 import { CreateCollectionDialog } from './create-collection-dialog';
 import { CollectionStats, fetchCollectionStats } from '../utils/server';
 import { useSelectedCollection } from '../hooks/useSelectedCollection';
@@ -54,10 +54,21 @@ export function ProjectViewer() {
 
   window.appClient = client;
   const [selectedCollection, setSelectedCollection] = useSelectedCollection();
-  const { results: schema } = useEntity(client, '_metadata', '_schema');
+  const {
+    results: schema,
+    fetching,
+    fetchingRemote,
+  } = useEntity(client, '_metadata', '_schema');
   const collectionsTolist = schema
     ? Object.keys(schema.collections)
     : collectionStats.map(({ collection }) => collection);
+
+  const statsByCollection = useMemo(() => {
+    return collectionStats.reduce((acc, { collection, numEntities }) => {
+      acc[collection] = { numEntities };
+      return acc;
+    }, {} as Record<string, { numEntities: number }>);
+  }, [collectionStats]);
 
   // if loading render loading state
   if (!client) return <FullScreenWrapper>Loading...</FullScreenWrapper>;
@@ -126,6 +137,7 @@ export function ProjectViewer() {
             collection={selectedCollection}
             client={client}
             schema={schema}
+            stats={statsByCollection[selectedCollection]}
           />
         ) : (
           <div className="flex flex-col h-full justify-center items-center gap-6">

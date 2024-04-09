@@ -1,0 +1,40 @@
+{
+  "name": "@triplit/svelte",
+  "packageManager": "yarn@3.4.1",
+  "version": "0.1.7",
+  "source": "./src/index.svelte.ts",
+  "main": "./dist/index.svelte.js",
+  "module": "./dist/index.svelte.js",
+  "types": "./dist/index.svelte.d.ts",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.svelte.d.ts",
+      "require": "./dist/index.svelte.js",
+      "import": "./dist/index.svelte.js",
+      "default": "./dist/index.svelte.js",
+      "svelte": "./dist/index.svelte.js"
+    }
+  },
+  "scripts": {
+    "build": "svelte-package -t=false && tsc",
+    "build:watch": "svelte-package -w",
+    "lint:build": "npx publint",
+    "publish-pkg": "node ../../scripts/npm-check-version-and-publish.js",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
+  },
+  "files": [
+    "/dist"
+  ],
+  "dependencies": {
+    "@triplit/client": "workspace:^"
+  },
+  "devDependencies": {
+    "@sveltejs/package": "^2.3.0",
+    "@tsconfig/svelte": "^5.0.2",
+    "svelte": "^5.0.0-next.90",
+    "svelte-check": "^3.6.7",
+    "tslib": "^2.6.2",
+    "typescript": "^5.2.2"
+  }
+}

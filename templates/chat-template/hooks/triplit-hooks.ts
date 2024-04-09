@@ -1,5 +1,6 @@
+import { useMemo } from "react"
 import { Entity } from "@triplit/client"
-import { useQuery } from "@triplit/react"
+import { useInfiniteQuery, useQuery } from "@triplit/react"
 
 import { client } from "@/lib/triplit.js"
 
@@ -7,7 +8,7 @@ import { schema } from "../triplit/schema.js"
 
 export type Conversation = Entity<typeof schema, "conversations">
 export type Message = Entity<typeof schema, "messages">
-
+export type Reaction = Entity<typeof schema, "reactions">
 // Populate the conversation sidebar (or full screen on mobile) and applies
 // the search filter to the query results.
 export function useFilteredConversations(query: string) {
@@ -59,28 +60,46 @@ export function useConversationSnippet(convoId: string) {
 // Uses `include('sender')` to traverse the relation between messages and users
 // and return a full user object for each message's sender.
 export function useMessages(convoId: string) {
-  const messagesQuery = client
-    .query("messages")
-    .where("conversationId", "=", convoId)
-    .order("created_at", "DESC")
-    .include("sender")
+  const messagesQuery = useMemo(
+    () =>
+      client
+        .query("messages")
+        .where("conversationId", "=", convoId)
+        .order("created_at", "DESC")
+        .limit(30)
+        .include("sender")
+        .include("reactions"),
+    [convoId]
+  )
 
-  const deliveredMessagesQuery = messagesQuery.syncStatus("confirmed")
-  const pendingMessagesQuery = messagesQuery.syncStatus("pending")
+  const deliveredMessagesQuery = useMemo(
+    () => messagesQuery.syncStatus("confirmed"),
+    [messagesQuery]
+  )
+  const pendingMessagesQuery = useMemo(
+    () => messagesQuery.syncStatus("pending"),
+    [messagesQuery]
+  )
 
   const {
     results: messages,
     fetchingRemote,
+    fetchingMore,
     fetching,
     error,
-  } = useQuery(client, deliveredMessagesQuery)
+    hasMore,
+    loadMore,
+  } = useInfiniteQuery(client, deliveredMessagesQuery)
 
   const { results: pendingMessages } = useQuery(client, pendingMessagesQuery)
 
   return {
     fetchingRemote,
+    fetchingMore,
     fetching,
     error,
+    hasMore,
+    loadMore,
     messages,
     pendingMessages: pendingMessages ?? new Map(),
   }

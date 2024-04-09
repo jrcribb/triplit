@@ -1,7 +1,7 @@
 {
   "name": "@triplit/react",
   "packageManager": "yarn@3.4.1",
-  "version": "0.3.28",
+  "version": "0.3.37",
   "source": "./src/index.ts",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -17,6 +17,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "build:watch": "tsc -w",
     "lint:build": "npx publint",
     "lint": "tsc --noEmit",
     "publish-pkg": "node ../../scripts/npm-check-version-and-publish.js"

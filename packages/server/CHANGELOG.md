@@ -1,5 +1,56 @@
 # @triplit/server
 
+## 0.3.32
+
+### Patch Changes
+
+- 6c75805: add support for bulk inserts using file upload
+- Updated dependencies [1d78145]
+  - @triplit/db@0.3.29
+  - @triplit/server-core@0.3.32
+
+## 0.3.31
+
+### Patch Changes
+
+- Updated dependencies [f944c0b]
+  - @triplit/db@0.3.28
+  - @triplit/server-core@0.3.31
+
+## 0.3.30
+
+### Patch Changes
+
+- dea15f5: add overrideSchema endpoint to server
+- Updated dependencies [dea15f5]
+- Updated dependencies [5b36d92]
+- Updated dependencies [eddc659]
+- Updated dependencies [753e546]
+- Updated dependencies [d71b6f6]
+- Updated dependencies [7408dca]
+- Updated dependencies [26397d4]
+  - @triplit/server-core@0.3.30
+  - @triplit/db@0.3.27
+
+## 0.3.29
+
+### Patch Changes
+
+- Updated dependencies [b5744e9]
+  - @triplit/db@0.3.26
+  - @triplit/server-core@0.3.29
+
+## 0.3.28
+
+### Patch Changes
+
+- Updated dependencies [654c256]
+- Updated dependencies [3ddaac3]
+- Updated dependencies [da425e6]
+- Updated dependencies [d20f7b4]
+  - @triplit/db@0.3.25
+  - @triplit/server-core@0.3.28
+
 ## 0.3.27
 
 ### Patch Changes

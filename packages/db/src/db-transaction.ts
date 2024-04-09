@@ -15,6 +15,7 @@ import { nanoid } from 'nanoid';
 import CollectionQueryBuilder, {
   doesEntityObjMatchWhere,
   fetch,
+  fetchOne,
   FetchResult,
   MaybeReturnTypeFromQuery,
 } from './collection-query.js';
@@ -59,6 +60,7 @@ import {
   splitIdParts,
   getCollectionSchema,
   prepareQuery,
+  fetchResultToJS,
 } from './db-helpers.js';
 import {
   CollectionQuery,
@@ -84,6 +86,7 @@ import {
 } from './triple-store-utils.js';
 import { TripleStoreApi } from './triple-store.js';
 import { RecordType } from './data-types/record.js';
+import { Logger } from '@triplit/types/src/logger.js';
 
 interface TransactionOptions<
   M extends Models<any, any> | undefined = undefined
@@ -91,35 +94,43 @@ interface TransactionOptions<
   variables?: Record<string, any>;
   schema?: StoreSchema<M>;
   skipRules?: boolean;
+  logger?: Logger;
 }
 
 const EXEMPT_FROM_WRITE_RULES = new Set(['_metadata']);
 
-function checkWriteRules<M extends Models<any, any> | undefined>(
+async function checkWriteRules<M extends Models<any, any> | undefined>(
+  tx: TripleStoreApi,
   id: EntityId,
-  timestampedEntity: any,
   variables: Record<string, any> | undefined,
   schema: StoreSchema<M> | undefined
 ) {
-  const [collectionName, _entityId] = splitIdParts(id);
-
+  const [collectionName, entityId] = splitIdParts(id);
   if (EXEMPT_FROM_WRITE_RULES.has(collectionName)) return;
-
+  const collections = schema?.collections;
+  if (!collections) return;
   const collection = schema?.collections[collectionName];
+  if (!collection) return;
+
   const writeRules = Object.values(collection?.rules?.write ?? {});
   if (writeRules.length) {
-    const filters = writeRules.flatMap((r) => r.filter);
-    let query = {
-      where: filters,
-      vars: variables,
-    } as CollectionQuery<M, any>;
-    query = replaceVariablesInQuery(query);
-    const satisfiedRule = doesEntityObjMatchWhere(
-      timestampedEntity,
-      query.where,
-      collection?.schema
+    const rulesWhere = writeRules.flatMap((r) => r.filter);
+    const query = prepareQuery(
+      {
+        collectionName,
+        where: [['id', '=', entityId], ...rulesWhere],
+        vars: variables,
+      } as CollectionQuery<M, any>,
+      collections,
+      {
+        variables: variables,
+        skipRules: false,
+      }
     );
-    if (!satisfiedRule) {
+    const { results } = await fetchOne<M, any>(tx, query, {
+      schema: collections,
+    });
+    if (!results) {
       // TODO add better error that uses rule description
       throw new WriteRuleError(`Update does not match write rules`);
     }
@@ -183,6 +194,7 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
   private _schema: Entity | undefined;
   readonly variables?: Record<string, any>;
   private _permissionCache: Map<string, boolean> = new Map();
+  logger: Logger;
 
   constructor(
     readonly db: DB<M>,
@@ -190,45 +202,61 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     private readonly hooks: DBHooks<M>,
     readonly options: TransactionOptions<M> = {}
   ) {
+    this.logger = options.logger ?? db.logger;
     this.schema = options.schema;
     this.variables = options.variables;
     this.storeTx.beforeInsert(this.ValidateTripleSchema);
     if (!options?.skipRules) {
       // Pre-update write checks
-      this.storeTx.beforeInsert(async (triples, tx) => {
+      this.storeTx.beforeCommit(async (triplesByStorage, tx) => {
         /**
-         * This will check writes rules on every insert
+         * This will check writes rules before we commit the transaction
          * it will look for a _collection attribute to indicate an insert
          * which means looking only at the inserted triples is sufficient
          * to validate the rule.
          * Otherwise treat any triples as an update/delete and fetch the entity
          * from the store to validate the rule
          */
-        const insertedEntities: Set<string> = new Set();
-        const updatedEntities: Set<string> = new Set();
-        for (const triple of triples) {
-          if (triple.attribute[0] === '_collection' && !triple.expired) {
-            insertedEntities.add(triple.id);
-            updatedEntities.delete(triple.id);
-            const entityTriples = triples.filter(
-              (t) => t.id === triple.id && t.expired === false
-            );
-            const entity = constructEntity(entityTriples, triple.id);
-            checkWriteRules(
-              triple.id,
-              entity?.data,
+        for (const [storageId, triples] of Object.entries(triplesByStorage)) {
+          const insertedEntities: Set<string> = new Set();
+          const updatedEntities: Set<string> = new Set([
+            ...triples.map((t) => t.id),
+          ]);
+          const deletedEntities: Set<string> = new Set();
+          for (const triple of triples) {
+            if (
+              deletedEntities.has(triple.id) ||
+              insertedEntities.has(triple.id)
+            )
+              continue;
+            if (triple.attribute[0] === '_collection' && triple.expired) {
+              updatedEntities.delete(triple.id);
+              deletedEntities.add(triple.id);
+              continue;
+            }
+            if (triple.attribute[0] === '_collection' && !triple.expired) {
+              insertedEntities.add(triple.id);
+              updatedEntities.delete(triple.id);
+              continue;
+            }
+          }
+          // for each updatedEntity, load triples, construct entity, and check write rules
+          for (const id of updatedEntities) {
+            await checkWriteRules(tx, id, this.variables, this.schema);
+          }
+          for (const id of insertedEntities) {
+            await checkWriteRules(tx, id, this.variables, this.schema);
+          }
+          for (const id of deletedEntities) {
+            // Notably deletes use the original triples (using tx wont have data)
+            // We may not be able to differentiate between a delete elsewhere and a write rule failure
+            await checkWriteRules(
+              this.db.tripleStore,
+              id,
               this.variables,
               this.schema
             );
-          } else {
-            updatedEntities.add(triple.id);
           }
-        }
-        // for each updatedEntity, load triples, construct entity, and check write rules
-        for (const id of updatedEntities) {
-          const entityTriples = await tx.findByEntity(id);
-          const entity = constructEntity(entityTriples, id);
-          checkWriteRules(id, entity?.data, this.variables, this.schema);
         }
       });
     }
@@ -482,6 +510,7 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
       throw new InvalidInsertDocumentError(
         `The document being inserted must be an object.`
       );
+    this.logger.debug('insert START', collectionName, doc);
 
     const schema = (await this.getSchema())?.collections;
     const collectionSchema = schema?.[collectionName];
@@ -533,11 +562,13 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     await this.storeTx.insertTriples(triples);
     const insertedEntity = constructEntity(triples, storeId);
     if (!insertedEntity) throw new Error('Malformed id');
-    return convertEntityToJS(
+    const insertedEntityJS = convertEntityToJS(
       insertedEntity.data as any,
       schema,
       collectionName
     ) as MaybeReturnTypeFromQuery<M, CN>;
+    this.logger.debug('insert END', collectionName, insertedEntityJS);
+    return insertedEntityJS;
   }
 
   async update<CN extends CollectionNameFromModels<M>>(
@@ -547,15 +578,41 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
       entity: UpdateTypeFromModel<ModelFromModels<M, CN>>
     ) => void | Promise<void>
   ) {
+    this.logger.debug('update START', collectionName, entityId);
     const schema = (await this.getSchema())?.collections as M;
 
-    // TODO: Would be great to plug into the pipeline at any point
-    // In this case I want untimestamped values, valid values
+    await this.updateRaw(collectionName, entityId, async (entity) => {
+      const changes = new ChangeTracker(entity);
+      const updateProxy =
+        collectionName === '_metadata'
+          ? createUpdateProxy<M, CN>(changes, entity)
+          : createUpdateProxy<M, CN>(changes, entity, schema, collectionName);
+      await updater(updateProxy);
+      // return dbDocumentToTuples(updateProxy);
+      return changes.getTuples();
+    });
+
+    this.logger.debug('update END', collectionName, entityId);
+  }
+
+  /**
+   * In contrast to `update`, `updateRaw` does not use a proxy to allow
+   * for direct manipulation of the entity. Instead a ReadOnly version of the entity
+   * is passed into the updater function which is expected to return low level
+   * triples ([attribute, value]) to be inserted into the store.
+   */
+  async updateRaw<CN extends CollectionNameFromModels<M>>(
+    collectionName: CN,
+    entityId: string,
+    callback: (
+      entity: any
+    ) => [Attribute, Value][] | Promise<[Attribute, Value][]>
+  ) {
+    this.logger.debug('updateRaw START');
     const storeId = appendCollectionToId(collectionName, entityId);
     const entityTriples = await this.storeTx.findByEntity(storeId);
     const timestampedEntity = constructEntity(entityTriples, storeId);
     const entity = timestampedObjectToPlainObject(timestampedEntity!.data);
-
     // If entity doesn't exist or is deleted, throw error
     // Schema/metadata does not have _collection attribute
     if (collectionName !== '_metadata' && !entity?._collection) {
@@ -565,17 +622,7 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
         "Cannot perform an update on an entity that doesn't exist"
       );
     }
-
-    // Collect changes
-    const changes = new ChangeTracker(entity);
-    const updateProxy =
-      collectionName === '_metadata'
-        ? createUpdateProxy<M, CN>(changes, entity)
-        : createUpdateProxy<M, CN>(changes, entity, schema, collectionName);
-
-    // Run updater (runs serialization of values)
-    await updater(updateProxy);
-    const changeTuples = changes.getTuples();
+    const changeTuples = await callback(entity);
     for (const [attr, value] of changeTuples) {
       if (attr.at(0) === 'id') {
         throw new InvalidOperationError(
@@ -603,6 +650,8 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
 
     // Apply changes
     await this.storeTx.setValues(updateValues);
+
+    this.logger.debug('updateRaw END', updateValues);
   }
 
   async delete<CN extends CollectionNameFromModels<M>>(
@@ -614,8 +663,10 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
         collectionName,
         'Collection name must be defined'
       );
+    this.logger.debug('delete START', collectionName, id);
     const storeId = appendCollectionToId(collectionName, id);
     await this.storeTx.expireEntity(storeId);
+    this.logger.debug('delete END', collectionName, id);
   }
 
   async fetch<Q extends CollectionQuery<M, any>>(
@@ -629,10 +680,10 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     });
     // TODO: read scope?
     // See difference between this fetch and db fetch
-    return fetch<M, Q>(this.storeTx, fetchQuery, {
+    const { results } = await fetch<M, Q>(this.storeTx, fetchQuery, {
       schema,
-      includeTriples: false,
     });
+    return fetchResultToJS(results, schema, fetchQuery.collectionName);
   }
 
   // maybe make it public? Keeping private bc its only used internally
@@ -1075,19 +1126,16 @@ export function createUpdateProxy<
       if (currentValue === undefined) return undefined;
       // Null values will be returned as null (essentially the base case of "return currentValue")
       if (currentValue === null) return null;
-
       const propSchema =
         collectionSchema &&
         getSchemaFromPath(
           collectionSchema,
           parentPropPointer.slice(1).split('/')
         );
-
       // Handle sets
       if (propSchema && propSchema.type === 'set') {
         return createSetProxy(changeTracker, parentPropPointer, propSchema);
       }
-
       // Handle deep objects
       if (typeof currentValue === 'object' && currentValue !== null) {
         return createUpdateProxy(
@@ -1098,7 +1146,6 @@ export function createUpdateProxy<
           parentPropPointer
         );
       }
-
       // TODO: fixup access to 'constructor' and other props
       return propSchema
         ? propSchema.convertDBValueToJS(currentValue)

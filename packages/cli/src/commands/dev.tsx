@@ -16,6 +16,7 @@ import {
   schemaFileContentFromJSON,
   writeSchemaFile,
 } from './migrate/codegen.js';
+import { insertSeeds } from './seed/run.js';
 
 export default Command({
   description: 'Starts the Triplit development environment',
@@ -41,7 +42,15 @@ export default Command({
     verbose: Flag.Boolean({
       char: 'v',
       description: 'Verbose logging',
-      hidden: true,
+    }),
+    initWithSchema: Flag.Boolean({
+      char: 'i',
+      description: 'Initialize the database with the local schema',
+      default: false,
+    }),
+    seed: Flag.String({
+      char: 'S',
+      description: 'Seed the database with data',
     }),
   },
   async run({ flags }) {
@@ -82,11 +91,11 @@ export default Command({
       process.env.JWT_SECRET,
       { noTimestamp: true }
     );
-    let schema = undefined;
-    if (flags.watch) {
-      const collections = await readLocalSchema();
-      if (collections) schema = { collections, version: 0 };
-    }
+    const collections = await readLocalSchema();
+    const schema =
+      collections && flags.initWithSchema
+        ? { collections, version: 0 }
+        : undefined;
     const startDBServer = createDBServer({
       storage: flags.storage || 'memory',
       dbOptions: {
@@ -98,6 +107,10 @@ export default Command({
     let watcher: chokidar.FSWatcher | undefined = undefined;
     let remoteSchemaUnsubscribe = undefined;
     const dbServer = startDBServer(dbPort, async () => {
+      const schemaPath = path.join(getTriplitDir(), 'schema.ts');
+      watcher = chokidar.watch(schemaPath, {
+        awaitWriteFinish: true,
+      });
       if (flags.watch) {
         const client = new TriplitClient({
           serverUrl: `http://localhost:${dbPort}`,
@@ -112,10 +125,6 @@ export default Command({
           // Avoid firing on optimistic changes
           .syncStatus('confirmed')
           .build();
-
-        watcher = chokidar.watch(schemaPath, {
-          awaitWriteFinish: true,
-        });
 
         /**
          * There's a few problems here:
@@ -172,6 +181,12 @@ export default Command({
             entity.collections = schema.collections;
           });
         });
+      } else {
+        watcher.on('change', async () => {
+          console.warn(
+            'Schema file changed. Restart the dev server or run\n\n`triplit schema push`\n\nto apply the new schema.'
+          );
+        });
       }
     });
 
@@ -189,6 +204,10 @@ export default Command({
       consoleServer.close();
       process.exit();
     });
+
+    const dbUrl = `http://localhost:${dbPort}`;
+    const consoleUrl = `http://localhost:${consolePort}`;
+    if (flags.seed) await insertSeeds(dbUrl, serviceKey, flags.seed);
 
     return (
       <>
@@ -211,12 +230,12 @@ export default Command({
               <Box>
                 <Text bold>🟢 Console</Text>
                 <Spacer />
-                <Text color="cyan">{`http://localhost:${consolePort}`}</Text>
+                <Text color="cyan">{consoleUrl}</Text>
               </Box>
               <Box>
                 <Text bold>🟢 Database</Text>
                 <Spacer />
-                <Text color="cyan">{`http://localhost:${dbPort}`}</Text>
+                <Text color="cyan">{dbUrl}</Text>
               </Box>
             </Box>
           </Box>

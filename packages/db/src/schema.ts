@@ -8,7 +8,7 @@ import type {
 import { Timestamp } from './timestamp.js';
 import type { Attribute, EAV, TripleRow } from './triple-store-utils.js';
 import { dbDocumentToTuples, objectToTuples } from './utils.js';
-import { constructEntity } from './query.js';
+import { Entity, EntityPointer, constructEntity } from './query.js';
 import { appendCollectionToId, StoreSchema } from './db-helpers.js';
 import {
   typeFromJSON,
@@ -21,6 +21,7 @@ import {
   CollectionDefinition,
   CollectionsDefinition,
   SchemaDefinition,
+  UserTypeOptions,
 } from './data-types/serialization.js';
 import { StringType } from './data-types/string.js';
 import { NumberType } from './data-types/number.js';
@@ -34,6 +35,9 @@ import {
   ExtractTimestampedType,
 } from './data-types/type.js';
 import { QueryType, SubQuery } from './data-types/query.js';
+import { Value as TBValue, ValuePointer } from '@sinclair/typebox/value';
+import { DBTransaction } from './db-transaction.js';
+import DB from './db.js';
 
 // We infer TObject as a return type of some funcitons and this causes issues with consuming packages
 // Using solution 3.1 described in this comment as a fix: https://github.com/microsoft/TypeScript/issues/47663#issuecomment-1519138189
@@ -106,7 +110,8 @@ export type Model<T extends SchemaConfig> = RecordType<T>;
 
 export type Collection<T extends SchemaConfig = SchemaConfig> = {
   schema: Model<T>;
-  rules?: CollectionRules<Model<T>>;
+  // TODO: possible to not use <any, any> here?
+  rules?: CollectionRules<any, any>;
 };
 
 export type Models<
@@ -140,6 +145,71 @@ export function getSchemaFromPath(
   }
   if (!scope) throw new InvalidSchemaPathError(path as string[]);
   return scope;
+}
+
+export function createSchemaIterator<
+  M extends Models<any, any>,
+  CN extends CollectionNameFromModels<M>
+>(path: string[], schema: M, collectionName: CN) {
+  let pathIndex = 0;
+  let schemaTraverser = createSchemaTraverser(schema, collectionName);
+  const schemaIterator = {
+    next() {
+      if (pathIndex >= path.length) {
+        return { done: true, value: schemaTraverser.current };
+      }
+      const part = path[pathIndex];
+      schemaTraverser = schemaTraverser.get(part);
+      pathIndex++;
+      return { done: false, value: schemaTraverser.current };
+    },
+    [Symbol.iterator]() {
+      return this;
+    },
+  };
+  return schemaIterator;
+}
+
+type Traverser = {
+  get(attribute: string): Traverser;
+  current: DataType | undefined;
+};
+
+export function createSchemaTraverser<
+  M extends Models<any, any>,
+  CN extends CollectionNameFromModels<M>
+>(schema: M, collectionName: CN): Traverser {
+  // @ts-expect-error
+  let current: DataType | undefined = schema[collectionName]?.schema;
+  const getter = (attribute: string): Traverser => {
+    let next: DataType | undefined = current;
+    if (current?.type === 'record') {
+      next = current.properties[attribute];
+    } else if (current?.type === 'query') {
+      const { query } = current;
+      return createSchemaTraverser(schema, query.collectionName).get(attribute);
+    } else {
+      next = undefined;
+    }
+    current = next;
+    return { get: getter, current };
+  };
+  return {
+    get: getter,
+    current: schema[collectionName]?.schema as DataType | undefined,
+  };
+}
+
+export function getAttributeFromSchema<
+  M extends Models<any, any>,
+  CN extends CollectionNameFromModels<M>
+>(attribute: string[], schema: M, collectionName: CN) {
+  let iter = createSchemaIterator(attribute, schema, collectionName);
+  let result = iter.next();
+  while (!result.done) {
+    result = iter.next();
+  }
+  return result.value;
 }
 
 export type UpdateTypeFromModel<M extends Model<any> | undefined> =
@@ -452,7 +522,6 @@ export function getDefaultValuesForCollection(
 // Schema versions are harder to manage with console updates
 // Using this hash as a way to check if schemas mismatch since its easy to send as a url param
 export function hashSchemaJSON(collections: CollectionsDefinition | undefined) {
-  // console.log('CALLING HASH SCHEMA JSON');
   if (!collections) return undefined;
   // TODO: dont use this method if avoidable...trying to deprecate
   const tuples = objectToTuples(collections);
@@ -469,4 +538,452 @@ function stringHash(str: string, base = 31, mod = 1e9 + 9) {
     hashValue = (hashValue * base + str.charCodeAt(i)) % mod;
   }
   return hashValue;
+}
+
+type ChangeToAttribute =
+  | {
+      type: 'update';
+      changes: {
+        items?: { type: string };
+        type?: string;
+        options?: any;
+        optional?: boolean;
+      };
+    }
+  | {
+      type: 'insert';
+      metadata: {
+        type: string;
+        options: any;
+        optional: boolean;
+      };
+    }
+  | {
+      type: 'delete';
+      metadata: {
+        type: string;
+        options: any;
+        optional: boolean;
+      };
+    };
+
+type AttributeDiff = {
+  attribute: string[];
+} & ChangeToAttribute;
+
+type CollectionAttributeDiff = {
+  collection: string;
+} & AttributeDiff;
+// type AttributeDiff = AttributeChange;
+
+export function diffCollections(
+  modelA: Model<any> | undefined,
+  modelB: Model<any> | undefined,
+  attributePathPrefix: string[] = []
+): AttributeDiff[] {
+  if (modelA === undefined && modelB === undefined) return [];
+  const propertiesA = modelA?.properties ?? {};
+  const propertiesB = modelB?.properties ?? {};
+  const allProperties = new Set([
+    ...Object.keys(propertiesA),
+    ...Object.keys(propertiesB),
+  ]);
+
+  const diff: AttributeDiff[] = [];
+
+  for (const prop of allProperties) {
+    if (!(prop in propertiesA)) {
+      // Added in modelB
+      const path = [...attributePathPrefix, prop];
+      diff.push({
+        type: 'insert',
+        attribute: path,
+        metadata: {
+          type: propertiesB[prop].type,
+          options: propertiesB[prop].options,
+          optional: modelB?.optional?.includes(prop) ?? false,
+        },
+      });
+      continue;
+    }
+    if (!(prop in propertiesB)) {
+      // Deleted in modelB
+      const path = [...attributePathPrefix, prop];
+      diff.push({
+        type: 'delete',
+        attribute: path,
+        metadata: {
+          type: propertiesA[prop].type,
+          options: propertiesA[prop].options,
+          optional: modelA?.optional?.includes(prop) ?? false,
+        },
+      });
+      continue;
+    }
+    if (prop in propertiesA && prop in propertiesB) {
+      if (
+        TBValue.Equal(propertiesA[prop].toJSON(), propertiesB[prop].toJSON()) &&
+        (modelA?.optional?.includes(prop) ?? false) ===
+          (modelB?.optional?.includes(prop) ?? false)
+      )
+        continue;
+      const path = [...attributePathPrefix, prop];
+
+      if (
+        propertiesA[prop].type === 'record' &&
+        propertiesB[prop].type === 'record'
+      ) {
+        // console.log('diffing record', propertiesA[prop], propertiesB[prop]);
+        diff.push(
+          ...diffCollections(propertiesA[prop], propertiesB[prop], path)
+        );
+        continue;
+      }
+      const attrDiff: AttributeDiff = {
+        type: 'update',
+        attribute: path,
+        // TODO: show matt this
+        changes: { options: {} },
+      };
+
+      // Check if type has changed
+      if (propertiesA[prop].type !== propertiesB[prop].type) {
+        attrDiff.changes.type = propertiesB[prop].type;
+      }
+
+      // Check if Set item type has changed
+      if (propertiesA[prop].type === 'set') {
+        // console.log(propertiesA[prop], propertiesB[prop]);
+        if (propertiesA[prop].items.type !== propertiesB[prop].items.type) {
+          attrDiff.changes.items = {
+            type: propertiesB[prop].items.type,
+          };
+        }
+      }
+
+      // Check if optionality has changed
+      const isOptionalInA = modelA?.optional?.includes(prop) ?? false;
+      const isOptionalInB = modelB?.optional?.includes(prop) ?? false;
+      if (isOptionalInA !== isOptionalInB) {
+        attrDiff.changes.optional = isOptionalInB;
+      }
+
+      // Check if type options has changed
+      attrDiff.changes.options = diffAttributeOptions(
+        propertiesA[prop].options ?? {},
+        propertiesB[prop].options ?? {}
+      );
+      diff.push(attrDiff);
+      continue;
+    }
+  }
+  return diff;
+}
+
+function diffAttributeOptions(attr1: UserTypeOptions, attr2: UserTypeOptions) {
+  const diff: Partial<UserTypeOptions> = {};
+  if (attr1.nullable !== attr2.nullable) {
+    // TODO: determine how strict we want to be here about false vs. undefined
+    diff.nullable = !!attr2.nullable;
+  }
+  if (attr1.default !== attr2.default) {
+    diff.default = attr2.default;
+  }
+  return diff;
+}
+
+export function diffSchemas(
+  schemaA: StoreSchema<Models<any, any>>,
+  schemaB: StoreSchema<Models<any, any>>
+): CollectionAttributeDiff[] {
+  const allCollections = new Set([
+    ...Object.keys(schemaA.collections),
+    ...Object.keys(schemaB.collections),
+  ]);
+  const diff: CollectionAttributeDiff[] = [];
+  for (const collection of allCollections) {
+    const collectionA = schemaA.collections[collection];
+    const collectionB = schemaB.collections[collection];
+    diff.push(
+      ...diffCollections(collectionA?.schema, collectionB?.schema).map(
+        (change) =>
+          ({
+            collection,
+            ...change,
+          } as CollectionAttributeDiff)
+      )
+    );
+  }
+  return diff;
+}
+
+type ALLOWABLE_DATA_CONSTRAINTS =
+  | 'never'
+  | 'collection_is_empty'
+  | 'attribute_is_empty' // undefined
+  | 'attribute_has_no_undefined'
+  | 'attribute_has_no_null';
+
+type BackwardsIncompatibleEdits = {
+  issue: string;
+  allowedIf: ALLOWABLE_DATA_CONSTRAINTS;
+  context: CollectionAttributeDiff;
+  attributeCure: (collection: string, attribute: string[]) => string | null;
+};
+
+export function getBackwardsIncompatibleEdits(
+  schemaDiff: CollectionAttributeDiff[]
+) {
+  return schemaDiff.reduce((acc, curr) => {
+    const maybeDangerousEdit = DANGEROUS_EDITS.find((check) =>
+      check.matchesDiff(curr)
+    );
+    if (maybeDangerousEdit) {
+      acc.push({
+        issue: maybeDangerousEdit.description,
+        allowedIf: maybeDangerousEdit.allowedIf,
+        context: curr,
+        attributeCure: maybeDangerousEdit.attributeCure,
+      });
+    }
+    return acc;
+  }, [] as BackwardsIncompatibleEdits[]);
+}
+
+const DANGEROUS_EDITS = [
+  {
+    description: 'removed an optional attribute',
+    matchesDiff: (diff: CollectionAttributeDiff) => {
+      return diff.type === 'delete' && diff.metadata.optional === true;
+    },
+    allowedIf: 'attribute_is_empty',
+    attributeCure: () => null,
+  },
+  {
+    description: 'removed a non-optional attribute',
+    matchesDiff: (diff: CollectionAttributeDiff) => {
+      return diff.type === 'delete';
+    },
+    allowedIf: 'collection_is_empty',
+    attributeCure: (_collection, attribute) =>
+      `make '${attribute.join('.')}' optional`,
+  },
+  {
+    description: 'changed a attribute from optional to required',
+    matchesDiff: (diff: CollectionAttributeDiff) => {
+      if (diff.type === 'update') {
+        return diff.changes.optional === false;
+      }
+      return false;
+    },
+    allowedIf: 'attribute_has_no_undefined',
+    attributeCure: () => null,
+  },
+  {
+    description: 'changed the type of an attribute',
+    matchesDiff: (diff: CollectionAttributeDiff) => {
+      if (diff.type === 'update') {
+        return diff.changes.type !== undefined;
+      }
+      return false;
+    },
+    allowedIf: 'attribute_is_empty',
+    attributeCure: (_collection, attribute) =>
+      `revert the change to '${attribute.join(
+        '.'
+      )}' and create a different, optional, attribute with the new type`,
+  },
+  {
+    description: "changed the type of a set's items",
+    matchesDiff: (diff: CollectionAttributeDiff) => {
+      if (diff.type === 'update') {
+        return diff.changes.items !== undefined;
+      }
+      return false;
+    },
+    allowedIf: 'attribute_is_empty',
+    attributeCure: (_collection, attribute) =>
+      `revert the change to '${attribute.join(
+        '.'
+      )}' and create a different, optional, attribute with the new type`,
+  },
+  {
+    description: 'added an attribute where optional is not set',
+    matchesDiff: (diff: CollectionAttributeDiff) => {
+      if (
+        diff.type === 'insert' &&
+        diff.metadata.optional === false &&
+        diff.metadata.type !== 'query'
+      )
+        return true;
+      return false;
+    },
+    allowedIf: 'collection_is_empty',
+    attributeCure: (_collection, attribute) =>
+      `make '${attribute.join('.')}' optional`,
+  },
+  {
+    description: 'changed an attribute from nullable to non-nullable',
+    matchesDiff: (diff: CollectionAttributeDiff) => {
+      if (diff.type === 'update') {
+        return diff.changes.options?.nullable === false;
+      }
+      return false;
+    },
+    allowedIf: 'attribute_has_no_null',
+    attributeCure: () => null,
+  },
+] satisfies {
+  allowedIf: ALLOWABLE_DATA_CONSTRAINTS;
+  description: string;
+  matchesDiff: (diff: CollectionAttributeDiff) => boolean;
+  attributeCure: (collection: string, attribute: string[]) => string | null;
+}[];
+
+async function isEditSafeWithExistingData(
+  tx: DBTransaction<any>,
+  attributeDiff: CollectionAttributeDiff,
+  allowedIf: ALLOWABLE_DATA_CONSTRAINTS
+) {
+  return await DATA_CONSTRAINT_CHECKS[allowedIf](
+    tx,
+    attributeDiff.collection,
+    attributeDiff.attribute
+  );
+}
+
+export type PossibleDataViolations = {
+  violatesExistingData: boolean;
+  cure: string;
+} & BackwardsIncompatibleEdits;
+
+export async function getSchemaDiffIssues(
+  db: DB<any>,
+  schemaDiff: CollectionAttributeDiff[]
+) {
+  const backwardsIncompatibleEdits = getBackwardsIncompatibleEdits(schemaDiff);
+  const results = await db.transact(async (tx) => {
+    return Promise.all(
+      backwardsIncompatibleEdits.map(async (edit) => {
+        const violatesExistingData = !(await isEditSafeWithExistingData(
+          tx,
+          edit.context,
+          edit.allowedIf
+        ));
+        const dataCure = DATA_CHANGE_CURES[edit.allowedIf](
+          edit.context.collection,
+          edit.context.attribute
+        );
+        const attributeCure = edit.attributeCure(
+          edit.context.collection,
+          edit.context.attribute
+        );
+        return {
+          ...edit,
+          violatesExistingData,
+          cure: attributeCure ? attributeCure + ' or ' + dataCure : dataCure,
+        };
+      })
+    );
+  });
+  return results.output as PossibleDataViolations[];
+}
+
+const DATA_CONSTRAINT_CHECKS: Record<
+  ALLOWABLE_DATA_CONSTRAINTS,
+  (
+    tx: DBTransaction<any>,
+    collection: string,
+    attribute: string[]
+  ) => Promise<boolean>
+> = {
+  never: async () => false,
+  collection_is_empty: detectCollectionIsEmpty,
+  attribute_is_empty: detectAttributeIsEmpty,
+  attribute_has_no_undefined: detectAttributeHasNoUndefined,
+  attribute_has_no_null: detectAttributeHasNoNull,
+};
+
+const DATA_CHANGE_CURES: Record<
+  ALLOWABLE_DATA_CONSTRAINTS,
+  (collection: string, attribute: string[]) => string
+> = {
+  never: () => 'This edit is never allowed',
+  collection_is_empty: (collection) =>
+    `delete all entities in '${collection}' to allow this edit`,
+  attribute_is_empty: (_collection, attribute) =>
+    `set all values of '${attribute.join(
+      '.'
+    )}' to undefined to allow this edit`,
+  attribute_has_no_undefined: (_collection, attribute) =>
+    `ensure all values of '${attribute.join(
+      '.'
+    )}' are not undefined to allow this edit`,
+  attribute_has_no_null: (_collection, attribute) =>
+    `ensure all values of '${attribute.join(
+      '.'
+    )}' are not null to allow this edit`,
+};
+
+async function detectAttributeHasNoUndefined(
+  tx: DBTransaction<any>,
+  collectionName: string,
+  attribute: string[]
+) {
+  const allEntities = await tx.fetch(
+    tx.db
+      .query(collectionName)
+      .select([attribute.join('.')])
+      .build(),
+    { skipRules: true }
+  );
+  return !Array.from(allEntities.values()).some(
+    (entity) =>
+      ValuePointer.Get(entity, '/' + attribute.join('/')) === undefined
+  );
+}
+
+async function detectAttributeIsEmpty(
+  tx: DBTransaction<any>,
+  collectionName: string,
+  attribute: string[]
+) {
+  const allEntities = await tx.fetch(
+    tx.db
+      .query(collectionName)
+      .select([attribute.join('.')])
+      .build(),
+    { skipRules: true }
+  );
+  return Array.from(allEntities.values()).every((entity) => {
+    return ValuePointer.Get(entity, '/' + attribute.join('/')) === undefined;
+  });
+}
+
+async function detectAttributeHasNoNull(
+  tx: DBTransaction<any>,
+  collectionName: string,
+  attribute: string[]
+) {
+  const allEntities = await tx.fetch(
+    tx.db
+      .query(collectionName)
+      .select([attribute.join('.')])
+      .where(attribute.join('.'), '=', null)
+      .limit(1)
+      .build(),
+    { skipRules: true }
+  );
+  return allEntities.size === 0;
+}
+
+async function detectCollectionIsEmpty(
+  tx: DBTransaction<any>,
+  collectionName: string
+) {
+  const allEntities = await tx.fetch(
+    tx.db.query(collectionName).select([]).limit(1).build(),
+    { skipRules: true }
+  );
+  return allEntities.size === 0;
 }
