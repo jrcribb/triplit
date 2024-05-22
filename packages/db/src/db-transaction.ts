@@ -1,23 +1,26 @@
 import { TripleStoreTransaction } from './triple-store-transaction.js';
 import {
   getSchemaFromPath,
-  UpdateTypeFromModel,
-  Model,
-  Models,
   getDefaultValuesForCollection,
-  timestampedObjectToPlainObject,
   collectionsDefinitionToSchema,
   clientInputToDbModel,
+} from './schema/schema.js';
+import {
+  UpdateTypeFromModel,
   InsertTypeFromModel,
-  convertEntityToJS,
-} from './schema.js';
+  Models,
+} from './schema/types';
 import { nanoid } from 'nanoid';
 import CollectionQueryBuilder, {
   doesEntityObjMatchWhere,
   fetch,
   fetchOne,
   FetchResult,
-  MaybeReturnTypeFromQuery,
+  FetchResultEntity,
+  initialFetchExecutionContext,
+  ReturnTypeFromQuery,
+  convertEntityToJS,
+  ReturnTypeFromParts,
 } from './collection-query.js';
 import {
   DBSerializationError,
@@ -53,12 +56,10 @@ import DB, {
 import {
   validateExternalId,
   appendCollectionToId,
-  replaceVariablesInQuery,
   validateTriple,
   readSchemaFromTripleStore,
   StoreSchema,
   splitIdParts,
-  getCollectionSchema,
   prepareQuery,
   fetchResultToJS,
 } from './db-helpers.js';
@@ -70,7 +71,7 @@ import {
   updateEntity,
   triplesToEntities,
 } from './query.js';
-import { dbDocumentToTuples } from './utils.js';
+import { dbDocumentToTuples, timestampedObjectToPlainObject } from './utils.js';
 import { typeFromJSON } from './data-types/base.js';
 import { SchemaDefinition } from './data-types/serialization.js';
 import { createSetProxy } from './data-types/set.js';
@@ -81,7 +82,7 @@ import {
   TripleRow,
   EAV,
   Attribute,
-  Value,
+  TupleValue,
   TripleStoreAfterCommitHook,
 } from './triple-store-utils.js';
 import { TripleStoreApi } from './triple-store.js';
@@ -91,7 +92,6 @@ import { Logger } from '@triplit/types/src/logger.js';
 interface TransactionOptions<
   M extends Models<any, any> | undefined = undefined
 > {
-  variables?: Record<string, any>;
   schema?: StoreSchema<M>;
   skipRules?: boolean;
   logger?: Logger;
@@ -100,9 +100,9 @@ interface TransactionOptions<
 const EXEMPT_FROM_WRITE_RULES = new Set(['_metadata']);
 
 async function checkWriteRules<M extends Models<any, any> | undefined>(
+  caller: DBTransaction<M>,
   tx: TripleStoreApi,
   id: EntityId,
-  variables: Record<string, any> | undefined,
   schema: StoreSchema<M> | undefined
 ) {
   const [collectionName, entityId] = splitIdParts(id);
@@ -119,17 +119,21 @@ async function checkWriteRules<M extends Models<any, any> | undefined>(
       {
         collectionName,
         where: [['id', '=', entityId], ...rulesWhere],
-        vars: variables,
       } as CollectionQuery<M, any>,
       collections,
       {
-        variables: variables,
         skipRules: false,
       }
     );
-    const { results } = await fetchOne<M, any>(tx, query, {
-      schema: collections,
-    });
+    const { results } = await fetchOne<M, any>(
+      caller.db,
+      tx,
+      query,
+      initialFetchExecutionContext(),
+      {
+        schema: collections,
+      }
+    );
     if (!results) {
       // TODO add better error that uses rule description
       throw new WriteRuleError(`Update does not match write rules`);
@@ -192,7 +196,6 @@ async function triplesToEntityOpSet(
 export class DBTransaction<M extends Models<any, any> | undefined> {
   schema: StoreSchema<M> | undefined;
   private _schema: Entity | undefined;
-  readonly variables?: Record<string, any>;
   private _permissionCache: Map<string, boolean> = new Map();
   logger: Logger;
 
@@ -204,7 +207,6 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
   ) {
     this.logger = options.logger ?? db.logger;
     this.schema = options.schema;
-    this.variables = options.variables;
     this.storeTx.beforeInsert(this.ValidateTripleSchema);
     if (!options?.skipRules) {
       // Pre-update write checks
@@ -242,18 +244,19 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
           }
           // for each updatedEntity, load triples, construct entity, and check write rules
           for (const id of updatedEntities) {
-            await checkWriteRules(tx, id, this.variables, this.schema);
+            await checkWriteRules(this, tx, id, this.schema);
           }
           for (const id of insertedEntities) {
-            await checkWriteRules(tx, id, this.variables, this.schema);
+            await checkWriteRules(this, tx, id, this.schema);
           }
           for (const id of deletedEntities) {
             // Notably deletes use the original triples (using tx wont have data)
             // We may not be able to differentiate between a delete elsewhere and a write rule failure
             await checkWriteRules(
+              this,
               this.db.tripleStore,
               id,
-              this.variables,
+
               this.schema
             );
           }
@@ -566,7 +569,7 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
       insertedEntity.data as any,
       schema,
       collectionName
-    ) as MaybeReturnTypeFromQuery<M, CN>;
+    ) as ReturnTypeFromParts<M, CN>;
     this.logger.debug('insert END', collectionName, insertedEntityJS);
     return insertedEntityJS;
   }
@@ -606,7 +609,7 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     entityId: string,
     callback: (
       entity: any
-    ) => [Attribute, Value][] | Promise<[Attribute, Value][]>
+    ) => [Attribute, TupleValue][] | Promise<[Attribute, TupleValue][]>
   ) {
     this.logger.debug('updateRaw START');
     const storeId = appendCollectionToId(collectionName, entityId);
@@ -675,14 +678,19 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
   ): Promise<FetchResult<Q>> {
     const schema = (await this.getSchema())?.collections as M;
     const fetchQuery = prepareQuery(query, schema, {
-      variables: this.variables,
       skipRules: options.skipRules,
     });
     // TODO: read scope?
     // See difference between this fetch and db fetch
-    const { results } = await fetch<M, Q>(this.storeTx, fetchQuery, {
-      schema,
-    });
+    const { results } = await fetch<M, Q>(
+      this.db,
+      this.storeTx,
+      fetchQuery,
+      initialFetchExecutionContext(),
+      {
+        schema,
+      }
+    );
     return fetchResultToJS(results, schema, fetchQuery.collectionName);
   }
 
@@ -711,7 +719,7 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
   async fetchOne<Q extends CollectionQuery<M, any>>(
     query: Q,
     options: DBFetchOptions = {}
-  ) {
+  ): Promise<FetchResultEntity<Q> | null> {
     query.limit = 1;
     const result = await this.fetch(query, options);
     const entity = [...result.values()][0];
@@ -1009,7 +1017,7 @@ function validateCollectionName(collections: any, collectionName: string) {
 
 export class ChangeTracker {
   // On assignment, set proper tuples
-  private tuplesTracker: Record<string, Value> = {};
+  private tuplesTracker: Record<string, TupleValue> = {};
 
   // Track updated values with ValuePointer
   changes: Record<string, any> = {};
@@ -1043,7 +1051,7 @@ export class ChangeTracker {
     return this.changes;
   }
 
-  getTuples(): [Attribute, Value][] {
+  getTuples(): [Attribute, TupleValue][] {
     return Object.entries(this.tuplesTracker).map(([attr, value]) => [
       attr.split('/'),
       value,

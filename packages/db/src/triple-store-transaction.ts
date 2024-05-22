@@ -26,7 +26,7 @@ import {
   mapStaticTupleToEAV,
   EAV,
   EntityId,
-  Value,
+  TupleValue,
   TripleStoreBeforeCommitHook,
   TripleStoreBeforeInsertHook,
   TripleStoreAfterCommitHook,
@@ -119,7 +119,7 @@ export class TripleStoreTransaction implements TripleStoreApi {
   findByAVE(
     tupleArgs: [
       attribute?: Attribute | undefined,
-      value?: Value | undefined,
+      value?: TupleValue | undefined,
       entityId?: string | undefined
     ],
     direction?: 'ASC' | 'DESC' | undefined
@@ -264,7 +264,7 @@ export class TripleStoreTransaction implements TripleStoreApi {
     };
   }
 
-  async setValue(id: EntityId, attribute: Attribute, value: Value) {
+  async setValue(id: EntityId, attribute: Attribute, value: TupleValue) {
     return await this.setValues([[id, attribute, value]]);
   }
 
@@ -326,7 +326,9 @@ export class TripleStoreTransaction implements TripleStoreApi {
     const allExistingTriples: TripleRow[] = [];
     for (const { id, attribute } of values) {
       const existingTriples = await this.findByEntityAttribute(id, attribute);
-      allExistingTriples.push(...existingTriples);
+      for (const triple of existingTriples) {
+        allExistingTriples.push(triple);
+      }
     }
     const timestamp = await this.getTransactionTimestamp();
     // We need to overwrite any existing writes to that attribute that

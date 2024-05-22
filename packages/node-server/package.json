@@ -1,0 +1,21 @@
+{
+  "name": "node-server",
+  "packageManager": "yarn@3.4.1",
+  "private": true,
+  "type": "module",
+  "version": "0.3.42",
+  "scripts": {
+    "start": "node ./run.js",
+    "build": "./scripts/build.sh",
+    "publish": "./scripts/publish.sh",
+    "check-and-publish": "node ./scripts/docker-check-version-and-publish.js"
+  },
+  "dependencies": {
+    "@triplit/server": "0.3.42",
+    "better-sqlite3": "^8.3.0"
+  },
+  "devDependencies": {
+    "@types/semver": "^7",
+    "semver": "^7.6.0"
+  }
+}

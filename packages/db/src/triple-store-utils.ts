@@ -5,26 +5,26 @@ import {
 import MultiTupleStore, {
   ScopedMultiTupleOperator,
 } from './multi-tuple-store.js';
-import { ValueCursor } from './query.js';
+import { QueryValue, ValueCursor } from './query.js';
 import { Timestamp } from './timestamp.js';
 import { TripleStoreTransaction } from './triple-store-transaction.js';
 import { KeyValuePair, MIN, MAX } from '@triplit/tuple-database';
 
 // Value should be serializable, this is what goes into triples
 // Not to be confused with the Value type we define on queries
-export type Value = number | string | boolean | null;
+export type TupleValue = number | string | boolean | null;
 export type EntityId = string;
 export type AttributeItem = string | number;
 export type Attribute = AttributeItem[];
 export type Expired = boolean;
 export type TenantId = string;
 
-export type EAV = [EntityId, Attribute, Value];
-export type TripleKey = [EntityId, Attribute, Value, Timestamp];
+export type EAV = [EntityId, Attribute, TupleValue];
+export type TripleKey = [EntityId, Attribute, TupleValue, Timestamp];
 export type TripleRow = {
   id: EntityId;
   attribute: Attribute;
-  value: Value;
+  value: TupleValue;
   timestamp: Timestamp;
   expired: Expired;
 };
@@ -33,21 +33,21 @@ export type TripleMetadata = { expired: Expired };
 
 export type EATIndex = {
   key: ['EAT', EntityId, Attribute, Timestamp];
-  value: [Value, TripleMetadata['expired']];
+  value: [TupleValue, TripleMetadata['expired']];
 };
 
 export type AVEIndex = {
-  key: ['AVE', Attribute, Value, EntityId, Timestamp];
+  key: ['AVE', Attribute, TupleValue, EntityId, Timestamp];
   value: TripleMetadata;
 };
 
 export type VAEIndex = {
-  key: ['VAE', Value, Attribute, EntityId, Timestamp];
+  key: ['VAE', TupleValue, Attribute, EntityId, Timestamp];
   value: TripleMetadata;
 };
 
 export type ClientTimestampIndex = {
-  key: ['clientTimestamp', string, Timestamp, EntityId, Attribute, Value]; // [tenant, 'clientTimestamp', client]
+  key: ['clientTimestamp', string, Timestamp, EntityId, Attribute, TupleValue]; // [tenant, 'clientTimestamp', client]
   value: TripleMetadata;
 };
 
@@ -95,11 +95,16 @@ export type TripleStoreHooks = {
   afterCommit: TripleStoreAfterCommitHook[];
 };
 
+// TODO: This really should be TupleValue
 export type RangeContraints = {
-  greaterThan?: ValueCursor;
-  greaterThanOrEqual?: ValueCursor;
-  lessThan?: ValueCursor;
-  lessThanOrEqual?: ValueCursor;
+  greaterThan?: QueryValue;
+  greaterThanCursor?: ValueCursor;
+  greaterThanOrEqual?: QueryValue;
+  greaterThanOrEqualCursor?: ValueCursor;
+  lessThan?: QueryValue;
+  lessThanCursor?: ValueCursor;
+  lessThanOrEqual?: QueryValue;
+  lessThanOrEqualCursor?: ValueCursor;
   direction?: 'ASC' | 'DESC';
 };
 
@@ -136,7 +141,12 @@ export function indexToTriple(
     value: v,
     timestamp: t,
     // @ts-ignore
-    expired: indexType === 'EAT' ? index.value[1] : index.value.expired,
+    expired:
+      indexType === 'EAT'
+        ? index.value[1]
+        : indexType === 'AVE'
+        ? false
+        : index.value.expired,
   };
 }
 
@@ -181,7 +191,7 @@ export function findByAVE(
   tx: MultiTupleStoreOrTransaction,
   [attribute, value, entityId]: [
     attribute?: Attribute,
-    value?: Value,
+    value?: TupleValue,
     entityId?: EntityId
   ] = [],
   direction?: 'ASC' | 'DESC'
@@ -198,39 +208,60 @@ export function findByAVE(
 export function findValuesInRange(
   tx: MultiTupleStoreOrTransaction,
   attribute: Attribute,
-  {
-    greaterThan,
-    greaterThanOrEqual,
-    lessThan,
-    lessThanOrEqual,
-    direction,
-  }: RangeContraints = {}
+  constraints: RangeContraints = {}
 ) {
   const prefix = ['AVE', attribute];
   const TUPLE_LENGTH = 5;
+
+  // Args accept either a cursor or a value, use min/max if cursor not provided
+  const greaterThanCursor = !!constraints.greaterThanCursor
+    ? constraints.greaterThanCursor
+    : constraints.greaterThan
+    ? ([constraints.greaterThan, MAX] as const)
+    : undefined;
+  const greaterThanOrEqualCursor = !!constraints.greaterThanOrEqualCursor
+    ? constraints.greaterThanOrEqualCursor
+    : constraints.greaterThanOrEqual
+    ? ([constraints.greaterThanOrEqual, MIN] as const)
+    : undefined;
+  const lessThanCursor = !!constraints.lessThanCursor
+    ? constraints.lessThanCursor
+    : constraints.lessThan
+    ? ([constraints.lessThan, MIN] as const)
+    : undefined;
+  const lessThanOrEqualCursor = !!constraints.lessThanOrEqualCursor
+    ? constraints.lessThanOrEqualCursor
+    : constraints.lessThanOrEqual
+    ? ([constraints.lessThanOrEqual, MAX] as const)
+    : undefined;
+
   const scanArgs = {
     prefix,
-    gt: greaterThan && [
-      ...greaterThan,
-      ...new Array(TUPLE_LENGTH - prefix.length - greaterThan.length).fill(MAX),
-    ],
-    gte: greaterThanOrEqual && [
-      ...greaterThanOrEqual,
+    gt: greaterThanCursor && [
+      ...greaterThanCursor,
       ...new Array(
-        TUPLE_LENGTH - prefix.length - greaterThanOrEqual.length
+        TUPLE_LENGTH - prefix.length - greaterThanCursor.length
+      ).fill(MAX),
+    ],
+    gte: greaterThanOrEqualCursor && [
+      ...greaterThanOrEqualCursor,
+      ...new Array(
+        TUPLE_LENGTH - prefix.length - greaterThanOrEqualCursor.length
       ).fill(MIN),
     ],
-    lt: lessThan && [
-      ...lessThan,
-      ...new Array(TUPLE_LENGTH - prefix.length - lessThan.length).fill(MIN),
-    ],
-    lte: lessThanOrEqual && [
-      ...lessThanOrEqual,
-      ...new Array(TUPLE_LENGTH - prefix.length - lessThanOrEqual.length).fill(
-        MAX
+    lt: lessThanCursor && [
+      ...lessThanCursor,
+      ...new Array(TUPLE_LENGTH - prefix.length - lessThanCursor.length).fill(
+        MIN
       ),
     ],
-    reverse: direction === 'DESC',
+    lte: lessThanOrEqualCursor && [
+      ...lessThanOrEqualCursor,
+      ...new Array(
+        TUPLE_LENGTH - prefix.length - lessThanOrEqualCursor.length
+      ).fill(MAX),
+    ],
+    reverse: constraints.direction === 'DESC',
   };
   return scanToTriples(tx, scanArgs);
 }
@@ -294,44 +325,46 @@ export async function findByClientTimestamp(
   scanDirection: 'lt' | 'lte' | 'gt' | 'gte' | 'eq',
   timestamp: Timestamp | undefined
 ) {
-  const indexPrefix = ['clientTimestamp', clientId];
-  if (scanDirection === 'lt') {
-    if (!timestamp) return [];
-    return await scanToTriples(tx, {
-      prefix: indexPrefix,
-      lt: [timestamp],
-    });
+  if (!timestamp && !scanDirection.startsWith('gt')) {
+    return [];
   }
-  if (scanDirection === 'lte') {
-    if (!timestamp) return [];
-    return await scanToTriples(tx, {
-      prefix: indexPrefix,
-      lte: [[...timestamp, MAX]],
-    });
+  let scanParams: Parameters<MultiTupleStoreOrTransaction['scan']>[0];
+  switch (scanDirection) {
+    case 'lt':
+      scanParams = {
+        lt: [timestamp!],
+      };
+      break;
+    case 'lte':
+      scanParams = {
+        lte: [[...timestamp!, MAX]],
+      };
+      break;
+    case 'gt':
+      scanParams = {
+        gt: [[...(timestamp ?? []), MIN]],
+      };
+      break;
+    case 'gte':
+      scanParams = {
+        gte: [[...(timestamp ?? [])]],
+      };
+      break;
+    case 'eq':
+      scanParams = {
+        gte: [timestamp!],
+        lt: [[...timestamp!, MAX]],
+      };
+      break;
+    default:
+      throw new InvalidTimestampIndexScanError(
+        `Cannot perform a scan with direction ${scanDirection}.`
+      );
   }
-  if (scanDirection === 'gt') {
-    return scanToTriples(tx, {
-      prefix: indexPrefix,
-      gt: [[...(timestamp ?? []), MIN]],
-    });
-  }
-  if (scanDirection === 'gte') {
-    return scanToTriples(tx, {
-      prefix: indexPrefix,
-      gte: [[...(timestamp ?? [])]],
-    });
-  }
-  if (scanDirection === 'eq') {
-    if (!timestamp) return [];
-    return await scanToTriples(tx, {
-      prefix: indexPrefix,
-      gte: [timestamp],
-      lt: [[...timestamp, MAX]],
-    });
-  }
-  throw new InvalidTimestampIndexScanError(
-    `Cannot perfom a scan with direction ${scanDirection}.`
-  );
+  return await scanToTriples(tx, {
+    prefix: ['clientTimestamp', clientId],
+    ...scanParams,
+  });
 }
 
 export async function findMaxClientTimestamp(
@@ -349,9 +382,9 @@ export async function findMaxClientTimestamp(
 export async function findAllClientIds(
   tx: MultiTupleStoreOrTransaction
 ): Promise<string[]> {
-  const clientIds: string[] = [];
+  const clientIds: Set<string> = new Set();
+  let lastClientId: string | typeof MIN = MIN;
   while (true) {
-    const lastClientId = clientIds.at(-1) ?? MIN;
     const res = await tx.scan({
       prefix: ['clientTimestamp'],
       gt: [lastClientId, MAX, MAX, MAX, MAX],
@@ -361,9 +394,17 @@ export async function findAllClientIds(
       break;
     }
     const tuple = res[0] as ClientTimestampIndex;
-    clientIds.push(tuple.key[1]);
+    const clientId = tuple.key[1];
+    if (!clientId) {
+      throw new Error('Empty client ID found in clientTimestamp index');
+    }
+    if (clientIds.has(clientId)) {
+      throw new Error('Duplicate client ID found in clientTimestamp index');
+    }
+    clientIds.add(tuple.key[1]);
+    lastClientId = clientId;
   }
-  return clientIds;
+  return Array.from(clientIds);
 }
 
 // We use the _collection tuple to indicate if an entity delete should occur

@@ -1,23 +1,29 @@
 import {
-  CollectionQuerySchema,
-  FetchResult,
+  FetchExecutionContext,
+  FetchFromStorageOptions,
   TimestampedFetchResult,
+  getQueryVariables,
   subscribeResultsAndTriples,
 } from './collection-query.js';
-import { CollectionNameFromModels, ModelFromModels } from './db.js';
-import { mapFilterStatements } from './db-helpers.js';
+import {
+  CollectionNameFromModels,
+  ModelFromModels,
+  SystemVariables,
+} from './db.js';
+import { isValueVariable, mapFilterStatements } from './db-helpers.js';
 import {
   CollectionQuery,
   FilterStatement,
   isFilterStatement,
 } from './query.js';
-import { Models, getSchemaFromPath } from './schema.js';
+import { getSchemaFromPath } from './schema/schema.js';
+import { Models } from './schema/types';
 import * as TB from '@sinclair/typebox/value';
-import { TripleStore } from './triple-store.js';
+import type DB from './db.js';
 import { QueryCacheError } from './errors.js';
 import { TripleRow } from './triple-store-utils.js';
 
-export class VariableAwareCache<Schema extends Models<any, any>> {
+export class VariableAwareCache<Schema extends Models<any, any> | undefined> {
   cache: Map<
     BigInt,
     {
@@ -26,7 +32,7 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
     }
   >;
 
-  constructor(readonly tripleStore: TripleStore) {
+  constructor(readonly db: DB<Schema>) {
     this.cache = new Map();
   }
 
@@ -36,12 +42,16 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
     Q extends CollectionQuery<M, CN>
   >(query: Q, model?: ModelFromModels<M, CN> | undefined) {
     // if (!model) return false;
+    if (query.limit !== undefined) return false;
     if (
       query.where &&
       query.where.some((f) => !(f instanceof Array) && !('exists' in f))
     )
       return false;
 
+    if (query.include && Object.keys(query.include).length > 0) return false;
+
+    // This is shouldn't be the case anymore (since we use include for sub relations)
     if (query.select && query.select.some((s) => typeof s === 'object'))
       return false;
 
@@ -72,7 +82,8 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
     return new Promise<void>((resolve) => {
       const id = this.viewQueryToId(viewQuery);
       subscribeResultsAndTriples<Schema, Q>(
-        this.tripleStore,
+        this.db,
+        this.db.tripleStore,
         viewQuery,
         ([results, triples]) => {
           this.cache.set(id, { results, triples });
@@ -82,8 +93,8 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
           console.error('error in view', err);
           this.cache.delete(id);
         },
-        schema,
         {
+          schema,
           skipRules: true,
         }
       );
@@ -96,22 +107,24 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
 
   async resolveFromCache<Q extends CollectionQuery<Schema, any>>(
     query: Q,
-    schema: Schema
+    systemVars: SystemVariables | undefined,
+    executionContext: FetchExecutionContext,
+    options: FetchFromStorageOptions
   ): Promise<{
     results: TimestampedFetchResult<Q>;
     triples: Map<string, TripleRow[]>;
   }> {
     const { views, variableFilters } = this.queryToViews(query);
-
     const id = this.viewQueryToId(views[0]);
-    // console.log('attempting to use index for', id);
     if (!this.cache.has(id)) {
-      await this.createView(views[0], schema);
+      // NOTE: dangerously setting ! on options.schema (not sure if schema is actually required or not)
+      await this.createView(views[0], options.schema!);
     }
     // TODO support multiple variable clauses
     const [prop, op, varStr] = variableFilters[0];
     const varKey = (varStr as string).slice(1);
-    const varValue = query.vars![varKey];
+    const vars = getQueryVariables(query, systemVars, executionContext);
+    const varValue = vars![varKey];
     const view = this.cache.get(id)!;
     const viewResultEntries = [...view.results.entries()];
     let start, end;
@@ -204,7 +217,7 @@ export class VariableAwareCache<Schema extends Models<any, any>> {
       ? query.where.filter((filter) => {
           if (!(filter instanceof Array)) return true;
           const [prop, _op, val] = filter;
-          if (typeof val === 'string' && val.startsWith('$')) {
+          if (isValueVariable(val)) {
             variableFilters.push([prop, _op, val]);
             return false;
           }

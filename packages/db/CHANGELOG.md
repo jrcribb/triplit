@@ -1,5 +1,62 @@
 # @triplit/db
 
+## 0.3.39
+
+### Patch Changes
+
+- cae769a: Overwrite include field in prep query
+
+## 0.3.38
+
+### Patch Changes
+
+- f826e50: Simplify query builder and query generics
+
+## 0.3.37
+
+### Patch Changes
+
+- 5b2e55d: export TripleStoreApi
+
+## 0.3.36
+
+### Patch Changes
+
+- 3202e60: fixup selection types
+
+## 0.3.35
+
+### Patch Changes
+
+- 8d35085: Update fetch return types to reflect query selections
+- 42392cc: Remove unnecessary warning messages with optional and nullable relations
+
+## 0.3.34
+
+### Patch Changes
+
+- b3315c3: default to id order in after cursor calculation
+
+## 0.3.33
+
+### Patch Changes
+
+- 0470537: fix bug in order by candidate selection
+- 8d029fd: properly type db transaction fetchOne
+
+## 0.3.32
+
+### Patch Changes
+
+- 5a0f993: handle filter clauses in candidate selection
+- 1a8c0ea: Update conflicting type names for @triplit/db Value
+
+## 0.3.30
+
+### Patch Changes
+
+- d1b274b: Support variable prefixes to prevent overriding variable assignments across various injection scopes
+
 ## 0.3.29
 
 ### Patch Changes

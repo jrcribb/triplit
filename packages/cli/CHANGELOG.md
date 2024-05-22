@@ -1,5 +1,158 @@
 # @triplit/cli
 
+## 0.3.58
+
+### Patch Changes
+
+- Updated dependencies [c8fadd2]
+- Updated dependencies [cae769a]
+  - @triplit/client@0.3.48
+  - @triplit/db@0.3.39
+  - @triplit/console@0.3.52
+  - @triplit/server@0.3.42
+  - @triplit/server-core@0.3.41
+
+## 0.3.57
+
+### Patch Changes
+
+- a391c35: support TRIPLIT_SCHEMA_PATH env var and --schemaPath CLI option
+
+## 0.3.56
+
+### Patch Changes
+
+- Updated dependencies [f826e50]
+  - @triplit/client@0.3.47
+  - @triplit/db@0.3.38
+  - @triplit/console@0.3.51
+  - @triplit/server@0.3.41
+  - @triplit/server-core@0.3.40
+
+## 0.3.55
+
+### Patch Changes
+
+- Updated dependencies [5b2e55d]
+- Updated dependencies [5b2e55d]
+  - @triplit/db@0.3.37
+  - @triplit/client@0.3.46
+  - @triplit/console@0.3.50
+  - @triplit/server@0.3.40
+  - @triplit/server-core@0.3.39
+
+## 0.3.54
+
+### Patch Changes
+
+- Updated dependencies [3202e60]
+  - @triplit/client@0.3.45
+  - @triplit/db@0.3.36
+  - @triplit/console@0.3.49
+  - @triplit/server@0.3.39
+  - @triplit/server-core@0.3.38
+
+## 0.3.53
+
+### Patch Changes
+
+- 7672ecb: The dev command will now initialize the dev server with a schema (--initWithSchema) by default
+- d023639: clean up sqlite dependencies
+- Updated dependencies [8d35085]
+- Updated dependencies [87f429a]
+- Updated dependencies [42392cc]
+- Updated dependencies [8437e8c]
+- Updated dependencies [d023639]
+  - @triplit/client@0.3.44
+  - @triplit/db@0.3.35
+  - @triplit/console@0.3.48
+  - @triplit/server@0.3.38
+  - @triplit/server-core@0.3.37
+
+## 0.3.52
+
+### Patch Changes
+
+- b4f7f26: exit unsuccessful schema push with exit code 1
+
+## 0.3.51
+
+### Patch Changes
+
+- Updated dependencies [02284c0]
+  - @triplit/client@0.3.43
+  - @triplit/console@0.3.47
+
+## 0.3.50
+
+### Patch Changes
+
+- Updated dependencies [b3315c3]
+  - @triplit/db@0.3.34
+  - @triplit/client@0.3.42
+  - @triplit/console@0.3.46
+  - @triplit/server@0.3.37
+  - @triplit/server-core@0.3.36
+
+## 0.3.49
+
+### Patch Changes
+
+- d692339: hide prerelease commands
+- Updated dependencies [fc6feb1]
+  - @triplit/server@0.3.36
+
+## 0.3.48
+
+### Patch Changes
+
+- Updated dependencies [0470537]
+- Updated dependencies [8d029fd]
+  - @triplit/db@0.3.33
+  - @triplit/client@0.3.41
+  - @triplit/console@0.3.45
+  - @triplit/server@0.3.35
+  - @triplit/server-core@0.3.35
+
+## 0.3.47
+
+### Patch Changes
+
+- e8de390: update default schema in `init` command support more package managers
+- Updated dependencies [5a0f993]
+- Updated dependencies [1a8c0ea]
+  - @triplit/db@0.3.32
+  - @triplit/server-core@0.3.34
+  - @triplit/client@0.3.40
+  - @triplit/console@0.3.44
+  - @triplit/server@0.3.34
+
+## 0.3.46
+
+### Patch Changes
+
+- Updated dependencies [d1b274b]
+  - @triplit/db@0.3.30
+  - @triplit/client@0.3.38
+  - @triplit/console@0.3.43
+  - @triplit/server@0.3.33
+  - @triplit/server-core@0.3.33
+
+## 0.3.45
+
+### Patch Changes
+
+- Updated dependencies [826acd1]
+- Updated dependencies [3d08941]
+  - @triplit/client@0.3.37
+  - @triplit/console@0.3.42
+
+## 0.3.44
+
+### Patch Changes
+
+- @triplit/console@0.3.41
+
 ## 0.3.43
 
 ### Patch Changes

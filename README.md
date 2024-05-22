@@ -67,11 +67,10 @@ npm install --save-dev @triplit/cli
 npm run triplit init
 ```
 
-Define a [schema](https://www.triplit.dev/docs/database/schemas) in `my-app/triplit/schema.ts`.
+Define a [schema](https://www.triplit.dev/docs/schemas) in `my-app/triplit/schema.ts`.
 
 ```ts
-import { Schema as S } from '@triplit/db';
-import { ClientSchema } from '@triplit/client';
+import { Schema as S, ClientSchema } from '@triplit/client';
 
 export const schema = {
   todos: {
@@ -84,10 +83,10 @@ export const schema = {
 } satisfies ClientSchema;
 ```
 
-Start the Triplit development [sync server](https://www.triplit.dev/docs/syncing-data).
+Start the Triplit development [sync server](https://www.triplit.dev/docs/local-development).
 
 ```bash
-npm run triplit dev --initWithSchema
+npm run triplit dev
 ```
 
 This will output some important [environmental variables](https://www.triplit.dev/docs/local-development#additional-environment-variables) that your app will need to sync with the server. Add them to your `.env` file (Vite example below).
@@ -97,7 +96,7 @@ VITE_TRIPLIT_SERVER_URL=http://localhost:6543
 VITE_TRIPLIT_TOKEN=copied-in-from-triplit-dev
 ```
 
-Define a [query](https://www.triplit.dev/docs/fetching-data/queries) in your App (React example below).
+Define a [query](https://www.triplit.dev/docs/client/query) in your App (React example below).
 
 ```tsx
 import { TriplitClient } from '@triplit/client';

@@ -4,9 +4,10 @@ import {
   CollectionQuery,
   FetchByIdQueryParams,
   Models,
-  QUERY_INPUT_TRANSFORMERS,
+  QueryBuilder,
   ReturnTypeFromQuery,
-  toBuilder,
+  QuerySelectionValue,
+  RelationSubquery,
 } from '@triplit/db';
 
 //  There is some odd behavior when using infer with intersection types
@@ -29,81 +30,81 @@ export type ClientFetchResult<C extends ClientQuery<any, any>> = Map<
 export type ClientSchema = Models<any, any>;
 
 export type ClientFetchResultEntity<C extends ClientQuery<any, any>> =
-  C extends ClientQuery<infer M, infer CN>
-    ? M extends ClientSchema
-      ? ReturnTypeFromQuery<M, CN>
-      : any
-    : never;
+  ReturnTypeFromQuery<C>;
 
 export type SyncStatus = 'pending' | 'confirmed' | 'all';
 
 export type Entity<
   M extends ClientSchema,
   CN extends CollectionNameFromModels<M>
-> = ReturnTypeFromQuery<M, CN>;
+> = ReturnTypeFromQuery<ClientQuery<M, CN>>;
 
 export type ClientQuery<
   M extends ClientSchema | undefined,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
+  Selection extends QuerySelectionValue<M, CN> = QuerySelectionValue<M, CN>,
+  Inclusions extends Record<string, RelationSubquery<M, any>> = Record<
+    string,
+    RelationSubquery<M, any>
+  >
 > = {
   syncStatus?: SyncStatus;
-} & CollectionQuery<M, CN>;
+} & CollectionQuery<M, CN, Selection, Inclusions>;
 
-export function ClientQueryBuilder<
-  M extends ClientSchema | undefined,
-  CN extends CollectionNameFromModels<M>
->(
-  collectionName: CN,
-  params?: Omit<ClientQuery<M, CN>, 'collectionName'>
-): toBuilder<
-  ClientQuery<M, CN>,
-  'collectionName',
-  QUERY_INPUT_TRANSFORMERS<M, CN>
-> {
-  const query: ClientQuery<M, CN> = {
-    collectionName,
-    ...params,
-    syncStatus: params?.syncStatus ?? 'all',
-  };
-  const transformers = QUERY_INPUT_TRANSFORMERS<M, CN>();
-  return Builder(query, {
-    protectedFields: ['collectionName'],
-    inputTransformers: transformers,
-  });
+// The fact that builder methods will update generics makes it tough to re-use the builder from the db
+// - DB builder returns specific type QueryBuilder<...Params>
+// - The client builder needs to return ClientQueryBuilder<...Params>
+// - cant return 'this' because we need to update generics
+export class ClientQueryBuilder<
+  CQ extends ClientQuery<any, any, any, any>
+> extends QueryBuilder<CQ> {
+  constructor(query: CQ) {
+    super(query);
+  }
+
+  syncStatus(status: SyncStatus) {
+    this.query.syncStatus = status;
+    return this as ClientQueryBuilder<CQ>;
+  }
 }
 
-export function RemoteClientQueryBuilder<
+export type ClientQueryDefault<
+  M extends ClientSchema | undefined,
+  CN extends CollectionNameFromModels<M>
+> = ClientQuery<M, CN, QuerySelectionValue<M, CN>, {}>;
+
+export function clientQueryBuilder<
+  M extends ClientSchema | undefined,
+  CN extends CollectionNameFromModels<M>
+>(collectionName: CN, params?: Omit<ClientQuery<M, CN>, 'collectionName'>) {
+  const query = {
+    collectionName,
+    ...params,
+  };
+  return new ClientQueryBuilder<ClientQueryDefault<M, CN>>(query);
+}
+
+export class RemoteClientQueryBuilder<
+  CQ extends CollectionQuery<any, any, any, any>
+> extends QueryBuilder<CQ> {
+  constructor(query: CQ) {
+    super(query);
+  }
+}
+
+export function remoteClientQueryBuilder<
   M extends ClientSchema | undefined,
   CN extends CollectionNameFromModels<M>
   // syncStatus doesn't apply for the remote client
->(
-  collectionName: CN,
-  params?: Omit<CollectionQuery<M, CN>, 'collectionName'>
-): toBuilder<
-  CollectionQuery<M, CN>,
-  'collectionName',
-  QUERY_INPUT_TRANSFORMERS<M, CN>
-> {
+>(collectionName: CN, params?: Omit<CollectionQuery<M, CN>, 'collectionName'>) {
   const query: CollectionQuery<M, CN> = {
     collectionName,
     ...params,
   };
-  const transformers = QUERY_INPUT_TRANSFORMERS<M, CN>();
-  return Builder(query, {
-    protectedFields: ['collectionName'],
-    inputTransformers: transformers,
-  });
+  return new QueryBuilder<
+    CollectionQuery<M, CN, QuerySelectionValue<M, CN>, {}>
+  >(query);
 }
-
-export type ClientQueryBuilder<
-  M extends ClientSchema | undefined,
-  CN extends CollectionNameFromModels<M>
-> = ReturnType<typeof ClientQueryBuilder<M, CN>>;
-
-export type RemoteClientQueryBuilder<
-  M extends ClientSchema | undefined,
-  CN extends CollectionNameFromModels<M>
-> = ReturnType<typeof RemoteClientQueryBuilder<M, CN>>;
 
 export function prepareFetchOneQuery<CQ extends ClientQuery<any, any>>(
   query: CQ
@@ -114,17 +115,18 @@ export function prepareFetchOneQuery<CQ extends ClientQuery<any, any>>(
 export function prepareFetchByIdQuery<
   M extends ClientSchema | undefined,
   CN extends CollectionNameFromModels<M>
->(
-  collectionName: CN,
-  id: string,
-  queryParams?: FetchByIdQueryParams<M, CN>
-): ClientQuery<M, CN> {
-  let query = ClientQueryBuilder(collectionName).entityId(id);
+>(collectionName: CN, id: string, queryParams?: FetchByIdQueryParams<M, CN>) {
+  let query = clientQueryBuilder<M, CN>(collectionName).entityId(id);
   if (queryParams?.include) {
     for (const [relation, subquery] of Object.entries(queryParams.include)) {
-      if (subquery) query = query.include(relation, subquery);
-      else query = query.include(relation);
+      if (subquery) {
+        // @ts-expect-error TODO: fixup builder type
+        query = query.include(relation, subquery);
+      } else {
+        // @ts-expect-error TODO: fixup builder type
+        query = query.include(relation);
+      }
     }
   }
-  return query.build() as ClientQuery<M, CN>;
+  return query.build();
 }

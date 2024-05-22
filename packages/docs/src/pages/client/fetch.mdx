@@ -1,0 +1,40 @@
+---
+description: How to use the TriplitClient fetch method to query data.
+---
+
+import { Callout } from 'nextra-theme-docs';
+
+# fetch
+
+`fetch()` executes the specified query and returns a Map with entity ids as keys and the associated entities as values. For example:
+
+```typescript
+await client.insert('employees', { id: 'Fry', name: 'Philip J. Fry' });
+await client.insert('employees', { id: 'Leela', name: 'Turanga Leela' });
+
+const query = client.query('employees').build();
+const result = await client.fetch(query, options); // Map<string, { name: string }>
+```
+
+## Fetch options
+
+Because a Triplit Client may be dealing with two databases (your local database and remote database), the exact nature of how you would like to query those is customizable.
+
+If no options are provided, queries will be fulfilled with the options `{ policy: 'local-first' }`.
+
+### Policy
+
+The `policy` option determines how you interact with your local and remote databases.
+
+<Callout type="info" emoji="ℹ️">
+  This is distinct from the [syncStatus](/client/query/sync-status) parameter on
+  a query, which indicates how you wish to query your local database.
+</Callout>
+
+The following policy types are valid:
+
+- `local-first`: (default) This policy will fetch data directly from the local database, however if is determined that the query cannot be fulfilled it will fetch data from the remote database. If the remote database fails to fulfill the query, the cached data is used.
+- `local-only`: This policy will fetch data directly from the local database and will never go to the network.
+- `remote-first`: This policy will fetch data from the remote database and update the local database with those results before querying the local database.
+- `remote-only`: This policy will fetch data directly from the remote database and will not update the local database with results. Results using this policy will also not include any data from the local database - notably any data that has been updated locally but not yet synced. This policy is not available on subscriptions.
+- `local-and-remote`: This policy will fetch data from the local database and will fetch results from the remote database in the background and update the local database with those results. Optionally you may provide a `timeout` parameter, which informs Triplit to wait `timeout` milliseconds for the remote result to update the local database.

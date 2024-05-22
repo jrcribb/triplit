@@ -1,7 +1,7 @@
 {
   "name": "@triplit/server",
   "packageManager": "yarn@3.4.1",
-  "version": "0.3.32",
+  "version": "0.3.42",
   "source": "./src/index.ts",
   "main": "./dist/index.js",
   "type": "module",
@@ -23,12 +23,14 @@
     "lint": "tsc --noEmit",
     "lint:build": "npx publint",
     "util:gentoken": "node ./dev/scripts/createToken.cjs",
-    "publish-pkg": "node ../../scripts/npm-check-version-and-publish.js"
+    "publish-pkg": "node ../../scripts/npm-check-version-and-publish.js && yarn sentry:sourcemaps",
+    "sentry:sourcemaps": "sentry-cli sourcemaps inject --org aspen --project triplit-server ./dist && sentry-cli sourcemaps upload --release=$npm_package_version --org aspen --project triplit-server ./dist"
   },
   "dependencies": {
+    "@sentry/cli": "^2.31.2",
+    "@sentry/node": "^7.112.2",
     "@triplit/db": "workspace:^",
     "@triplit/server-core": "workspace:^",
-    "better-sqlite3": "^8.3.0",
     "consola": "^3.2.3",
     "cors": "^2.8.5",
     "dotenv": "^16.0.3",
@@ -40,15 +42,23 @@
     "ws": "^8.13.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.4",
     "@types/cors": "^2",
     "@types/express": "^4.17.17",
     "@types/jsonwebtoken": "^9",
     "@types/multer": "^1",
     "@types/node": "^18.15.2",
     "@types/ws": "^8.5.4",
+    "better-sqlite3": "^8.3.0",
     "esbuild": "^0.19.3",
     "tsx": "^3.12.10",
     "typescript": "^5.2.2"
+  },
+  "peerDependenciesMeta": {
+    "better-sqlite3": {
+      "optional": true
+    }
+  },
+  "peerDependencies": {
+    "better-sqlite3": "*"
   }
 }

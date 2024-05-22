@@ -3,8 +3,7 @@
 import type {
   ClientFetchResult,
   ClientQuery,
-  ClientQueryBuilder,
-  CollectionNameFromModels,
+  QueryBuilder,
   Models,
   SubscriptionOptions,
   TriplitClient,
@@ -12,34 +11,41 @@ import type {
 
 export function useQuery<
   M extends Models<any, any> | undefined,
-  CN extends CollectionNameFromModels<M>
+  Q extends ClientQuery<M, any, any, any>
 >(
   client: TriplitClient<any>,
-  query: ClientQueryBuilder<M, CN>,
+  query: QueryBuilder<Q>,
   options?: Partial<SubscriptionOptions>
 ): {
   fetching: boolean;
+  fetchingLocal: boolean;
   fetchingRemote: boolean;
-  results: ClientFetchResult<ClientQuery<M, CN>> | undefined;
+  results: ClientFetchResult<Q> | undefined;
   error: any;
-  updateQuery: (query: ClientQueryBuilder<M, CN>) => void;
+  updateQuery: (query: QueryBuilder<Q>) => void;
 } {
-  let results: ClientFetchResult<ClientQuery<M, CN>> | undefined =
-    $state(undefined);
-  let fetching = $state(false);
-  let fetchingRemote = $state(client.syncEngine.connectionStatus === 'OPEN');
+  let results: ClientFetchResult<Q> | undefined = $state(undefined);
+  let isInitialFetch = $state(true);
+  let fetchingLocal = $state(false);
+  let fetchingRemote = $state(client.syncEngine.connectionStatus !== 'CLOSED');
+  let fetching = $derived(fetchingLocal || (isInitialFetch && fetchingRemote));
   let error: any = $state(undefined);
   let hasResponseFromServer = false;
   let builtQuery = $state(query && query.build());
 
-  function updateQuery(query: ClientQueryBuilder<M, CN>) {
+  function updateQuery(query: QueryBuilder<Q>) {
     builtQuery = query.build();
     results = undefined;
-    fetching = true;
+    fetchingLocal = true;
     hasResponseFromServer = false;
   }
 
   $effect(() => {
+    client.syncEngine
+      .isFirstTimeFetchingQuery(builtQuery)
+      .then((isFirstFetch) => {
+        isInitialFetch = isFirstFetch;
+      });
     const unsub = client.syncEngine.onConnectionStatusChange((status) => {
       if (status === 'CLOSING' || status === 'CLOSED') {
         fetchingRemote = false;
@@ -59,14 +65,12 @@ export function useQuery<
     const unsubscribe = client.subscribe(
       builtQuery,
       (localResults) => {
-        fetching = false;
+        fetchingLocal = false;
         error = undefined;
-        results = new Map(localResults) as ClientFetchResult<
-          ClientQuery<M, CN>
-        >;
+        results = new Map(localResults);
       },
       (error) => {
-        fetching = false;
+        fetchingLocal = false;
         error = error;
       },
       {
@@ -86,6 +90,9 @@ export function useQuery<
     get fetching() {
       return fetching;
     },
+    get fetchingLocal() {
+      return fetchingLocal;
+    },
     get fetchingRemote() {
       return fetchingRemote;
     },
@@ -100,7 +107,7 @@ export function useQuery<
 }
 
 export function useConnectionStatus(client: TriplitClient<any>) {
-  let status = $state(client.syncEngine.connectionStatus);
+  let status = $state('CONNECTING');
 
   $effect(() => {
     const unsub = client.syncEngine.onConnectionStatusChange((newStatus) => {

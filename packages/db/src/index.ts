@@ -38,14 +38,16 @@ export {
   // TODO
   triplesToEntities as constructEntities,
   compareCursors,
-  QUERY_INPUT_TRANSFORMERS,
 } from './query.js';
+export { QUERY_INPUT_TRANSFORMERS } from './query/builder.js';
 // TS issue occurs if we dont export FilterGroup (i think due to an infered return type somewhere)
 export type {
   Query,
   FilterGroup,
   CollectionQuery,
   ValueCursor,
+  RelationSubquery,
+  QuerySelectionValue,
 } from './query.js';
 export {
   stripCollectionFromId,
@@ -56,30 +58,24 @@ export type {
   TripleRow,
   EntityId,
   Attribute,
-  Value,
+  TupleValue,
 } from './triple-store-utils.js';
+export type { TripleStoreApi } from './triple-store.js';
 export {
-  Schema,
   triplesToSchema,
   schemaToJSON,
   JSONToSchema,
-  timestampedObjectToPlainObject,
   hashSchemaJSON,
-  convertEntityToJS,
   getSchemaFromPath,
-} from './schema.js';
-export type {
-  TObject,
-  TimestampedTypeFromModel as TypeFromModel, // TODO: dont alias
-} from './schema.js';
+} from './schema/schema.js';
+export { Schema } from './schema/builder.js';
+export type { TObject } from './schema/schema.js';
 export type {
   InsertTypeFromModel,
   UpdateTypeFromModel,
   Model,
   Models,
-  TimestampedObject,
-  UnTimestampedObject,
-} from './schema.js';
+} from './schema/types';
 export type {
   AttributeDefinition,
   CollectionAttributeDefinition,
@@ -92,14 +88,21 @@ export { timestampCompare } from './timestamp.js';
 export type { Timestamp } from './timestamp.js';
 export { DurableClock } from './clocks/durable-clock.js';
 export { MemoryClock } from './clocks/memory-clock.js';
-export { default as CollectionQueryBuilder } from './collection-query.js';
+export {
+  default as CollectionQueryBuilder,
+  convertEntityToJS,
+} from './collection-query.js';
+export { QueryBuilder } from './query/builder.js';
 export type {
   FetchResult,
   FetchResultEntity,
   ReturnTypeFromQuery,
-  MaybeReturnTypeFromQuery,
+  TimestampedTypeFromModel as TypeFromModel, // TODO: dont alias
 } from './collection-query.js';
 export { default as Builder } from './utils/builder.js';
 export type { toBuilder } from './utils/builder.js';
+export type { BuilderBase } from './query/builder.js';
+export { timestampedObjectToPlainObject } from './utils.js';
+export type { TimestampedObject, UnTimestampedObject } from './utils.js';
 export type { IsAny } from './utility-types.js';
 export * from './errors.js';

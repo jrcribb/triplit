@@ -1,5 +1,92 @@
 # @triplit/react
 
+## 0.3.50
+
+### Patch Changes
+
+- Updated dependencies [c8fadd2]
+  - @triplit/client@0.3.48
+
+## 0.3.49
+
+### Patch Changes
+
+- f826e50: Simplify query builder and query generics
+- Updated dependencies [f826e50]
+  - @triplit/client@0.3.47
+
+## 0.3.48
+
+### Patch Changes
+
+- Updated dependencies [5b2e55d]
+  - @triplit/client@0.3.46
+
+## 0.3.47
+
+### Patch Changes
+
+- Updated dependencies [3202e60]
+  - @triplit/client@0.3.45
+
+## 0.3.46
+
+### Patch Changes
+
+- 8d35085: Update fetch return types to reflect query selections
+- Updated dependencies [8d35085]
+- Updated dependencies [87f429a]
+  - @triplit/client@0.3.44
+
+## 0.3.45
+
+### Patch Changes
+
+- Updated dependencies [02284c0]
+  - @triplit/client@0.3.43
+
+## 0.3.44
+
+### Patch Changes
+
+- @triplit/client@0.3.42
+
+## 0.3.43
+
+### Patch Changes
+
+- 53adad8: remove react-dom from peer dependencies
+  - @triplit/client@0.3.41
+
+## 0.3.42
+
+### Patch Changes
+
+- Updated dependencies [1a8c0ea]
+  - @triplit/client@0.3.40
+
+## 0.3.40
+
+### Patch Changes
+
+- @triplit/client@0.3.38
+
+## 0.3.39
+
+### Patch Changes
+
+- 826acd1: add shouldWaitForServer helper to useQuery
+- 3d08941: rename shouldWaitForServer to fetching and add fetchingLocal
+- Updated dependencies [826acd1]
+- Updated dependencies [3d08941]
+  - @triplit/client@0.3.37
+
+## 0.3.38
+
+### Patch Changes
+
+- a74030c: fixup fetchingRemote
+
 ## 0.3.37
 
 ### Patch Changes

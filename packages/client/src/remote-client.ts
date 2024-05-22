@@ -8,7 +8,7 @@ import {
   ChangeTracker,
   createUpdateProxy,
   Attribute,
-  Value,
+  TupleValue,
   TriplitError,
   EntityId,
   constructEntity,
@@ -24,6 +24,7 @@ import {
   RemoteClientQueryBuilder,
   prepareFetchByIdQuery,
   prepareFetchOneQuery,
+  remoteClientQueryBuilder,
 } from './utils/query.js';
 
 function parseError(error: string) {
@@ -97,7 +98,7 @@ export class RemoteClient<M extends ClientSchema | undefined> {
     return deserializeHTTPFetchResult(query, data.result, await this.schema());
   }
 
-  private async queryTriples<CQ extends ClientQuery<M, any>>(
+  private async queryTriples<CQ extends ClientQuery<M, any, any, any>>(
     query: CQ
   ): Promise<TripleRow[]> {
     const { data, error } = await this.sendRequest('/queryTriples', 'POST', {
@@ -248,11 +249,11 @@ export class RemoteClient<M extends ClientSchema | undefined> {
     );
     await updater(updateProxy);
     const changeTuples = changes.getTuples();
-    const patches: (['delete', Attribute] | ['set', Attribute, Value])[] =
+    const patches: (['delete', Attribute] | ['set', Attribute, TupleValue])[] =
       changeTuples.map((tuple) => {
         if (tuple[1] === undefined)
           return ['delete', tuple[0]] as ['delete', Attribute];
-        return ['set', tuple[0], tuple[1]] as ['set', Attribute, Value];
+        return ['set', tuple[0], tuple[1]] as ['set', Attribute, TupleValue];
       });
     const { data, error } = await this.sendRequest('/update', 'POST', {
       collectionName,
@@ -277,8 +278,8 @@ export class RemoteClient<M extends ClientSchema | undefined> {
 
   query<CN extends CollectionNameFromModels<M>>(
     collectionName: CN
-  ): RemoteClientQueryBuilder<M, CN> {
-    return RemoteClientQueryBuilder<M, CN>(collectionName);
+  ): ReturnType<typeof remoteClientQueryBuilder<M, CN>> {
+    return remoteClientQueryBuilder<M, CN>(collectionName);
   }
 }
 

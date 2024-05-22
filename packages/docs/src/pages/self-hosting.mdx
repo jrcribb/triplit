@@ -1,0 +1,108 @@
+---
+description: Learn how to self host Triplit using Docker, and how to deploy it to a cloud provider with Docker or Git.
+---
+
+# Self-hosting Triplit
+
+To enable sync, you need to run a Triplit servezr. The server is a Node.js application that talks to various Triplit clients over WebSockets and HTTP.
+
+You have several options for running the server:
+
+- A local [development server](/local-development)
+- Use [Docker](#docker) and a cloud provider that supports container deployments
+- Build [a custom server](#building-a-custom-server) and use a cloud provider that supports Git-based deploys
+
+## Docker
+
+Each release of the server is [published as a Docker image](https://hub.docker.com/r/aspencloud/triplit-server/tags). You can deploy the server to a cloud provider like [fly.io](https://fly.io/docs/languages-and-frameworks/dockerfile/), [DigitalOcean](https://docs.digitalocean.com/products/app-platform/how-to/deploy-from-container-images/), or AWS. You'll also want to setup a volume to persist the database.
+
+## Building a custom server
+
+The server is published as an NPM package, and you can install it by running:
+
+```bash copy
+npm install @triplit/server
+```
+
+The server also contains the remote Triplit database, which will persist data synced from your clients. The server supports different storage adapters, such as SQLite. Using the `createServer` function, you can create and configure a new server instance:
+
+```js filename="run.js" copy
+import { createServer } from '@triplit/server';
+
+const port = +(process.env.PORT || 8080);
+
+const startServer = createServer({
+  storage: 'sqlite',
+  verboseLogs: true,
+});
+
+const dbServer = startServer(port);
+
+console.log('running on port', port);
+process.on('SIGINT', function () {
+  dbServer.close(() => {
+    console.log('Shutting down server... ');
+    process.exit();
+  });
+});
+```
+
+You can now deploy the server to a cloud provider that supports Git deploys, like [Vercel](https://vercel.com/docs/git), [Netlify](https://docs.netlify.com/configure-builds/get-started/), or [Render](https://docs.render.com/deploys).
+
+## Secrets
+
+There are a few secrets that you need to provide to the server to enable certain features.
+
+### `JWT_SECRET`
+
+The server uses JWT tokens to authenticate clients, and you need to provide a secret to sign and verify these tokens. You can set the secret by setting the `JWT_SECRET` environment variable. Triplit supports both symmetric (HS256) and asymmetric (RS256) encryption algorithms for JWTs. You will need to generate client tokens signed with the appropriate algorithm. With the `PROJECT_ID` and `JWT_SECRET` set, you can also use the [`triplit dev`](/cli/dev) CLI to generate these tokens for you.
+
+```bash copy
+PROJECT_ID=your-project-id JWT_SECRET=your-secret triplit dev
+```
+
+You can also do it with the `jsonwebtoken` package (e.g. if you wanted to use asymmetric encryption) :
+
+```typescript copy
+import jwt from 'jsonwebtoken';
+
+const anonKey = jwt.sign(
+  {
+    'x-triplit-token-type': 'anon',
+    'x-triplit-project-id': process.env.PROJECT_ID,
+  },
+  process.env.PUBLIC_KEY,
+  { algorithm: 'RS256' }
+);
+
+const serviceKey = jwt.sign(
+  {
+    'x-triplit-token-type': 'secret',
+    'x-triplit-project-id': process.env.PROJECT_ID,
+  },
+  process.env.PUBLIC_KEY,
+  { algorithm: 'RS256' }
+);
+```
+
+For more complicate authentication schemes, refer to our [authentication guide](/auth).
+
+### `EXTERNAL_JWT_SECRET` (optional)
+
+If you want your server to support JWTs signed by a second issuer, you can also set `EXTERNAL_JWT_SECRET` to that signing secret (or public key). The server will only authenticate signatures with this secret if the JWT has the `x-triplit-token-type` claim set to `external`. Any JWT that does not have this claim set will be authenticated with `JWT_SECRET`.
+
+### `CLAIMS_PATH` (optional)
+
+If you are using custom JWTs with nested Triplit-related claims, you can set the `CLAIMS_PATH` environment variable. The server will read the Triplit claims at the path specified by `CLAIMS_PATH`. The JWT should also have the `x-triplit-token-type` claim set to `external`. Read the [authentication guide](/auth) for more information.
+
+### `LOCAL_DATABASE_URL` (optional)
+
+If you use the `sqlite` storage adapter, the server will create the database file at `./app.db` in the server's directory. If you want to override this (as is sometimes necessary for Cloud providers with their own separately managed storage volumes) you can set the `LOCAL_DATABASE_URL` environment variable.
+
+### `SENTRY_DSN` (optional)
+
+If you want to log errors to Sentry, you can set the `SENTRY_DSN` environment variable. The server will automatically log errors to Sentry.
+
+### `VERBOSE_LOGS` (optional)
+
+If you want to log all incoming and outgoing messages and requests, you can set the `VERBOSE_LOGS` environment variable. This can be useful for debugging.

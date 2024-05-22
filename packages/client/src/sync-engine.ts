@@ -8,8 +8,9 @@ import DB, {
   stripCollectionFromId,
   convertEntityToJS,
   Timestamp,
+  TripleStoreApi,
 } from '@triplit/db';
-import { SyncOptions } from './triplit-client.js';
+import { SyncOptions, TriplitClient } from './triplit-client.js';
 import { Subject } from 'rxjs';
 import {
   ConnectionStatus,
@@ -29,7 +30,6 @@ import {
 } from './errors.js';
 import { Value } from '@sinclair/typebox/value';
 import { ClientFetchResult, ClientQuery } from './utils/query.js';
-import { TripleStoreApi } from 'packages/db/src/triple-store.js';
 import { Logger } from '@triplit/types/logger';
 
 type OnMessageReceivedCallback = (message: ServerSyncMessage) => void;
@@ -51,7 +51,7 @@ export class SyncEngine {
   private reconnectTimeoutDelay = 250;
   private reconnectTimeout: any;
 
-  private db: DB<any>;
+  private client: TriplitClient<any>;
   private syncOptions: SyncOptions;
 
   private connectionChangeHandlers: Set<(status: ConnectionStatus) => void> =
@@ -73,12 +73,12 @@ export class SyncEngine {
    * @param options configuration options for the sync engine
    * @param db the client database to be synced
    */
-  constructor(options: SyncOptions, db: DB<any>) {
+  constructor(client: TriplitClient<any>, options: SyncOptions) {
+    this.client = client;
     this.logger = options.logger;
     this.syncOptions = options;
     this.syncOptions.secure = options.secure ?? true;
     this.syncOptions.syncSchema = options.syncSchema ?? false;
-    this.db = db;
     this.transport = options.transport ?? new WebSocketTransport();
     this.txCommits$.subscribe((txId) => {
       const callbacks = this.commitCallbacks.get(txId);
@@ -113,6 +113,10 @@ export class SyncEngine {
    */
   get token() {
     return this.syncOptions.token;
+  }
+
+  get db() {
+    return this.client.db;
   }
 
   private get httpUri() {
@@ -162,21 +166,30 @@ export class SyncEngine {
     return stateVector;
   }
 
+  async isFirstTimeFetchingQuery(query: CollectionQuery<any, any>) {
+    await this.db.ensureMigrated;
+    const hash = this.getQueryHash(query);
+    const state = await this.getQueryState(hash);
+    return state === undefined;
+  }
+
   private async setQueryState(queryId: string, stateVector: Timestamp[]) {
     await this.db.tripleStore.updateMetadataTuples([
       [QUERY_STATE_KEY, [queryId], JSON.stringify(stateVector)],
     ]);
+  }
+  private getQueryHash(params: CollectionQuery<any, any>) {
+    // @ts-expect-error
+    const { id, ...queryParams } = params;
+    return Value.Hash(queryParams).toString();
   }
 
   /**
    * @hidden
    */
   subscribe(params: CollectionQuery<any, any>, onQueryFulfilled?: () => void) {
-    // @ts-expect-error
-    const { id: requestId, ...queryParams } = params;
-    const queryHash = Value.Hash(queryParams).toString();
-    const id = queryHash;
-    this.getQueryState(id).then((queryState) => {
+    const id = this.getQueryHash(params);
+    this.getQueryState(id).then((queryState: Timestamp[]) => {
       this.sendMessage({
         type: 'CONNECT_QUERY',
         payload: {
@@ -190,7 +203,19 @@ export class SyncEngine {
         const { triples } = resp;
         if (triples.length > 0) {
           const stateVector = this.triplesToStateVector(triples);
-          this.setQueryState(id, stateVector);
+          const nextQueryState = new Map(
+            (queryState ?? []).map(([t, c]) => [c, t])
+          );
+          stateVector.forEach(([t, c]) => {
+            const current = nextQueryState.get(c);
+            if (!current || t > current) {
+              nextQueryState.set(c, t);
+            }
+          });
+          this.setQueryState(
+            id,
+            [...nextQueryState.entries()].map(([c, t]) => [t, c])
+          );
         }
         this.queries.set(id, { params, fulfilled: true });
         if (onQueryFulfilled) onQueryFulfilled();

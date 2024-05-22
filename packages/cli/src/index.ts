@@ -76,16 +76,24 @@ export async function execute(args: string[], flags: {}) {
   }
   // @ts-ignore
   if (flags.help || flags.h) {
-    printCommandHelp(cmdDef.name, cmdDef);
+    printCommandHelp(argv._.join(' '), cmdDef);
     return;
   }
 
   let unaliasedFlags = flags;
 
-  if (cmdDef.flags) {
-    const cmdFlagsDefs = Object.entries(
-      (cmdDef.flags as Record<string, Flag>) ?? {}
-    );
+  let cmdFlagsDefs = Object.entries(
+    (cmdDef?.flags as Record<string, Flag>) ?? {}
+  );
+
+  const middlewareFlagDefs = Object.entries(
+    cmdDef?.middleware?.reduce(
+      (acc, m) => ({ ...acc, ...(m?.flags ?? {}) }),
+      {}
+    ) ?? []
+  ) as [string, Flag][];
+  cmdFlagsDefs = [...cmdFlagsDefs, ...middlewareFlagDefs];
+  if (cmdFlagsDefs.length > 0) {
     // Apply defaults to flags if one is provided and the flag is not already set
     const flagsWithDefaults = cmdFlagsDefs.reduce(
       (flags, [flagName, flagInput]) => {

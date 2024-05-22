@@ -1,3 +1,7 @@
+---
+description: Learn how use Svelte bindings for the Triplit client in your app.
+---
+
 import { Tabs, Tab, Callout } from 'nextra-theme-docs';
 
 # Svelte
@@ -11,7 +15,7 @@ import { Tabs, Tab, Callout } from 'nextra-theme-docs';
 
 If you are using Svelte, you can use the hooks provided by `@triplit/svelte`:
 
-<Tabs items={['npm', 'pnpm', 'yarn']}>
+<Tabs items={['npm', 'pnpm', 'yarn', 'bun']}>
 
   <Tab>
     ```bash copy
@@ -26,6 +30,11 @@ If you are using Svelte, you can use the hooks provided by `@triplit/svelte`:
   <Tab>
     ```bash copy
     yarn add @triplit/svelte
+    ```
+  </Tab>
+    <Tab>
+    ```bash copy
+    bun add @triplit/svelte
     ```
   </Tab>
 </Tabs>
@@ -55,9 +64,11 @@ The `useQuery` hook subscribes to the provided query inside your Svelte componen
 The result of the hook is an object with the following properties:
 
 - `results`: A Map containing the results of the query, with entity ids as keys and entities as values.
-- `fetching`: A boolean indicating whether the query is currently fetching.
+- `fetching`: A boolean that will be `true` initially, and then turn `false` when either the local fetch returns cached results or if there were no cached results and the remote fetch has completed.
+- `fetchingLocal`: A boolean indicating whether the query is currently fetching from the local cache.
 - `fetchingRemote`: A boolean indicating whether the query is currently fetching from the server.
 - `error`: An error object if the query failed to fetch.
+- `updateQuery`: A function that can be called to update the query.
 
 ```svelte filename="App.svelte"
 <script lang="ts">

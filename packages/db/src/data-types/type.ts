@@ -1,4 +1,5 @@
-import { Models } from '../schema.js';
+import { QueryValue } from '../query.js';
+import { Models } from '../schema/types';
 import { Timestamp } from '../timestamp.js';
 import { Operator } from './base.js';
 import { AttributeDefinition } from './serialization.js';
@@ -33,6 +34,17 @@ export type ExtractOperators<T extends TypeInterface> = T extends TypeInterface<
 >
   ? Operators[number]
   : never;
+export type ExtractValueInputs<T extends TypeInterface> =
+  T extends TypeInterface<
+    infer _TypeId,
+    infer JSType,
+    infer _JsonType,
+    infer _Operators
+  >
+    ? JSType extends QueryValue // This is to protect against JSType being 'unknown'
+      ? JSType
+      : QueryValue
+    : never;
 
 /**
  * This represents a definition of a type that can be used in a collection

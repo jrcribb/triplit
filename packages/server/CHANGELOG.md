@@ -1,5 +1,87 @@
 # @triplit/server
 
+## 0.3.42
+
+### Patch Changes
+
+- Updated dependencies [cae769a]
+  - @triplit/db@0.3.39
+  - @triplit/server-core@0.3.41
+
+## 0.3.41
+
+### Patch Changes
+
+- Updated dependencies [f826e50]
+  - @triplit/db@0.3.38
+  - @triplit/server-core@0.3.40
+
+## 0.3.40
+
+### Patch Changes
+
+- Updated dependencies [5b2e55d]
+  - @triplit/db@0.3.37
+  - @triplit/server-core@0.3.39
+
+## 0.3.39
+
+### Patch Changes
+
+- Updated dependencies [3202e60]
+  - @triplit/db@0.3.36
+  - @triplit/server-core@0.3.38
+
+## 0.3.38
+
+### Patch Changes
+
+- d023639: clean up sqlite dependencies
+- Updated dependencies [8d35085]
+- Updated dependencies [42392cc]
+  - @triplit/db@0.3.35
+  - @triplit/server-core@0.3.37
+
+## 0.3.37
+
+### Patch Changes
+
+- Updated dependencies [b3315c3]
+  - @triplit/db@0.3.34
+  - @triplit/server-core@0.3.36
+
+## 0.3.36
+
+### Patch Changes
+
+- fc6feb1: add Sentry
+
+## 0.3.35
+
+### Patch Changes
+
+- Updated dependencies [0470537]
+- Updated dependencies [8d029fd]
+  - @triplit/db@0.3.33
+  - @triplit/server-core@0.3.35
+
+## 0.3.34
+
+### Patch Changes
+
+- Updated dependencies [5a0f993]
+- Updated dependencies [1a8c0ea]
+  - @triplit/db@0.3.32
+  - @triplit/server-core@0.3.34
+
+## 0.3.33
+
+### Patch Changes
+
+- Updated dependencies [d1b274b]
+  - @triplit/db@0.3.30
+  - @triplit/server-core@0.3.33
+
 ## 0.3.32
 
 ### Patch Changes

@@ -1,8 +1,8 @@
-// import { Schema as S } from '@triplit/db';
+import { Schema as S, ClientSchema } from '@triplit/client';
 
 /**
  * Define your schema here.
- * For more information on schemas, see the docs: https://www.triplit.dev/docs/database/schemas
+ * For more information on schemas, see the docs: https://www.triplit.dev/docs/schemas
  */
 export const schema = {
   // todos: {
@@ -12,4 +12,4 @@ export const schema = {
   //     description: S.String(),
   //   }),
   // },
-};
+} satisfies ClientSchema;

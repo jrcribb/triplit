@@ -8,7 +8,6 @@ import fs from 'fs';
 import { getDataDir, getTriplitDir } from '../filesystem.js';
 import { Command } from '../command.js';
 import * as Flag from '../flags.js';
-import { readLocalSchema } from '../schema.js';
 import chokidar from 'chokidar';
 import { hashSchemaJSON, schemaToJSON } from '@triplit/db';
 import { TriplitClient } from '@triplit/client';
@@ -17,9 +16,11 @@ import {
   writeSchemaFile,
 } from './migrate/codegen.js';
 import { insertSeeds } from './seed/run.js';
+import { projectSchemaMiddleware } from '../middleware/project-schema.js';
 
 export default Command({
   description: 'Starts the Triplit development environment',
+  middleware: [projectSchemaMiddleware],
   flags: {
     storage: Flag.Enum({
       options: ['memory', 'sqlite'] as const,
@@ -46,14 +47,14 @@ export default Command({
     initWithSchema: Flag.Boolean({
       char: 'i',
       description: 'Initialize the database with the local schema',
-      default: false,
+      default: true,
     }),
     seed: Flag.String({
       char: 'S',
       description: 'Seed the database with data',
     }),
   },
-  async run({ flags }) {
+  async run({ flags, ctx }) {
     const consolePort = flags.consolePort || 6542;
     const dbPort = flags.dbPort || 6543;
     process.env.JWT_SECRET =
@@ -66,6 +67,15 @@ export default Command({
       process.env.EXTERNAL_JWT_SECRET = process.env.TRIPLIT_EXTERNAL_JWT_SECRET;
 
     if (flags.storage === 'sqlite') {
+      try {
+        import.meta.resolve('better-sqlite3');
+      } catch (e) {
+        console.error(
+          'To use SQLite storage, you must install the better-sqlite3 package:'
+        );
+        console.error('npm install better-sqlite3');
+        process.exit(1);
+      }
       const dataDir = getDataDir();
       const sqlitePath = path.join(dataDir, 'sqlite', 'app.db');
       if (!fs.existsSync(path.dirname(sqlitePath))) {
@@ -91,7 +101,7 @@ export default Command({
       process.env.JWT_SECRET,
       { noTimestamp: true }
     );
-    const collections = await readLocalSchema();
+    const collections = ctx.schema;
     const schema =
       collections && flags.initWithSchema
         ? { collections, version: 0 }
@@ -143,7 +153,7 @@ export default Command({
               const schemaJSON = results.get('_schema');
               const resultHash = hashSchemaJSON(schemaJSON.collections);
               const fileSchema = schemaToJSON({
-                collections: await readLocalSchema(),
+                collections: ctx.schema,
                 version: 0,
               });
               const currentFileHash = hashSchemaJSON(fileSchema.collections);
@@ -169,7 +179,7 @@ export default Command({
 
         // On file changes, update the schema
         watcher.on('change', async () => {
-          const collections = await readLocalSchema();
+          const collections = ctx.schema;
           const schema = collections
             ? schemaToJSON({ collections, version: 0 })
             : undefined;
@@ -207,7 +217,8 @@ export default Command({
 
     const dbUrl = `http://localhost:${dbPort}`;
     const consoleUrl = `http://localhost:${consolePort}`;
-    if (flags.seed) await insertSeeds(dbUrl, serviceKey, flags.seed);
+    if (flags.seed)
+      await insertSeeds(dbUrl, serviceKey, flags.seed, true, ctx.schema);
 
     return (
       <>

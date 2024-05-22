@@ -1,0 +1,9 @@
+{
+  "index": "Overview",
+  "select": "`select`",
+  "where": "`where`",
+  "order": "`order`",
+  "limit": "`limit`",
+  "sync-status": "`syncStatus`",
+  "variables": "`vars`"
+}

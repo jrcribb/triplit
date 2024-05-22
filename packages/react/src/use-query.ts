@@ -3,40 +3,46 @@ import {
   ClientFetchResult,
   TriplitClient,
   ClientQuery,
-  CollectionNameFromModels,
   Models,
-  ClientQueryBuilder,
+  QueryBuilder,
   SubscriptionOptions,
 } from '@triplit/client';
 
 export function useQuery<
   M extends Models<any, any> | undefined,
-  CN extends CollectionNameFromModels<M>
+  Q extends ClientQuery<M, any, any, any>
 >(
-  client: TriplitClient<any>,
-  query: ClientQueryBuilder<M, CN>,
+  client: TriplitClient<M>,
+  query: QueryBuilder<Q>,
   options?: Partial<SubscriptionOptions>
 ): {
   fetching: boolean;
+  fetchingLocal: boolean;
   fetchingRemote: boolean;
-  results: ClientFetchResult<ClientQuery<M, CN>> | undefined;
+  results: ClientFetchResult<Q> | undefined;
   error: any;
 } {
-  const [results, setResults] = useState<
-    ClientFetchResult<ClientQuery<M, CN>> | undefined
-  >(undefined);
-  const [fetching, setFetching] = useState(true);
+  const [results, setResults] = useState<ClientFetchResult<Q> | undefined>(
+    undefined
+  );
+  const [fetchingLocal, setFetchingLocal] = useState(true);
   const [fetchingRemote, setFetchingRemote] = useState(
-    // client.syncEngine.connectionStatus === 'OPEN'
-    false
+    client.syncEngine.connectionStatus !== 'CLOSED'
   );
   const [error, setError] = useState<any>(undefined);
-  const hasResponseFromServer = useRef(false);
+  const [isInitialFetch, setIsInitialFetch] = useState(true);
 
+  const hasResponseFromServer = useRef(false);
   const builtQuery = query && query.build();
+  const fetching = fetchingLocal || (isInitialFetch && fetchingRemote);
   const stringifiedQuery = builtQuery && JSON.stringify(builtQuery);
 
   useEffect(() => {
+    client.syncEngine
+      .isFirstTimeFetchingQuery(builtQuery)
+      .then((isFirstFetch) => {
+        setIsInitialFetch(isFirstFetch);
+      });
     const unsub = client.onConnectionStatusChange((status) => {
       if (status === 'CLOSING' || status === 'CLOSED') {
         setFetchingRemote(false);
@@ -55,18 +61,16 @@ export function useQuery<
   useEffect(() => {
     if (!client) return;
     setResults(undefined);
-    setFetching(true);
+    setFetchingLocal(true);
     const unsubscribe = client.subscribe(
       builtQuery,
       (localResults) => {
-        setFetching(false);
+        setFetchingLocal(false);
         setError(undefined);
-        setResults(
-          new Map(localResults) as ClientFetchResult<ClientQuery<M, CN>>
-        );
+        setResults(new Map(localResults));
       },
       (error) => {
-        setFetching(false);
+        setFetchingLocal(false);
         setError(error);
       },
       {
@@ -86,6 +90,7 @@ export function useQuery<
   return {
     fetching,
     fetchingRemote,
+    fetchingLocal,
     results,
     error,
   };
@@ -93,18 +98,18 @@ export function useQuery<
 
 export function usePaginatedQuery<
   M extends Models<any, any> | undefined,
-  CN extends CollectionNameFromModels<M>
+  Q extends ClientQuery<M, any, any, any>
 >(
   client: TriplitClient<any>,
-  query: ClientQueryBuilder<M, CN>,
+  query: QueryBuilder<Q>,
   options?: Partial<SubscriptionOptions>
 ) {
   const builtQuery = useMemo(() => query.build(), [query]);
   const [hasNextPage, setHasNextPage] = useState(false);
   const [hasPreviousPage, setHasPreviousPage] = useState(false);
-  const [results, setResults] = useState<
-    ClientFetchResult<ClientQuery<M, CN>> | undefined
-  >(undefined);
+  const [results, setResults] = useState<ClientFetchResult<Q> | undefined>(
+    undefined
+  );
   const [error, setError] = useState<any>(undefined);
   const [fetching, setFetching] = useState(true);
   const [fetchingPage, setFetchingPage] = useState(false);
@@ -122,7 +127,7 @@ export function usePaginatedQuery<
         setFetchingPage(false);
         setHasNextPage(info.hasNextPage);
         setHasPreviousPage(info.hasPreviousPage);
-        setResults(new Map(results) as ClientFetchResult<ClientQuery<M, CN>>);
+        setResults(new Map(results));
       },
       (error) => {
         setFetching(false);
@@ -168,35 +173,54 @@ export function usePaginatedQuery<
 
 export function useInfiniteQuery<
   M extends Models<any, any> | undefined,
-  CN extends CollectionNameFromModels<M>
+  Q extends ClientQuery<M, any, any, any>
 >(
   client: TriplitClient<any>,
-  query: ClientQueryBuilder<M, CN>,
+  query: QueryBuilder<Q>,
   options?: Partial<SubscriptionOptions>
 ) {
   const builtQuery = useMemo(() => query.build(), [query]);
+  const stringifiedQuery = builtQuery && JSON.stringify(builtQuery);
   const [hasMore, setHasMore] = useState(false);
-  const [results, setResults] = useState<
-    ClientFetchResult<ClientQuery<M, CN>> | undefined
-  >(undefined);
+  const [results, setResults] = useState<ClientFetchResult<Q> | undefined>(
+    undefined
+  );
   const [error, setError] = useState<any>(undefined);
   const [fetching, setFetching] = useState(true);
-  const [fetchingRemote, setFetchingRemote] = useState(true);
+  const [fetchingRemote, setFetchingRemote] = useState(
+    client.syncEngine.connectionStatus !== 'CLOSED'
+  );
   const [fetchingMore, setFetchingMore] = useState(false);
 
   const loadMoreRef = useRef<() => void>();
   const disconnectRef = useRef<() => void>();
+  const hasResponseFromServer = useRef(false);
+
+  useEffect(() => {
+    const unsub = client.onConnectionStatusChange((status) => {
+      if (status === 'CLOSING' || status === 'CLOSED') {
+        setFetchingRemote(false);
+        return;
+      }
+      if (status === 'OPEN' && hasResponseFromServer.current === false) {
+        setFetchingRemote(true);
+        return;
+      }
+    }, true);
+    return () => {
+      unsub();
+    };
+  }, [stringifiedQuery, client]);
 
   useEffect(() => {
     const { unsubscribe, loadMore } = client.subscribeWithExpand(
       builtQuery,
       (results, info) => {
         setFetching(false);
-        setFetchingRemote(info.hasRemoteFulfilled);
         setError(undefined);
         setFetchingMore(false);
         setHasMore(info.hasMore);
-        setResults(new Map(results) as ClientFetchResult<ClientQuery<M, CN>>);
+        setResults(new Map(results));
       },
       (error) => {
         setFetching(false);
@@ -204,7 +228,13 @@ export function useInfiniteQuery<
         setFetchingMore(false);
         setError(error);
       },
-      options
+      {
+        ...(options ?? {}),
+        onRemoteFulfilled: () => {
+          hasResponseFromServer.current = true;
+          setFetchingRemote(false);
+        },
+      }
     );
     loadMoreRef.current = loadMore;
     disconnectRef.current = unsubscribe;

@@ -1,5 +1,91 @@
 # @triplit/client
 
+## 0.3.48
+
+### Patch Changes
+
+- c8fadd2: use session variables for token in client db
+- Updated dependencies [cae769a]
+  - @triplit/db@0.3.39
+
+## 0.3.47
+
+### Patch Changes
+
+- f826e50: Simplify query builder and query generics
+- Updated dependencies [f826e50]
+  - @triplit/db@0.3.38
+
+## 0.3.46
+
+### Patch Changes
+
+- 5b2e55d: fixup types
+- Updated dependencies [5b2e55d]
+  - @triplit/db@0.3.37
+
+## 0.3.45
+
+### Patch Changes
+
+- 3202e60: fixup selection types
+- Updated dependencies [3202e60]
+  - @triplit/db@0.3.36
+
+## 0.3.44
+
+### Patch Changes
+
+- 8d35085: Update fetch return types to reflect query selections
+- 87f429a: reexport schema from db
+- Updated dependencies [8d35085]
+- Updated dependencies [42392cc]
+  - @triplit/db@0.3.35
+
+## 0.3.43
+
+### Patch Changes
+
+- 02284c0: Properly type fetchById and ensure returns null if not found
+
+## 0.3.42
+
+### Patch Changes
+
+- Updated dependencies [b3315c3]
+  - @triplit/db@0.3.34
+
+## 0.3.41
+
+### Patch Changes
+
+- Updated dependencies [0470537]
+- Updated dependencies [8d029fd]
+  - @triplit/db@0.3.33
+
+## 0.3.40
+
+### Patch Changes
+
+- 1a8c0ea: Update conflicting type names for @triplit/db Value
+- Updated dependencies [5a0f993]
+- Updated dependencies [1a8c0ea]
+  - @triplit/db@0.3.32
+
+## 0.3.38
+
+### Patch Changes
+
+- Updated dependencies [d1b274b]
+  - @triplit/db@0.3.30
+
+## 0.3.37
+
+### Patch Changes
+
+- 826acd1: add shouldWaitForServer helper to useQuery
+- 3d08941: make query state correctly adapt to new data
+
 ## 0.3.36
 
 ### Patch Changes

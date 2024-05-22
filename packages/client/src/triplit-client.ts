@@ -16,7 +16,7 @@ import {
   ValueCursor,
   DBFetchOptions as AllDBFetchOptions,
   Attribute,
-  Value,
+  TupleValue,
   schemaToJSON,
 } from '@triplit/db';
 import { getUserId } from './token.js';
@@ -29,8 +29,8 @@ import {
   ClientFetchResult,
   ClientFetchResultEntity,
   ClientQuery,
-  ClientQueryBuilder,
   ClientSchema,
+  clientQueryBuilder,
   prepareFetchByIdQuery,
   prepareFetchOneQuery,
 } from './utils/query.js';
@@ -247,10 +247,10 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
         this.authOptions.token,
         this.authOptions.claimsPath
       );
-      this.db.updateVariables({ SESSION_USER_ID: userId });
+      this.db = this.db.withSessionVars({ SESSION_USER_ID: userId });
     }
 
-    this.syncEngine = new SyncEngine(syncOptions, this.db);
+    this.syncEngine = new SyncEngine(this, syncOptions);
     // Look into how calling connect / disconnect early is handled
     this.db.ensureMigrated.then(() => {
       if (autoConnect) this.syncEngine.connect();
@@ -274,11 +274,10 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
     return resp;
   }
 
-  // TODO: is this better done with generics?
   query<CN extends CollectionNameFromModels<M>>(
     collectionName: CN
-  ): ClientQueryBuilder<M, CN> {
-    return ClientQueryBuilder<M, CN>(collectionName);
+  ): ReturnType<typeof clientQueryBuilder<M, CN>> {
+    return clientQueryBuilder<M, CN>(collectionName);
   }
 
   async fetch<CQ extends ClientQuery<M, any>>(
@@ -287,7 +286,7 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
   ): Promise<ClientFetchResult<CQ>> {
     // ID is currently used to trace the lifecycle of a query/subscription across logs
     // @ts-ignore
-    query.id = query.id ?? Math.random().toString().slice(2);
+    query = addLoggingIdToQuery(query);
 
     const opts = { ...this.defaultFetchOptions.fetch, ...(options ?? {}) };
     if (opts.policy === 'local-only') {
@@ -350,7 +349,7 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
     id: string,
     queryParams?: FetchByIdQueryParams<M, CN>,
     options?: Partial<FetchOptions>
-  ) {
+  ): Promise<ClientFetchResultEntity<ClientQuery<M, CN>> | null> {
     this.logger.debug(
       'fetchById START',
       collectionName,
@@ -370,7 +369,9 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
       queryParams,
       options
     );
-    return results.get(id);
+    const entity = results.get(id);
+    if (!entity) return null;
+    return entity;
   }
 
   async fetchOne<CQ extends ClientQuery<M, any>>(
@@ -379,7 +380,7 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
   ): Promise<ClientFetchResultEntity<CQ> | null> {
     // ID is currently used to trace the lifecycle of a query/subscription across logs
     // @ts-ignore
-    query.id = query.id ?? Math.random().toString().slice(2);
+    query = addLoggingIdToQuery(query);
     query = prepareFetchOneQuery(query);
     const result = await this.fetch(query, options);
     const entity = [...result.values()][0];
@@ -427,7 +428,7 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
     entityId: string,
     updater: (
       entity: UpdateTypeFromModel<ModelFromModels<M, CN>>
-    ) => [Attribute, Value][] | Promise<[Attribute, Value][]>
+    ) => [Attribute, TupleValue][] | Promise<[Attribute, TupleValue][]>
   ) {
     this.logger.debug('updateRaw START', collectionName, entityId);
     const resp = await this.db.transact(
@@ -463,7 +464,7 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
   }
 
   // TODO: refactor so some logic is shared across policies (ex starting a local and remote sub is verbose and repetitive)
-  subscribe<CQ extends ClientQuery<M, any>>(
+  subscribe<CQ extends ClientQuery<M, any, any, any>>(
     query: CQ,
     onResults: (
       results: ClientFetchResult<CQ>,
@@ -476,7 +477,7 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
     const opts: SubscriptionOptions = { localOnly: false, ...(options ?? {}) };
     // ID is currently used to trace the lifecycle of a query/subscription across logs
     // @ts-ignore
-    query.id = query.id ?? Math.random().toString().slice(2);
+    query = addLoggingIdToQuery(query);
     const scope = parseScope(query);
     this.logger.debug('subscribe start', query, scope);
     if (opts.localOnly) {
@@ -504,7 +505,7 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
     let unsubscribeLocal = () => {};
     let unsubscribeRemote = () => {};
     let hasRemoteFulfilled = false;
-    let fulfilledTimeout: NodeJS.Timeout | number | null = null;
+    let fulfilledTimeout: ReturnType<typeof setTimeout> | null = null;
     let results: FetchResult<CQ>;
     const userResultsCallback = onResults;
     const userErrorCallback = onError;
@@ -821,7 +822,8 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
       this.authOptions = { ...this.authOptions, token };
       const { claimsPath } = this.authOptions;
       const userId = token ? getUserId(token, claimsPath) : undefined;
-      this.db.updateVariables({ SESSION_USER_ID: userId });
+
+      this.db = this.db.withSessionVars({ SESSION_USER_ID: userId });
 
       // and update the sync engine
       updatedSyncOptions = { ...updatedSyncOptions, token };
@@ -861,6 +863,10 @@ export class TriplitClient<M extends ClientSchema | undefined = undefined> {
   ) {
     return this.syncEngine.onConnectionStatusChange(...args);
   }
+}
+
+function addLoggingIdToQuery(query: any) {
+  return { id: Math.random().toString().slice(2), ...query };
 }
 
 function mapServerUrlToSyncOptions(serverUrl: string) {

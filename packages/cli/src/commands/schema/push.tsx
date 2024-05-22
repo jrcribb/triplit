@@ -1,16 +1,16 @@
-import c from 'ansi-colors';
+import * as Colors from 'ansis/colors';
 import { Command } from '../../command.js';
 import { serverRequesterMiddleware } from '../../middleware/add-server-requester.js';
-import { readLocalSchema } from '../../schema.js';
 import { logSchemaChangeViolations, schemaToJSON } from '@triplit/db';
 import ora from 'ora';
+import { projectSchemaMiddleware } from '../../middleware/project-schema.js';
 
 export default Command({
   description: 'Apply the local schema to the server',
-  middleware: [serverRequesterMiddleware],
+  middleware: [serverRequesterMiddleware, projectSchemaMiddleware],
   run: async ({ ctx }) => {
     const localSchema = schemaToJSON({
-      collections: await readLocalSchema(),
+      collections: ctx.schema,
       version: 0,
     });
     const pushSpinner = ora('Pushing schema to server').start();
@@ -26,14 +26,17 @@ export default Command({
     }
     if (!Object.hasOwn(data, 'successful') || !Object.hasOwn(data, 'issues')) {
       console.error(data);
-      return;
+      process.exit(1);
     }
     logSchemaChangeViolations(data.successful, data.issues, {
-      warn: (message, ...args) => console.log(c.yellow(message), ...args),
-      info: (message, ...args) => console.log(c.blue(message), ...args),
-      error: (message, ...args) => console.log(c.red(message), ...args),
+      warn: (message, ...args) => console.log(Colors.yellow(message), ...args),
+      info: (message, ...args) => console.log(Colors.blue(message), ...args),
+      error: (message, ...args) => console.log(Colors.red(message), ...args),
       debug: () => {},
       scope: () => this,
     });
+    if (!data.successful) {
+      process.exit(1);
+    }
   },
 });

@@ -5,7 +5,7 @@ import {
   hashSchemaJSON,
   CollectionQuery,
   Attribute,
-  Value,
+  TupleValue,
   appendCollectionToId,
   EntityId,
   JSONToSchema,
@@ -340,7 +340,7 @@ export class Session {
       // @ts-expect-error
       variables['SESSION_USER_ID'] = token.userId;
 
-    this.db = server.db.withVars(variables);
+    this.db = server.db.withSessionVars(variables);
   }
 
   createConnection(connectionParams: ConnectionOptions) {
@@ -594,7 +594,7 @@ export class Session {
   async update(
     collectionName: string,
     entityId: string,
-    patches: (['set', Attribute, Value] | ['delete', Attribute])[]
+    patches: (['set', Attribute, TupleValue] | ['delete', Attribute])[]
   ) {
     try {
       const txResult = await this.db.transact(

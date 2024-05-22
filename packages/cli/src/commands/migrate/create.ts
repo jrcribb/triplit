@@ -10,8 +10,9 @@ import { Command } from '../../command.js';
 export default Command({
   description: 'Generates a migration based on your current schema file',
   args: { name: 'migrationName', description: 'The name of your migration' },
+  preRelease: true,
   run: async ({ args }) => {
-    const migrationName = args.migrationName.join('_');
+    const migrationName = (args.migrationName as string[]).join('_');
     if (!migrationName) throw new Error('Missing migration name');
     const sanitizedMigrationName = sanitizeFilename(migrationName); //args.migrationName
     // define a name for the migration

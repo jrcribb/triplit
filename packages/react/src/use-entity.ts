@@ -3,8 +3,9 @@ import {
   Models,
   CollectionNameFromModels,
   SubscriptionOptions,
-  MaybeReturnTypeFromQuery,
+  ReturnTypeFromQuery,
   FetchByIdQueryParams,
+  ClientQueryDefault,
 } from '@triplit/client';
 import { useQuery } from './use-query.js';
 
@@ -20,34 +21,36 @@ export function useEntity<
 ): {
   fetching: boolean;
   fetchingRemote: boolean;
-  results: MaybeReturnTypeFromQuery<M, CN> | undefined;
+  fetchingLocal: boolean;
+  results: ReturnTypeFromQuery<ClientQueryDefault<M, CN>> | undefined;
   error: any;
 } {
   // @ts-ignore
-  let query = client.query(collectionName).where('id', '=', id).limit(1);
+  let builder = client.query(collectionName).where('id', '=', id).limit(1);
   if (queryParams?.include) {
     for (const [relation, subquery] of Object.entries(queryParams.include)) {
-      if (subquery)
-        query = query.include(
-          // @ts-expect-error
-          relation,
-          subquery
-        );
-      else
-        query = query.include(
-          // @ts-expect-error
+      if (subquery) {
+        // @ts-expect-error
+        builder = builder.include(relation, subquery);
+      } else {
+        // @ts-expect-error TODO: fixup builder type
+        builder = builder.include(
+          // @ts-expect-error expecting typed as relationship from schema
           relation
         );
+      }
     }
   }
-  const { fetching, fetchingRemote, results, error } = useQuery(
+  // const query = builder.build();
+  const { fetching, fetchingRemote, fetchingLocal, results, error } = useQuery(
     client,
-    query,
+    builder,
     options
   );
   return {
     fetching,
     fetchingRemote,
+    fetchingLocal,
     results: results ? results.get(id) : undefined,
     error,
   };

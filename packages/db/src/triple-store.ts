@@ -36,7 +36,7 @@ import {
   findByCollection,
   findByAVE,
   findByEAT,
-  Value,
+  TupleValue,
   findValuesInRange,
   mapStaticTupleToEAV,
   TripleStoreBeforeCommitHook,
@@ -92,7 +92,7 @@ export interface TripleStoreApi {
   findByAVE(
     [attribute, value, entityId]: [
       attribute?: Attribute,
-      value?: Value,
+      value?: TupleValue,
       entityId?: EntityId
     ],
     direction?: 'ASC' | 'DESC'
@@ -120,7 +120,11 @@ export interface TripleStoreApi {
   ): Promise<void>;
 }
 
-// A helper class for scoping, basically what a transaction does without commit/cancel
+type RemoveFirstFromTuple<T extends any[]> = T['length'] extends 0
+  ? never
+  : ((...b: T) => void) extends (a: any, ...b: infer I) => void
+  ? I
+  : [];
 
 async function addIndexesToTransaction(
   tupleTx: MultiTupleTransaction<TupleIndex>
@@ -131,15 +135,22 @@ async function addIndexesToTransaction(
     if (set.length === 0) continue;
     const scopedTx = tupleTx.withScope({ read: [store], write: [store] });
     // To maintain interactivity on large inserts, we should batch these
-    for (const { key, value: tupleValue } of set) {
+    for (const { key, value: tupleValue } of set.slice()) {
       const [_client, indexType, ...indexKey] = key;
       if (indexType !== 'EAT') continue;
 
-      const [id, attribute, timestamp] = indexKey;
+      const [id, attribute, timestamp] = indexKey as RemoveFirstFromTuple<
+        EATIndex['key']
+      >;
       const [value, isExpired] = tupleValue;
-      scopedTx.set(['AVE', attribute, value, id, timestamp], {
-        expired: isExpired,
-      });
+      if (isExpired) {
+        // TODO: defer removes until all sets are done or alter tuple db implementation for improved performance when setting and then removing in the same transaction
+        scopedTx.remove(['AVE', attribute, value, id, timestamp]);
+      } else {
+        scopedTx.set(['AVE', attribute, value, id, timestamp], {
+          expired: isExpired,
+        });
+      }
       scopedTx.set(
         [
           'clientTimestamp',
@@ -286,7 +297,7 @@ export class TripleStore implements TripleStoreApi {
   findByAVE(
     [attribute, value, entityId]: [
       attribute?: Attribute | undefined,
-      value?: Value | undefined,
+      value?: TupleValue | undefined,
       entityId?: string | undefined
     ],
     direction?: 'ASC' | 'DESC' | undefined
@@ -393,7 +404,7 @@ export class TripleStore implements TripleStoreApi {
   async setValue(
     entity: string,
     attribute: Attribute,
-    value: Value
+    value: TupleValue
   ): Promise<void> {
     await this.transact(async (tx) => {
       await tx.setValue(entity, attribute, value);

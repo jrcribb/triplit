@@ -7,43 +7,56 @@ import {
   SessionVariableNotFoundError,
   ValueSchemaMismatchError,
   InvalidOrderClauseError,
+  TriplitError,
+  InvalidWhereClauseError,
 } from './errors.js';
 import {
   QueryWhere,
   FilterStatement,
   SubQueryFilter,
   CollectionQuery,
+  QueryValue,
+  WhereFilter,
   RelationSubquery,
 } from './query.js';
 import {
-  Model,
-  Models,
-  diffSchemas,
-  getSchemaDiffIssues,
-  convertEntityToJS,
   getSchemaFromPath,
   schemaToTriples,
   triplesToSchema,
+  getAttributeFromSchema,
+} from './schema/schema.js';
+import { Model, Models } from './schema/types';
+import {
+  diffSchemas,
+  getSchemaDiffIssues,
   PossibleDataViolations,
-} from './schema.js';
+} from './schema/diff.js';
 import { TripleStoreApi } from './triple-store.js';
 import { VALUE_TYPE_KEYS } from './data-types/serialization.js';
-import DB, { CollectionFromModels, CollectionNameFromModels } from './db.js';
+import DB, {
+  CollectionFromModels,
+  CollectionNameFromModels,
+  SystemVariables,
+} from './db.js';
 import { DBTransaction } from './db-transaction.js';
 import { DataType } from './data-types/base.js';
-import { Attribute, Value } from './triple-store-utils.js';
+import { Attribute, TupleValue } from './triple-store-utils.js';
 import {
+  FetchExecutionContext,
   FetchResult,
   TimestampedFetchResult,
+  bumpSubqueryVar,
+  getRelationPathsFromIdentifier,
   validateIdentifier,
+  convertEntityToJS,
 } from './collection-query.js';
 import { Logger } from '@triplit/types/src/logger.js';
+import { prefixVariables } from './utils.js';
 
 const ID_SEPARATOR = '#';
 
 export interface QueryPreparationOptions {
   skipRules?: boolean;
-  variables?: Record<string, any>;
 }
 
 const ID_REGEX = /^[a-zA-Z0-9_\-:.]+$/;
@@ -108,34 +121,36 @@ export function replaceVariablesInFilterStatements<
   });
 }
 
+async function loadVariableValue(executionContext: FetchExecutionContext) {}
+
 export function replaceVariable(
   target: any,
   variables: Record<string, any> = {}
 ) {
-  if (typeof target !== 'string') return target;
-  if (!target.startsWith('$')) return target;
-  const varKey = target.slice(1);
-  if (!(varKey in variables)) {
-    console.warn(new SessionVariableNotFoundError(target));
-    // TODO should we throw here? or will there be other issues with undefined
+  if (!isValueVariable(target)) return target;
+  const [scope, key] = getVariableComponents(target);
+  if (scope) {
+    // new variables will have a scope
+    const scopeVars = variables[scope];
+    // Traverse scopeVars to find the variable
+    const path = key.split('.');
+    let current = scopeVars;
+    for (const part of path) {
+      if (current == null) {
+        // console.warn(new SessionVariableNotFoundError(target));
+        throw new SessionVariableNotFoundError(target);
+        return undefined;
+      }
+      current = current[part];
+    }
+    return current;
+  } else {
+    // old variables will not
+    if (key in variables) return variables[key];
+    // console.warn(new SessionVariableNotFoundError(target));
+    throw new SessionVariableNotFoundError(target);
     return undefined;
   }
-  return variables[varKey];
-}
-
-export function replaceVariablesInQuery<
-  Q extends Partial<
-    Pick<CollectionQuery<any, any>, 'where' | 'entityId' | 'vars'>
-  >
->(query: Q): Q {
-  const where = query.where
-    ? replaceVariablesInFilterStatements(query.where, query.vars ?? {})
-    : undefined;
-  const entityId = query.entityId
-    ? replaceVariable(query.entityId, query.vars ?? {})
-    : undefined;
-
-  return { ...query, where, entityId };
 }
 
 export function* filterStatementIterator<
@@ -277,7 +292,12 @@ export function logSchemaChangeViolations(
   logger?: Logger
 ) {
   const log = logger ?? console;
-  log.warn(`Found ${issues.length} backwards incompatible schema changes.`);
+  const compatibleIssuesMessage = `Found ${issues.length} backwards incompatible schema changes.`;
+  if (issues.length > 0) {
+    log.warn(compatibleIssuesMessage);
+  } else {
+    log.info(compatibleIssuesMessage);
+  }
   if (successful) {
     log.info('Schema update successful');
   } else {
@@ -309,7 +329,7 @@ export function logSchemaChangeViolations(
 export function validateTriple(
   schema: Models<any, any>,
   attribute: Attribute,
-  value: Value
+  value: TupleValue
 ) {
   if (schema == undefined) {
     throw new NoSchemaRegisteredError(
@@ -396,6 +416,8 @@ export function mergeQueries<M extends Models<any, any> | undefined>(
   return { ...queryA, ...queryB, where: mergedWhere, select: mergedSelect };
 }
 
+// At some point it would be good to have a clear pipeline of data shapes for query builder -> query json -> query the execution engine reads
+// Ex. things like .entityId are more sugar for users than valid values used by the execution engine
 export function prepareQuery<
   M extends Models<any, any> | undefined,
   Q extends CollectionQuery<M, any>
@@ -407,15 +429,51 @@ export function prepareQuery<
   if (collectionSchema && !options.skipRules) {
     fetchQuery = addReadRulesToQuery<M, Q>(fetchQuery, collectionSchema);
   }
-  fetchQuery.vars = {
-    ...(options.variables ?? {}),
-    ...(fetchQuery.vars ?? {}),
-  };
+
+  // Translate entityId helper to where clause filter
+  if (fetchQuery.entityId) {
+    fetchQuery.where = [
+      // @ts-expect-error
+      ['id', '=', fetchQuery.entityId],
+      ...(fetchQuery.where ?? []),
+    ];
+  }
+
+  const whereValidator = whereFilterValidator(
+    schema,
+    fetchQuery.collectionName
+  );
   fetchQuery.where = mapFilterStatements(
     fetchQuery.where ?? [],
+    // @ts-expect-error
     (statement) => {
+      // Validate filter
+      whereValidator(statement);
       if (!Array.isArray(statement)) return statement;
-      const [prop, op, val] = statement;
+
+      // Expand subquery statements
+      let [prop, op, val] = statement;
+      if (schema && fetchQuery.collectionName !== '_metadata') {
+        // Validation should handle this existing
+        const attributeType = getAttributeFromSchema(
+          [(prop as string).split('.')[0]], // TODO: properly handle query in record...
+          schema,
+          fetchQuery.collectionName
+        )!;
+        if (attributeType.type === 'query') {
+          const [_collectionName, ...path] = (prop as string).split('.');
+          const subquery = { ...attributeType.query };
+          // As we expand subqueries, "bump" the variable names
+          if (isValueVariable(val)) {
+            // @ts-expect-error
+            val = '$' + bumpSubqueryVar(val.slice(1));
+          }
+          subquery.where = [...subquery.where, [path.join('.'), op, val]];
+          return {
+            exists: prepareQuery(subquery, schema, options),
+          };
+        }
+      }
       // TODO: should be integrated into type system
       return [prop, op, val instanceof Date ? val.toISOString() : val];
     }
@@ -443,26 +501,6 @@ export function prepareQuery<
       //@ts-expect-error
       fetchQuery.select = selectAllProps;
     }
-
-    // Convert any filters that use relations from schema to *exists* queries
-    fetchQuery.where = mapFilterStatements(fetchQuery.where, (statement) => {
-      if (!Array.isArray(statement)) return statement;
-      const [prop, op, val] = statement;
-      const attributeType = getSchemaFromPath(
-        collectionSchema.schema,
-        (prop as string).split('.')
-      );
-      if (attributeType.type !== 'query') {
-        return [prop, op, val];
-      }
-      const [_collectionName, ...path] = (prop as string).split('.');
-      const subquery = { ...attributeType.query };
-      subquery.where = [...subquery.where, [path.join('.'), op, val]];
-      return {
-        exists: prepareQuery(subquery, schema, options),
-      };
-    });
-
     if (fetchQuery.order) {
       // Validate that the order by fields
       fetchQuery.order.every(([field, _direction]) => {
@@ -501,47 +539,103 @@ export function prepareQuery<
         return true;
       });
     }
-
-    if (fetchQuery.include) {
-      addSubsSelectsFromIncludes(fetchQuery, schema);
-    }
   }
+
+  if (fetchQuery.include) {
+    addSubsSelectsFromIncludes(fetchQuery, schema);
+  }
+
+  if (!query.select) query.select = [];
+
   return fetchQuery;
 }
 
+function whereFilterValidator<M extends Models<any, any> | undefined>(
+  schema: M,
+  collectionName: string
+): (fitler: WhereFilter<M, any>) => boolean {
+  return (statement) => {
+    // TODO: add helper function to determine when we should(n't) schema check (ie schemaless and _metadata)
+    if (!schema) return true;
+    if (collectionName === '_metadata') return true;
+    if ('exists' in statement) return true;
+    // I believe these are handled as we expand statements in the mapFilterStatements function
+    if ('mod' in statement) return true;
+
+    const [prop, op, val] = statement;
+    const { valid, path, reason } = validateIdentifier(
+      prop,
+      schema,
+      collectionName as CollectionNameFromModels<NonNullable<M>>,
+      (dataType, i, path) => {
+        if (!dataType) return { valid: false, reason: 'Path not found' };
+        // TODO: check if operator is valid for the type and use that to determine if it's valid
+        if (
+          i === path.length - 1 &&
+          (dataType.type === 'query' || dataType.type === 'record')
+        ) {
+          return {
+            valid: false,
+            reason: 'Where filter is not operable',
+          };
+        }
+        return { valid: true };
+      }
+    );
+    if (!valid) {
+      throw new InvalidWhereClauseError(
+        `Where filter ${JSON.stringify([
+          prop,
+          op,
+          val,
+        ])} is not valid: ${reason} at path ${path}`
+      );
+    }
+    return true;
+  };
+}
+
 function addSubsSelectsFromIncludes<
-  M extends Models<any, any>,
+  M extends Models<any, any> | undefined,
   CN extends CollectionNameFromModels<M>
 >(query: CollectionQuery<M, CN>, schema: M) {
   if (!query.include) return query;
-  const collectionSchema = schema[query.collectionName];
-  for (const [relationName, extraQuery] of Object.entries(
-    query.include as Record<string, CollectionQuery<M, any>>
+  // TODO: typescript should handle schema = undefined, but it isn't
+  const collectionSchema = schema?.[query.collectionName];
+  if (!collectionSchema) return query;
+  for (const [relationName, relation] of Object.entries(
+    query.include as Record<string, RelationSubquery<M, any> | null>
   )) {
-    const attributeType = getSchemaFromPath(collectionSchema.schema!, [
-      relationName,
-    ]);
-    if (attributeType.type !== 'query') {
-      throw new Error(
-        `${relationName} is not an existing relationship in ${query.collectionName} schema`
-      );
+    const attributeType = getAttributeFromSchema(
+      relationName.split('.'),
+      schema,
+      // @ts-expect-error TODO: figure out proper typing of collectionName
+      query.collectionName
+    );
+    if (attributeType && attributeType.type === 'query') {
+      let additionalQuery =
+        // @ts-expect-error TODO: figure out proper typing of include here, this is where it would be helpful to know the difference between a CollectionQuery and Prepared<CollectionQuery>
+        relation as CollectionQuery<M, any> | undefined;
+      if (additionalQuery && additionalQuery.include) {
+        additionalQuery = addSubsSelectsFromIncludes(
+          {
+            ...additionalQuery,
+            collectionName: attributeType.query.collectionName,
+          },
+          schema
+        );
+      }
+      const merged = mergeQueries({ ...attributeType.query }, additionalQuery);
+      const subquerySelection = {
+        subquery: merged,
+        cardinality: attributeType.cardinality,
+      };
+      query.include = { ...query.include, [relationName]: subquerySelection };
+    } else {
+      if (relation?.subquery) {
+        query.include = { ...query.include, [relationName]: relation };
+      }
     }
-    if (!query.select) query.select = [];
-    let additionalQuery = extraQuery;
-    if (additionalQuery && additionalQuery.include) {
-      additionalQuery = addSubsSelectsFromIncludes(
-        { ...extraQuery, collectionName: attributeType.query.collectionName },
-        schema
-      );
-    }
-    const merged = mergeQueries(attributeType.query, additionalQuery);
-    const subquerySelection: RelationSubquery<M> = {
-      attributeName: relationName,
-      subquery: merged,
-      cardinality: attributeType.cardinality,
-    };
-
-    query.select.push(subquerySelection);
   }
   return query;
 }
@@ -558,4 +652,30 @@ export function fetchResultToJS<
     results.set(id, convertEntityToJS(entity, schema, collectionName));
   });
   return results as FetchResult<Q>;
+}
+
+export function isValueVariable(value: QueryValue): value is string {
+  return typeof value === 'string' && value.startsWith('$');
+}
+
+const VARIABLE_SCOPES = ['global', 'session', 'query'];
+
+export function getVariableComponents(
+  variable: string
+): [scope: string | undefined, key: string] {
+  const components = variable.slice(1).split('.');
+  if (components.length < 1)
+    throw new TriplitError(`Invalid variable: ${variable}`);
+  if (components.length === 1) return [undefined, components[0]];
+
+  // For backwards compatability, we allow non-scoped variables
+  if (isScopedVariable(components[0])) {
+    return [components[0], components.slice(1).join('.')];
+  } else {
+    return [undefined, components.join('.')];
+  }
+}
+
+function isScopedVariable(scope: string | undefined): scope is string {
+  return VARIABLE_SCOPES.includes(scope ?? '') || !isNaN(parseInt(scope ?? ''));
 }
