@@ -4,6 +4,7 @@ import App from './App';
 import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 import '../../ui/globals.css';
 import { ProjectViewer, loader } from './components/project-viewer.js';
+import { ThemeProvider } from './components/theme-provider.js';
 
 const router = createBrowserRouter([
   {
@@ -12,7 +13,7 @@ const router = createBrowserRouter([
   },
   {
     path: ':projectId',
-    loader: ({ params }) => loader(params.projectId),
+    loader: loader,
     element: <ProjectViewer />,
     // we have to disable revalidation because otherwise it's re-mounting
     // the component and re-running the loader whenever the query params change
@@ -23,6 +24,8 @@ const router = createBrowserRouter([
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <ThemeProvider>
+      <RouterProvider router={router} />
+    </ThemeProvider>
   </React.StrictMode>
 );

@@ -11,15 +11,18 @@ import { CollectionStats, fetchCollectionStats } from '../utils/server';
 import { useSelectedCollection } from '../hooks/useSelectedCollection';
 import { useLoaderData, redirect } from 'react-router-dom';
 import { consoleClient } from 'triplit/client.js';
-import { initializeFromUrl } from 'src/utils/project.js';
+import { DEFAULT_HOSTNAME, initializeFromUrl } from 'src/utils/project.js';
+import { ModeToggle } from './mode-toggle.js';
 
 const projectClients = new Map<string, TriplitClient<any>>();
 
 const initFromUrlPromise = initializeFromUrl();
 
-export async function loader(slugProjectId?: string) {
+export async function loader({ params }: { params: { projectId?: string } }) {
+  const { projectId: slugProjectId } = params;
   const importedProjectId = await initFromUrlPromise;
-  const projectId = slugProjectId ?? importedProjectId;
+  const projectId =
+    slugProjectId === 'local' ? DEFAULT_HOSTNAME : importedProjectId;
   if (!projectId) return redirect('/');
   const project = await consoleClient.fetchById('projects', projectId);
   if (!project) return redirect('/');
@@ -57,11 +60,11 @@ export function ProjectViewer() {
 
   window.appClient = client;
   const [selectedCollection, setSelectedCollection] = useSelectedCollection();
-  const { results: schema, fetching } = useEntity(
-    client,
-    '_metadata',
-    '_schema'
-  );
+  const {
+    results: schema,
+    fetching: fetchingSchema,
+    fetchingRemote: schemaFetchingRemote,
+  } = useEntity(client, '_metadata', '_schema');
 
   const collectionsTolist = schema
     ? Object.keys(schema.collections)
@@ -107,7 +110,7 @@ export function ProjectViewer() {
             }}
           />
         </div>
-        {!fetching &&
+        {!fetchingSchema &&
           connectionStatus !== 'CONNECTING' &&
           collectionsTolist.map((collection) => (
             <Button
@@ -126,7 +129,7 @@ export function ProjectViewer() {
               <span className="text-xs md:text-sm truncate">{`${collection}`}</span>
             </Button>
           ))}
-        {!fetching &&
+        {!fetchingSchema &&
           connectionStatus !== 'CONNECTING' &&
           collectionsTolist.length === 0 && (
             <div className="text-xs">
@@ -135,9 +138,11 @@ export function ProjectViewer() {
               }
             </div>
           )}
+        <div className="grow" />
+        <ModeToggle className="" />
       </div>
       <div className="flex-grow flex flex-col min-w-0">
-        {selectedCollection ? (
+        {selectedCollection && !fetchingSchema ? (
           <DataViewer
             projectId={project.id}
             collection={selectedCollection}

@@ -101,6 +101,24 @@ describe('Database API', () => {
     ).rejects.toThrowError(InvalidEntityIdError);
   });
 
+  it('wont allow multiple transactions to have same transaction id', async () => {
+    const db = new DB();
+    const numTransactions = 10;
+    const txPromises = Array.from(
+      { length: numTransactions },
+      async (_, index) => {
+        const tx = db.transact(async (tx) => {
+          await pause(100 * Math.random());
+          await tx.insert('Student', { name: 'John Doe', id: `${index + 1}` });
+        });
+        return tx;
+      }
+    );
+    const txResults = await Promise.all(txPromises);
+    const txIds = txResults.map(({ txId }) => txId);
+    expect(new Set(txIds).size).toBe(numTransactions);
+  });
+
   it('will throw an error when it parses an ID with a # in it', async () => {
     expect(() => stripCollectionFromId('Student#john#1')).toThrowError(
       InvalidInternalEntityIdError
@@ -1685,7 +1703,7 @@ describe('database transactions', () => {
       },
     });
     // Adding this check to ensure the onInsert isn't called with schema/metadata triples
-    await db.ensureMigrated;
+    await db.ready;
     const insertSpy = vi.fn();
     db.tripleStore.onInsert(insertSpy);
     await db.transact(async (tx) => {
@@ -2814,7 +2832,7 @@ describe('schema changes', async () => {
       },
     };
     const dbOne = new DB({ source: dataSource, schema: schemaOne });
-    await dbOne.ensureMigrated;
+    await dbOne.ready;
     const beforeSchema = await dbOne.getSchema();
     expect(beforeSchema).toBeDefined();
     expect(beforeSchema.collections.students).toBeDefined();
@@ -2876,7 +2894,7 @@ describe('migrations', () => {
 
   it('migrating updates migrations tracker', async () => {
     const db = new DB();
-    await db.ensureMigrated;
+    await db.ready;
     {
       const appliedMigrations = Object.values(await db.getAppliedMigrations());
       expect(appliedMigrations.length).toEqual(0);
@@ -2914,9 +2932,7 @@ describe('migrations', () => {
       },
     ]);
     const db = new DB({ migrations: migrationsCopy });
-    await expect(db.ensureMigrated).rejects.toThrowError(
-      InvalidMigrationOperationError
-    );
+    await expect(db.ready).rejects.toThrowError(InvalidMigrationOperationError);
     // const db = new DB({ migrations: migrationsCopy });
 
     // const dbSchema = await db.getSchema();
@@ -3075,22 +3091,40 @@ describe('Nested Properties', () => {
       for (const [id, data] of Object.entries(defaultData)) {
         await db.insert('Businesses', data);
       }
+      {
+        const positiveResults = await db.fetch(
+          db
+            .query('Businesses')
+            .where([['address.city', '=', 'San Francisco']])
+            .build()
+        );
+        expect(positiveResults).toHaveLength(1);
 
-      const positiveResults = await db.fetch(
-        db
-          .query('Businesses')
-          .where([['address.city', '=', 'San Francisco']])
-          .build()
-      );
-      expect(positiveResults).toHaveLength(1);
+        const negativeResults = await db.fetch(
+          db
+            .query('Businesses')
+            .where([['address.state', '=', 'TX']])
+            .build()
+        );
+        expect(negativeResults).toHaveLength(0);
+      }
+      {
+        const positiveResults = await db.fetch(
+          db
+            .query('Businesses')
+            .where([['address.street.number', '=', '123']])
+            .build()
+        );
+        expect(positiveResults).toHaveLength(1);
 
-      const negativeResults = await db.fetch(
-        db
-          .query('Businesses')
-          .where([['address.state', '=', 'TX']])
-          .build()
-      );
-      expect(negativeResults).toHaveLength(0);
+        const negativeResults = await db.fetch(
+          db
+            .query('Businesses')
+            .where([['address.street.name', '=', 'noExist']])
+            .build()
+        );
+        expect(negativeResults).toHaveLength(0);
+      }
     });
 
     it('can select specific nested properties', async () => {
@@ -3192,22 +3226,40 @@ describe('Nested Properties', () => {
       for (const [id, data] of Object.entries(defaultData)) {
         await db.insert('Businesses', data);
       }
+      {
+        const positiveResults = await db.fetch(
+          db
+            .query('Businesses')
+            .where([['address.city', '=', 'San Francisco']])
+            .build()
+        );
+        expect(positiveResults).toHaveLength(1);
 
-      const positiveResults = await db.fetch(
-        db
-          .query('Businesses')
-          .where([['address.city', '=', 'San Francisco']])
-          .build()
-      );
-      expect(positiveResults).toHaveLength(1);
+        const negativeResults = await db.fetch(
+          db
+            .query('Businesses')
+            .where([['address.state', '=', 'TX']])
+            .build()
+        );
+        expect(negativeResults).toHaveLength(0);
+      }
+      {
+        const positiveResults = await db.fetch(
+          db
+            .query('Businesses')
+            .where([['address.street.number', '=', '123']])
+            .build()
+        );
+        expect(positiveResults).toHaveLength(1);
 
-      const negativeResults = await db.fetch(
-        db
-          .query('Businesses')
-          .where([['address.state', '=', 'TX']])
-          .build()
-      );
-      expect(negativeResults).toHaveLength(0);
+        const negativeResults = await db.fetch(
+          db
+            .query('Businesses')
+            .where([['address.street.name', '=', 'noExist']])
+            .build()
+        );
+        expect(negativeResults).toHaveLength(0);
+      }
     });
   });
 });
@@ -5352,7 +5404,7 @@ it('clearing a database resets the schema', async () => {
     version: 0,
   };
   const db = new DB({ schema });
-  await db.ensureMigrated;
+  await db.ready;
 
   // Should load schema into cache
   const resultSchema = await db.getSchema();

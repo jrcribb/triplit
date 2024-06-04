@@ -9,6 +9,8 @@ import {
   InvalidOrderClauseError,
   TriplitError,
   InvalidWhereClauseError,
+  RelationDoesNotExistError,
+  IncludedNonRelationError,
 } from './errors.js';
 import {
   QueryWhere,
@@ -106,15 +108,10 @@ export function replaceVariablesInFilterStatements<
   return statements.map((filter) => {
     if ('exists' in filter) return filter;
     if (!(filter instanceof Array)) {
-      if (!(filter instanceof Array)) {
-        return {
-          ...filter,
-          filters: replaceVariablesInFilterStatements(
-            filter.filters,
-            variables
-          ),
-        };
-      }
+      return {
+        ...filter,
+        filters: replaceVariablesInFilterStatements(filter.filters, variables),
+      };
     }
     const replacedValue = replaceVariable(filter[2], variables);
     return [filter[0], filter[1], replacedValue] as FilterStatement<M, CN>;
@@ -248,41 +245,50 @@ export async function overrideStoredSchema<M extends Models<any, any>>(
   issues: PossibleDataViolations[];
 }> {
   if (!schema) return { successful: false, issues: [] };
-  let tripleStore = db.tripleStore;
-  const result = await tripleStore.transact(async (tx) => {
-    const currentSchema = await readSchemaFromTripleStore(tx);
-    let issues: PossibleDataViolations[] = [];
-    if (currentSchema.schema) {
-      const diff = diffSchemas(currentSchema.schema, schema);
-      issues = await getSchemaDiffIssues(db, diff);
-      if (
-        issues.length > 0 &&
-        issues.some((issue) => issue.violatesExistingData)
-      )
-        return { successful: false, issues };
+  const result = await db.transact(
+    async (tx) => {
+      const currentSchema = await tx.getSchema();
+      let issues: PossibleDataViolations[] = [];
+      if (currentSchema) {
+        const diff = diffSchemas(currentSchema, schema);
 
-      diff.length > 0 &&
-        db.logger.info(`applying ${diff.length} attribute changes to schema`);
+        // If no differences, return early
+        if (diff.length === 0) return { successful: true, issues };
+
+        issues = await getSchemaDiffIssues(tx, diff);
+        if (
+          issues.length > 0 &&
+          issues.some((issue) => issue.violatesExistingData)
+        )
+          return { successful: false, issues };
+
+        diff.length > 0 &&
+          db.logger.info(`applying ${diff.length} attribute changes to schema`);
+      }
+
+      const existingTriples = await tx.storeTx.findByEntity(
+        appendCollectionToId('_metadata', '_schema')
+      );
+      await tx.storeTx.deleteTriples(existingTriples);
+
+      const triples = schemaToTriples(schema);
+      // TODO use tripleStore.setValues
+      const ts = await tx.storeTx.clock.getNextTimestamp();
+      const normalizedTriples = triples.map(([e, a, v]) => ({
+        id: e,
+        attribute: a,
+        value: v,
+        timestamp: ts,
+        expired: false,
+      }));
+      await tx.storeTx.insertTriples(normalizedTriples);
+      return { successful: true, issues };
+    },
+    {
+      // This basically ensures we use the old schema to perform data checks before we apply the new schema
+      dangerouslyBypassSchemaInitialization: true,
     }
-
-    const existingTriples = await tx.findByEntity(
-      appendCollectionToId('_metadata', '_schema')
-    );
-    await tx.deleteTriples(existingTriples);
-
-    const triples = schemaToTriples(schema);
-    // TODO use tripleStore.setValues
-    const ts = await tx.clock.getNextTimestamp();
-    const normalizedTriples = triples.map(([e, a, v]) => ({
-      id: e,
-      attribute: a,
-      value: v,
-      timestamp: ts,
-      expired: false,
-    }));
-    await tx.insertTriples(normalizedTriples);
-    return { successful: true, issues };
-  });
+  );
   return result?.output ?? { successful: false, issues: [] };
 }
 
@@ -612,6 +618,7 @@ function addSubsSelectsFromIncludes<
       // @ts-expect-error TODO: figure out proper typing of collectionName
       query.collectionName
     );
+
     if (attributeType && attributeType.type === 'query') {
       let additionalQuery =
         // @ts-expect-error TODO: figure out proper typing of include here, this is where it would be helpful to know the difference between a CollectionQuery and Prepared<CollectionQuery>
@@ -631,10 +638,13 @@ function addSubsSelectsFromIncludes<
         cardinality: attributeType.cardinality,
       };
       query.include = { ...query.include, [relationName]: subquerySelection };
+    } else if (relation?.subquery) {
+      query.include = { ...query.include, [relationName]: relation };
     } else {
-      if (relation?.subquery) {
-        query.include = { ...query.include, [relationName]: relation };
+      if (!attributeType) {
+        throw new RelationDoesNotExistError(relationName, query.collectionName);
       }
+      throw new IncludedNonRelationError(relationName, query.collectionName);
     }
   }
   return query;
@@ -656,6 +666,14 @@ export function fetchResultToJS<
 
 export function isValueVariable(value: QueryValue): value is string {
   return typeof value === 'string' && value.startsWith('$');
+}
+
+export function isValueReferentialVariable(value: QueryValue): value is string {
+  if (!isValueVariable(value)) return false;
+  const [scope, key] = getVariableComponents(value);
+
+  if (scope === undefined && key !== 'SESSION_USER_ID') return true;
+  return !isNaN(parseInt(scope ?? ''));
 }
 
 const VARIABLE_SCOPES = ['global', 'session', 'query'];

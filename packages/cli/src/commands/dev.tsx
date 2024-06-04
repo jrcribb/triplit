@@ -1,11 +1,10 @@
 import React from 'react';
-import { Box, Newline, Spacer, Text } from 'ink';
-import { createServer as createConsoleServer } from '@triplit/console';
+import { Box, Newline, Text } from 'ink';
 import { createServer as createDBServer } from '@triplit/server';
 import jwt from 'jsonwebtoken';
 import path from 'path';
 import fs from 'fs';
-import { getDataDir, getTriplitDir } from '../filesystem.js';
+import { CWD, getDataDir, getTriplitDir } from '../filesystem.js';
 import { Command } from '../command.js';
 import * as Flag from '../flags.js';
 import chokidar from 'chokidar';
@@ -26,10 +25,6 @@ export default Command({
       options: ['memory', 'sqlite'] as const,
       char: 's',
       description: 'Database storage type',
-    }),
-    consolePort: Flag.Number({
-      char: 'c',
-      description: 'Port to run the console server on',
     }),
     dbPort: Flag.Number({
       char: 'd',
@@ -55,7 +50,6 @@ export default Command({
     }),
   },
   async run({ flags, ctx }) {
-    const consolePort = flags.consolePort || 6542;
     const dbPort = flags.dbPort || 6543;
     process.env.JWT_SECRET =
       process.env.TRIPLIT_JWT_SECRET ?? 'jwt-key-for-development-only';
@@ -127,7 +121,7 @@ export default Command({
           token: serviceKey,
           syncSchema: true,
         });
-        await client.db.ensureMigrated;
+        await client.db.ready;
         const schemaPath = path.join(getTriplitDir(), 'schema.ts');
         const schemaQuery = client
           .query('_metadata')
@@ -200,25 +194,29 @@ export default Command({
       }
     });
 
-    const consoleServer = createConsoleServer('../../console', {
-      token: serviceKey,
-      projName: 'triplit-test',
-      server: `http://localhost:${dbPort}`,
-    });
-    consoleServer.listen(consolePort);
-
     process.on('SIGINT', function () {
       remoteSchemaUnsubscribe?.();
       watcher?.close();
       dbServer.close();
-      consoleServer.close();
       process.exit();
     });
 
     const dbUrl = `http://localhost:${dbPort}`;
-    const consoleUrl = `http://localhost:${consolePort}`;
-    if (flags.seed)
-      await insertSeeds(dbUrl, serviceKey, flags.seed, true, ctx.schema);
+    const isDefaultToken =
+      serviceKey ===
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ4LXRyaXBsaXQtdG9rZW4tdHlwZSI6InNlY3JldCIsIngtdHJpcGxpdC1wcm9qZWN0LWlkIjoibG9jYWwtcHJvamVjdC1pZCJ9.8Z76XXPc9esdlZb2b7NDC7IVajNXKc4eVcPsO7Ve0ug';
+    const consoleUrl =
+      'https://console.triplit.dev' +
+      (isDefaultToken
+        ? '/local'
+        : `/localhost:${dbPort}?${new URLSearchParams({
+            server: dbUrl,
+            token: serviceKey,
+            projName: CWD.split('/').pop() + '-local',
+          }).toString()}`);
+
+    if (flags.seed !== undefined)
+      await insertSeeds(dbUrl, serviceKey, flags.seed, false, ctx.schema);
 
     return (
       <>
@@ -227,30 +225,21 @@ export default Command({
           <Text bold underline color={'magenta'}>
             Triplit Development Environment
           </Text>
-          <Box flexDirection="column">
+          <Box flexDirection="column" gap={1}>
             <Text>
               You can access your local Triplit services at the following local
               URLs:
             </Text>
-            <Box
-              width={48}
-              flexDirection="column"
-              borderStyle="single"
-              paddingX={1}
-            >
-              <Box>
-                <Text bold>🟢 Console</Text>
-                <Spacer />
-                <Text color="cyan">{consoleUrl}</Text>
-              </Box>
-              <Box>
-                <Text bold>🟢 Database</Text>
-                <Spacer />
-                <Text color="cyan">{dbUrl}</Text>
-              </Box>
+            <Box flexDirection="column">
+              <Text bold>🟢 Console</Text>
+              <Text color="cyan" wrap="end">
+                {consoleUrl}
+              </Text>
             </Box>
-          </Box>
-          <Box flexDirection="column" gap={1}>
+            <Box flexDirection="column">
+              <Text bold>🟢 Database</Text>
+              <Text color="cyan">{dbUrl}</Text>
+            </Box>
             <Box flexDirection="column">
               <Text bold underline>
                 Service Token

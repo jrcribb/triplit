@@ -7,12 +7,13 @@ import {
   QueryBuilder,
   SubscriptionOptions,
 } from '@triplit/client';
+import type { WorkerClient } from '@triplit/client/worker-client';
 
 export function useQuery<
   M extends Models<any, any> | undefined,
   Q extends ClientQuery<M, any, any, any>
 >(
-  client: TriplitClient<M>,
+  client: TriplitClient<M> | WorkerClient<M>,
   query: QueryBuilder<Q>,
   options?: Partial<SubscriptionOptions>
 ): {
@@ -27,7 +28,7 @@ export function useQuery<
   );
   const [fetchingLocal, setFetchingLocal] = useState(true);
   const [fetchingRemote, setFetchingRemote] = useState(
-    client.syncEngine.connectionStatus !== 'CLOSED'
+    client.connectionStatus !== 'CLOSED'
   );
   const [error, setError] = useState<any>(undefined);
   const [isInitialFetch, setIsInitialFetch] = useState(true);
@@ -38,11 +39,9 @@ export function useQuery<
   const stringifiedQuery = builtQuery && JSON.stringify(builtQuery);
 
   useEffect(() => {
-    client.syncEngine
-      .isFirstTimeFetchingQuery(builtQuery)
-      .then((isFirstFetch) => {
-        setIsInitialFetch(isFirstFetch);
-      });
+    client.isFirstTimeFetchingQuery(builtQuery).then((isFirstFetch) => {
+      setIsInitialFetch(isFirstFetch);
+    });
     const unsub = client.onConnectionStatusChange((status) => {
       if (status === 'CLOSING' || status === 'CLOSED') {
         setFetchingRemote(false);
@@ -100,7 +99,7 @@ export function usePaginatedQuery<
   M extends Models<any, any> | undefined,
   Q extends ClientQuery<M, any, any, any>
 >(
-  client: TriplitClient<any>,
+  client: TriplitClient<M> | WorkerClient<M>,
   query: QueryBuilder<Q>,
   options?: Partial<SubscriptionOptions>
 ) {
@@ -175,7 +174,7 @@ export function useInfiniteQuery<
   M extends Models<any, any> | undefined,
   Q extends ClientQuery<M, any, any, any>
 >(
-  client: TriplitClient<any>,
+  client: TriplitClient<M> | WorkerClient<M>,
   query: QueryBuilder<Q>,
   options?: Partial<SubscriptionOptions>
 ) {
@@ -188,7 +187,7 @@ export function useInfiniteQuery<
   const [error, setError] = useState<any>(undefined);
   const [fetching, setFetching] = useState(true);
   const [fetchingRemote, setFetchingRemote] = useState(
-    client.syncEngine.connectionStatus !== 'CLOSED'
+    client.connectionStatus !== 'CLOSED'
   );
   const [fetchingMore, setFetchingMore] = useState(false);
 
@@ -232,6 +231,7 @@ export function useInfiniteQuery<
         ...(options ?? {}),
         onRemoteFulfilled: () => {
           hasResponseFromServer.current = true;
+          console.log('remote fulfilled');
           setFetchingRemote(false);
         },
       }

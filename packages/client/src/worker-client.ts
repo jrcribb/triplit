@@ -6,10 +6,12 @@ import type {
   InfiniteSubscription,
   PaginatedSubscription,
   SubscriptionOptions,
+  TriplitClient,
 } from './triplit-client.js';
 import {
   ChangeTracker,
   CollectionNameFromModels,
+  CollectionQuery,
   DBTransaction,
   FetchByIdQueryParams,
   InsertTypeFromModel,
@@ -31,12 +33,10 @@ import { ConnectionStatus } from './index.js';
 
 export class WorkerClient<M extends ClientSchema | undefined = undefined> {
   initialized: Promise<void>;
-  syncEngine = {
-    connectionStatus: 'open',
-    onConnectionStatusChange: () => () => {},
-    isFirstTimeFetchingQuery: () => Promise.resolve(true),
-  };
   clientWorker: ComLink.Remote<Client<M>>;
+  db: { updateGlobalVariables: (variables: Record<string, any>) => void } =
+    {} as any;
+  private _connectionStatus: ConnectionStatus;
   constructor(options?: ClientOptions<M> & { workerUrl?: string }) {
     const worker = new SharedWorker(
       options?.workerUrl ??
@@ -50,6 +50,19 @@ export class WorkerClient<M extends ClientSchema | undefined = undefined> {
       ...options,
       schema: schema && schemaToJSON({ collections: schema, version: 0 }),
     });
+    this._connectionStatus = 'CLOSED';
+    this.onConnectionStatusChange((status) => {
+      console.log('connection status:', status);
+      this._connectionStatus = status;
+    }, true);
+    this.db.updateGlobalVariables = (variables) => {
+      //@ts-expect-error
+      this.clientWorker.updateGlobalVariables(variables);
+    };
+  }
+
+  get connectionStatus() {
+    return this._connectionStatus;
   }
 
   query<CN extends CollectionNameFromModels<M>>(
@@ -66,6 +79,7 @@ export class WorkerClient<M extends ClientSchema | undefined = undefined> {
     // @ts-expect-error
     return this.clientWorker.fetch(query, options);
   }
+  // @ts-ignore
   async transact<Output>(callback: (tx: DBTransaction<M>) => Promise<Output>) {
     await this.initialized;
     return this.clientWorker.transact(ComLink.proxy(callback));
@@ -151,7 +165,7 @@ export class WorkerClient<M extends ClientSchema | undefined = undefined> {
       entityId
     );
   }
-  subscribe<CQ extends ClientQuery<M, any>>(
+  subscribe<CQ extends ClientQuery<M, any, any, any>>(
     query: CQ,
     onResults: (
       results: ClientFetchResult<CQ>,
@@ -167,6 +181,10 @@ export class WorkerClient<M extends ClientSchema | undefined = undefined> {
         // @ts-ignore
         ComLink.proxy(onResults),
         onError && ComLink.proxy(onError),
+        // CURRENTLY ONLY SUPPORTS onRemoteFulfilled
+        // Comlink is having trouble either just proxying the callback
+        // inside options or proxying the whole options object
+        // @ts-ignore
         options && ComLink.proxy(options)
       );
     })();
@@ -182,7 +200,7 @@ export class WorkerClient<M extends ClientSchema | undefined = undefined> {
    *
    * The pagination will also do its best to always return full pages
    */
-  async subscribeWithPagination<CQ extends ClientQuery<M, any>>(
+  subscribeWithPagination<CQ extends ClientQuery<M, any>>(
     query: CQ,
     onResults: (
       results: ClientFetchResult<CQ>,
@@ -194,18 +212,32 @@ export class WorkerClient<M extends ClientSchema | undefined = undefined> {
     ) => void | Promise<void>,
     onError?: (error: any) => void | Promise<void>,
     options?: Partial<SubscriptionOptions>
-  ): Promise<PaginatedSubscription> {
-    await this.initialized;
-    return this.clientWorker.subscribeWithPagination(
-      query,
-      // @ts-ignore
-      ComLink.proxy(onResults),
-      onError,
-      options
+  ): PaginatedSubscription {
+    const subscriptionPromise = this.initialized.then(() =>
+      this.clientWorker.subscribeWithPagination(
+        query,
+        // @ts-ignore
+        ComLink.proxy(onResults),
+        // @ts-ignore
+        onError && ComLink.proxy(onError),
+        // @ts-ignore
+        options && ComLink.proxy(options)
+      )
     );
+    const unsubscribe = () => {
+      subscriptionPromise.then((sub) => sub.unsubscribe());
+    };
+    const nextPage = () => {
+      subscriptionPromise.then((sub) => sub.nextPage());
+    };
+    const prevPage = () => {
+      subscriptionPromise.then((sub) => sub.prevPage());
+    };
+
+    return { unsubscribe, nextPage, prevPage };
   }
 
-  async subscribeWithExpand<CQ extends ClientQuery<M, any>>(
+  subscribeWithExpand<CQ extends ClientQuery<M, any>>(
     query: CQ,
     onResults: (
       results: ClientFetchResult<CQ>,
@@ -216,15 +248,25 @@ export class WorkerClient<M extends ClientSchema | undefined = undefined> {
     ) => void | Promise<void>,
     onError?: (error: any) => void | Promise<void>,
     options?: Partial<SubscriptionOptions>
-  ): Promise<InfiniteSubscription> {
-    await this.initialized;
-    return this.clientWorker.subscribeWithExpand(
-      query,
-      // @ts-ignore
-      ComLink.proxy(onResults),
-      onError,
-      options
+  ): InfiniteSubscription {
+    const subscriptionPromise = this.initialized.then(() =>
+      this.clientWorker.subscribeWithExpand(
+        query,
+        // @ts-ignore
+        ComLink.proxy(onResults),
+        // @ts-ignore
+        onError && ComLink.proxy(onError),
+        // @ts-ignore
+        options && ComLink.proxy(options)
+      )
     );
+    const unsubscribe = () => {
+      subscriptionPromise.then((sub) => sub.unsubscribe());
+    };
+    const loadMore = (pageSize?: number) => {
+      subscriptionPromise.then((sub) => sub.loadMore(pageSize));
+    };
+    return { loadMore, unsubscribe };
   }
 
   async updateOptions(
@@ -243,24 +285,55 @@ export class WorkerClient<M extends ClientSchema | undefined = undefined> {
     return this.clientWorker.updateServerUrl(serverUrl);
   }
 
+  async isFirstTimeFetchingQuery(
+    query: CollectionQuery<any, any>
+  ): Promise<boolean> {
+    await this.initialized;
+    return this.clientWorker.isFirstTimeFetchingQuery(query);
+  }
+
   onTxCommitRemote(txId: string, callback: () => void) {
-    return this.clientWorker.onTxCommitRemote(txId, ComLink.proxy(callback));
+    const asyncUnsub = this.clientWorker.onTxCommitRemote(
+      txId,
+      ComLink.proxy(callback)
+    );
+    return () => asyncUnsub.then((unsub) => unsub());
   }
 
   onTxFailureRemote(txId: string, callback: () => void) {
-    return this.clientWorker.onTxFailureRemote(txId, ComLink.proxy(callback));
+    const asyncUnsub = this.initialized.then(() =>
+      this.clientWorker.onTxFailureRemote(txId, ComLink.proxy(callback))
+    );
+    return () => asyncUnsub.then((unsub) => unsub());
   }
 
   onConnectionStatusChange(
     callback: (status: ConnectionStatus) => void,
     runImmediately?: boolean
   ) {
-    const unSubPromise = this.clientWorker.onConnectionStatusChange(
-      ComLink.proxy(callback),
-      runImmediately
+    const unSubPromise = this.initialized.then(() =>
+      this.clientWorker.onConnectionStatusChange(
+        ComLink.proxy(callback),
+        runImmediately
+      )
     );
-    return async () => {
-      (await unSubPromise)();
-    };
+    return () => unSubPromise.then((unsub) => unsub());
+  }
+
+  async connect() {
+    await this.initialized;
+    return this.clientWorker.connect();
+  }
+  async disconnect() {
+    await this.initialized;
+    return this.clientWorker.disconnect();
+  }
+  async retry(txId: string) {
+    await this.initialized;
+    return this.clientWorker.retry(txId);
+  }
+  async rollback(txIds: string | string[]) {
+    await this.initialized;
+    return this.clientWorker.rollback(txIds);
   }
 }

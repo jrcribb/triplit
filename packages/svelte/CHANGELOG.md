@@ -1,5 +1,40 @@
 # @triplit/svelte
 
+## 0.1.25
+
+### Patch Changes
+
+- @triplit/client@0.3.53
+
+## 0.1.24
+
+### Patch Changes
+
+- Updated dependencies [d890707]
+  - @triplit/client@0.3.52
+
+## 0.1.23
+
+### Patch Changes
+
+- 19e147e: update query hook types to accept WorkerClient
+- Updated dependencies [19e147e]
+  - @triplit/client@0.3.51
+
+## 0.1.22
+
+### Patch Changes
+
+- Updated dependencies [3f633a1]
+  - @triplit/client@0.3.50
+
+## 0.1.21
+
+### Patch Changes
+
+- Updated dependencies [e1bae7b]
+  - @triplit/client@0.3.49
+
 ## 0.1.20
 
 ### Patch Changes

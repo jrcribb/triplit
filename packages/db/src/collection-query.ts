@@ -49,6 +49,7 @@ import {
   replaceVariablesInFilterStatements,
   replaceVariable,
   getVariableComponents,
+  isValueReferentialVariable,
 } from './db-helpers.js';
 import { DataType, Operator } from './data-types/base.js';
 import { VariableAwareCache } from './variable-aware-cache.js';
@@ -831,20 +832,21 @@ function queryChainToQuery<
       ...first,
       where: [...(first.where ?? []), ...additionalFilters],
     };
-  const variableFilters = (first.where ?? []).filter(
-    (filter) => filter instanceof Array && isValueVariable(filter[2])
+  const refVariableFilters = (first.where ?? []).filter(
+    (filter) => filter instanceof Array && isValueReferentialVariable(filter[2])
   ) as FilterStatement<any, any>[];
-  const nonVariableFilters = (first.where ?? []).filter(
-    (filter) => !(filter instanceof Array && isValueVariable(filter[2]))
+  const nonRefVariableFilters = (first.where ?? []).filter(
+    (filter) =>
+      !(filter instanceof Array && isValueReferentialVariable(filter[2]))
   ) as FilterStatement<any, any>[];
   const next = queryChainToQuery(
     rest,
-    variableFilters.map(reverseRelationFilter)
+    refVariableFilters.map(reverseRelationFilter)
   );
   return {
     ...first,
     where: [
-      ...nonVariableFilters,
+      ...nonRefVariableFilters,
       ...additionalFilters,
       {
         exists: next,
@@ -1556,7 +1558,7 @@ function satisfiesSetFilter(
   op: Operator,
   filterValue: any
 ) {
-  const pointer = '/' + path.replace('.', '/');
+  const pointer = '/' + path.replaceAll('.', '/');
   const value: Record<string, [boolean, Timestamp]> = EntityPointer.Get(
     entity,
     pointer
@@ -1589,7 +1591,7 @@ function satisfiesRegisterFilter(
   op: Operator,
   filterValue: any
 ) {
-  const maybeValue = EntityPointer.Get(entity, '/' + path.replace('.', '/'));
+  const maybeValue = EntityPointer.Get(entity, '/' + path.replaceAll('.', '/'));
 
   // maybeValue is expected to be of shape [value, timestamp]
   // this may happen if a schema is expected but not there and we're reading a value that cant be parsed, the schema is incorrect somehow, or if the provided path is incorrect

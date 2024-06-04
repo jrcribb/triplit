@@ -1,5 +1,65 @@
 # @triplit/cli
 
+## 0.3.64
+
+### Patch Changes
+
+- d0c9ea9: add /local route to console for local dev and use in triplit dev command
+- Updated dependencies [3897fc7]
+- Updated dependencies [8ccc77e]
+  - @triplit/db@0.3.42
+  - @triplit/client@0.3.53
+  - @triplit/server@0.3.45
+  - @triplit/server-core@0.3.44
+
+## 0.3.63
+
+### Patch Changes
+
+- @triplit/console@0.3.57
+
+## 0.3.62
+
+### Patch Changes
+
+- Updated dependencies [d890707]
+  - @triplit/client@0.3.52
+  - @triplit/console@0.3.56
+
+## 0.3.61
+
+### Patch Changes
+
+- Updated dependencies [19e147e]
+- Updated dependencies [74500fd]
+  - @triplit/client@0.3.51
+  - @triplit/db@0.3.41
+  - @triplit/console@0.3.55
+  - @triplit/server@0.3.44
+  - @triplit/server-core@0.3.43
+
+## 0.3.60
+
+### Patch Changes
+
+- 3f633a1: update db prop names
+- Updated dependencies [3f633a1]
+- Updated dependencies [3f633a1]
+  - @triplit/client@0.3.50
+  - @triplit/db@0.3.40
+  - @triplit/console@0.3.54
+  - @triplit/server@0.3.43
+  - @triplit/server-core@0.3.42
+
+## 0.3.59
+
+### Patch Changes
+
+- Updated dependencies [e1bae7b]
+- Updated dependencies [e1bae7b]
+  - @triplit/console@0.3.53
+  - @triplit/client@0.3.49
+
 ## 0.3.58
 
 ### Patch Changes

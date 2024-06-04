@@ -27,6 +27,7 @@ import {
   Code,
 } from '@triplit/ui';
 import { PARSE_FUNCS } from './create-entity-sheet';
+import { CopyValueMenu } from './copy-value-menu.js';
 import { TriplitClient } from '@triplit/client';
 import { AttributeDefinition } from '@triplit/db';
 import {
@@ -36,79 +37,12 @@ import {
   ValueAttributeDefinition,
 } from '@triplit/db/src/data-types/serialization';
 import { ArrowSquareOut } from '@phosphor-icons/react';
-
-async function updateTriplitValue(
-  attribute: string,
-  client: TriplitClient,
-  collection: string,
-  entityId: string,
-  value: TriplitDataTypes & undefined
-) {
-  try {
-    await client.update(collection, entityId, async (originalEntity) => {
-      originalEntity[attribute] = value;
-    });
-  } catch (e) {
-    console.error(e);
-  }
-}
-
-async function deleteTriplitValue(
-  attribute: string,
-  client: TriplitClient,
-  collection: string,
-  entityId: string
-) {
-  try {
-    await client.update(collection, entityId, async (originalEntity) => {
-      delete originalEntity[attribute];
-    });
-  } catch (e) {
-    console.error(e);
-  }
-}
-
-async function updateTriplitSet(
-  attribute: string,
-  client: TriplitClient,
-  collection: string,
-  entityId: string,
-  value: TriplitDataTypes,
-  action: 'add' | 'delete' | 'null'
-) {
-  try {
-    await client.update(collection, entityId, async (originalEntity) => {
-      if (action === 'add') {
-        if (
-          originalEntity[attribute] === null ||
-          originalEntity[attribute] === undefined
-        ) {
-          originalEntity[attribute] = new Set([value]);
-          return;
-        }
-        if (originalEntity[attribute] instanceof Set) {
-          originalEntity[attribute].add(value);
-          return;
-        }
-      } else if (
-        action === 'delete' &&
-        originalEntity[attribute] instanceof Set
-      ) {
-        const deleted = originalEntity[attribute].delete(value);
-        if (!deleted && value instanceof Date) {
-          const dateObjToDelete = Array.from(
-            originalEntity[attribute] as Set<Date>
-          ).find((date: Date) => date.toISOString() === value.toISOString());
-          if (dateObjToDelete) {
-            originalEntity[attribute].delete(dateObjToDelete);
-          }
-        }
-      }
-    });
-  } catch (e) {
-    console.error(e);
-  }
-}
+import {
+  TriplitDataTypes,
+  deleteTriplitValue,
+  updateTriplitSet,
+  updateTriplitValue,
+} from 'src/utils/mutate-cells.js';
 
 interface DataTableProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
@@ -142,14 +76,6 @@ export function TriplitColumnHeader(props: ColumnHeaderProps) {
     </div>
   );
 }
-
-export type TriplitDataTypes =
-  | string
-  | number
-  | boolean
-  | Date
-  | null
-  | Record<string, any>;
 
 function SetCellContents({
   triplitSet,
@@ -309,24 +235,26 @@ export function DataCell({
   useEffect(() => {
     if (!selected) setIsEditing(false);
   }, [selected]);
+
   return (
-    <Popover open={isEditing} onOpenChange={setIsEditing}>
-      <PopoverTrigger
-        onClick={() => {
-          onSelectCell();
-          selected && setIsEditing(!isEditing);
-        }}
-        disabled={!editable}
-        // setting height manually until we can figure out how to get these to fill the row
-        className={`text-left px-3 py-2 border truncate w-full h-[38px] ${
-          selected ? 'border-blue-600' : 'border-transparent'
-        }`}
-      >
-        <CellValue
-          definition={attributeDef ?? { type: 'string', options: {} }}
-          value={value}
-        />
-      </PopoverTrigger>
+    <Popover open={isEditing && editable} onOpenChange={setIsEditing}>
+      <CopyValueMenu value={value}>
+        <PopoverTrigger
+          onClick={() => {
+            onSelectCell();
+            if (selected && editable) setIsEditing(!isEditing);
+          }}
+          // setting height manually until we can figure out how to get these to fill the row
+          className={`text-left px-3 py-2 border truncate w-full h-[38px] ${
+            selected ? 'border-blue-600' : 'border-transparent'
+          }`}
+        >
+          <CellValue
+            definition={attributeDef ?? { type: 'string', options: {} }}
+            value={value}
+          />
+        </PopoverTrigger>
+      </CopyValueMenu>
 
       <PopoverContent className="text-xs p-1.5" align="start">
         {attributeDef?.type === 'set' ? (

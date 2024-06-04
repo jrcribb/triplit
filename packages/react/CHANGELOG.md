@@ -1,5 +1,46 @@
 # @triplit/react
 
+## 0.3.56
+
+### Patch Changes
+
+- @triplit/client@0.3.53
+
+## 0.3.55
+
+### Patch Changes
+
+- ea392af: Fix useEntity type to support WorkerClient
+
+## 0.3.54
+
+### Patch Changes
+
+- Updated dependencies [d890707]
+  - @triplit/client@0.3.52
+
+## 0.3.53
+
+### Patch Changes
+
+- 19e147e: update query hook types to accept WorkerClient
+- Updated dependencies [19e147e]
+  - @triplit/client@0.3.51
+
+## 0.3.52
+
+### Patch Changes
+
+- Updated dependencies [3f633a1]
+  - @triplit/client@0.3.50
+
+## 0.3.51
+
+### Patch Changes
+
+- Updated dependencies [e1bae7b]
+  - @triplit/client@0.3.49
+
 ## 0.3.50
 
 ### Patch Changes

@@ -11,24 +11,25 @@ import {
 import { typeFromJSON } from '../../../db/src/data-types/base';
 import { QueryWhere } from '../../../db/src/query';
 import { nanoid } from 'nanoid';
+import { CollectionDefinition } from '@triplit/db';
 
 type FiltersPopoverProps = {
   collection: string;
   projectId: string;
-  onSubmit: (filters: QueryWhere<any>) => void;
+  onSubmit: (filters: QueryWhere<any, any>) => void;
   uniqueAttributes: Set<string>;
-  collectionSchema: any;
-  filters: QueryWhere<any>;
+  collectionSchema: CollectionDefinition;
+  filters: QueryWhere<any, any>;
 };
 
 function mapFilterArraysToFilterObjects(
-  filters: QueryWhere<any>,
-  collectionSchema?: any
+  filters: QueryWhere<any, any>,
+  collectionSchema?: CollectionDefinition
 ) {
   return filters.map(([attribute, operator, value]) => ({
     attribute,
     asType: collectionSchema
-      ? collectionSchema.schema?.properties?.[attribute]?.type
+      ? collectionSchema?.schema?.properties?.[attribute]?.type
       : typeof value,
     operator,
     value,
@@ -48,13 +49,16 @@ export function FiltersPopover(props: FiltersPopoverProps) {
   const { collection, uniqueAttributes, collectionSchema, onSubmit, filters } =
     props;
 
+  const [key, setKey] = useState(+new Date());
+
   const [draftFilters, setDraftFilters] = useState(
     mapFilterArraysToFilterObjects(props.filters, collectionSchema)
   );
   const onCreateNewDraftFilter = useCallback(
     (attribute: string) => {
+      setKey(+new Date());
       const attributeDefinition = collectionSchema
-        ? collectionSchema.schema?.properties?.[attribute]
+        ? collectionSchema?.schema?.properties?.[attribute]
         : null;
       const defaultType = attributeDefinition?.type ?? 'string';
       const defaultOperator = typeFromJSON(
@@ -88,7 +92,9 @@ export function FiltersPopover(props: FiltersPopoverProps) {
           size={'sm'}
           variant={'secondary'}
           className={`${
-            hasFilters ? 'bg-blue-500 hover:bg-blue-600' : ''
+            hasFilters
+              ? 'bg-blue-300 hover:bg-blue-200 dark:bg-blue-500 dark:hover:bg-blue-600'
+              : ''
           } py-1 h-auto`}
         >
           <span className="mr-2">Filters</span>
@@ -98,10 +104,17 @@ export function FiltersPopover(props: FiltersPopoverProps) {
         </Button>
       </PopoverTrigger>
 
-      <PopoverContent align="start" className="flex flex-col gap-3 w-full">
+      <PopoverContent
+        align="start"
+        className="flex flex-col gap-3 w-full max-w-2xl"
+      >
         {draftFilters.length > 0 ? (
-          draftFilters.map((data, index) => (
-            <div key={data.id} className="flex flex-row gap-1 items-end">
+          <div
+            className={`grid ${
+              collectionSchema ? 'grid-cols-9' : 'grid-cols-11'
+            } gap-2`}
+          >
+            {draftFilters.map((data, index) => (
               <QueryFilter
                 filter={data}
                 onUpdate={(filterField, newValue) => {
@@ -115,15 +128,15 @@ export function FiltersPopover(props: FiltersPopoverProps) {
                   );
                 }}
                 attributes={filterAttributes}
-                schema={collectionSchema?.schema}
+                collectionDefinition={collectionSchema}
                 onPressRemove={() => {
                   setDraftFilters((prev) =>
                     prev.filter((f) => f.id !== data.id)
                   );
                 }}
               />
-            </div>
-          ))
+            ))}
+          </div>
         ) : (
           <p className="text-sm text-muted-foreground">
             No filters applied to <Code>{collection}</Code>
@@ -137,12 +150,9 @@ export function FiltersPopover(props: FiltersPopoverProps) {
           }}
         >
           <Select
+            key={key}
+            placeholder="Add Filter"
             disabled={filterAttributes.length === 0}
-            value={
-              filterAttributes.length > 0
-                ? 'Select an attribute to filter by'
-                : 'No attributes that can be used to filter'
-            }
             onValueChange={onCreateNewDraftFilter}
             data={filterAttributes}
           />

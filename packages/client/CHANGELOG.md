@@ -1,5 +1,41 @@
 # @triplit/client
 
+## 0.3.53
+
+### Patch Changes
+
+- Updated dependencies [3897fc7]
+- Updated dependencies [8ccc77e]
+  - @triplit/db@0.3.42
+
+## 0.3.52
+
+### Patch Changes
+
+- d890707: hotfix updateGobalVars
+
+## 0.3.51
+
+### Patch Changes
+
+- 19e147e: update query hook types to accept WorkerClient
+- Updated dependencies [74500fd]
+  - @triplit/db@0.3.41
+
+## 0.3.50
+
+### Patch Changes
+
+- 3f633a1: fix connection status for worker-client
+- Updated dependencies [3f633a1]
+  - @triplit/db@0.3.40
+
+## 0.3.49
+
+### Patch Changes
+
+- e1bae7b: worker-client improvements
+
 ## 0.3.48
 
 ### Patch Changes
