@@ -2,10 +2,11 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'node:url';
 import minimist from 'minimist';
-import prompts from 'prompts';
-import { yellow, blue, cyan, red, green } from 'ansis/colors';
+import prompts, { override } from 'prompts';
+import { yellow, blue, cyan, red, green, grey } from 'ansis/colors';
 import degit from 'degit';
 import { spawn } from 'child_process';
+import { copy as fsExtraCopy, move } from 'fs-extra';
 
 const DEFAULT_TARGET_DIRECTORY = 'triplit-app';
 
@@ -60,7 +61,7 @@ const FRAMEWORKS: Framework[] = [
   },
 ];
 
-const TEMPLATES = ['chat'];
+const TEMPLATES = ['chat', 'react', 'svelte', 'vue', 'angular'];
 
 function getViteCreateArgs(
   pkgManager: string,
@@ -88,9 +89,43 @@ function getViteTemplateForFramework(framework: string) {
 }
 
 async function createTriplitAppWithVite() {
-  const argTargetDir = argv._[0]
-    ? formatTargetDir(argv._[0])!
-    : DEFAULT_TARGET_DIRECTORY;
+  let argTargetDir = argv._[0];
+
+  if (!argTargetDir) {
+    let targetDirChoice: prompts.Answers<'targetDir'>;
+    try {
+      targetDirChoice = await prompts(
+        [
+          {
+            type: 'text',
+            name: 'targetDir',
+            message: 'What is your project named?',
+            validate: (dir) => {
+              if (!dir) return 'Please enter a directory name';
+              if (fs.existsSync(dir)) {
+                return 'Directory already exists';
+              }
+              return true;
+            },
+            initial: DEFAULT_TARGET_DIRECTORY,
+          },
+        ],
+        {
+          onCancel: () => {
+            throw new Error(red('✖') + ' Operation cancelled');
+          },
+        }
+      );
+      if (!targetDirChoice.targetDir) {
+        throw new Error(red('✖') + ' Invalid directory name');
+      }
+      argTargetDir = targetDirChoice.targetDir;
+    } catch (cancelled: any) {
+      console.log(cancelled.message);
+      return;
+    }
+  }
+  argTargetDir = formatTargetDir(argTargetDir);
   let targetDir =
     argTargetDir === '.' ? path.basename(path.resolve()) : argTargetDir;
   const pkgName = targetDir;
@@ -100,7 +135,7 @@ async function createTriplitAppWithVite() {
   let template = argTemplate;
 
   // If invalid template, show choices
-  if (argTemplate && !TEMPLATES.includes(argTemplate)) {
+  if (!(argTemplate && TEMPLATES.includes(argTemplate))) {
     let templateChoice: prompts.Answers<'template'>;
     try {
       templateChoice = await prompts(
@@ -108,17 +143,24 @@ async function createTriplitAppWithVite() {
           {
             type: 'select',
             name: 'template',
-            message:
-              'Invalid template specified. Please select a template or select "None" scaffold an empty project:',
+            message: 'Please select a template:',
             initial: 0,
             choices: [
               {
-                title: 'None',
-                value: null,
+                title: cyan('React'),
+                value: 'react',
               },
               {
-                title: 'Chat',
-                value: 'chat',
+                title: red('Svelte'),
+                value: 'svelte',
+              },
+              {
+                title: green('Vue'),
+                value: 'vue',
+              },
+              {
+                title: yellow('Angular'),
+                value: 'angular',
               },
             ],
           },
@@ -137,7 +179,6 @@ async function createTriplitAppWithVite() {
   }
 
   if (template) {
-    console.log('Loading template: ' + template);
     const root = path.join(process.cwd(), targetDir);
     createDirIfNotExists(root);
     await loadTemplate(template, root);
@@ -236,7 +277,6 @@ async function createTriplitAppWithVite() {
     );
   }
   fs.writeFileSync(pkgJsonPath, JSON.stringify(pkgJson, null, 2) + '\n');
-
   // Add Triplit specific files
   const triplitDir = path.join(root, 'triplit');
   createDirIfNotExists(triplitDir);
@@ -249,18 +289,57 @@ async function createTriplitAppWithVite() {
 async function loadTemplate(template: string, targetDir: string) {
   // TODO: put templates info into a json obj
   // TOOD: handle renaming based on package name
+  const relativeTargetDir = path.relative(process.cwd(), targetDir);
   if (!isEmpty(targetDir))
     throw new Error(
       `Target directory ${targetDir} must be empty to load template`
     );
+  console.log();
   if (template === 'chat') {
+    console.log(grey`Creating project with chat template...`);
     await degit('aspen-cloud/triplit/templates/chat-template').clone(targetDir);
-    console.log(`Created project with chat template at ${targetDir}`);
+    console.log(`Created project with chat template at ${relativeTargetDir}`);
     return;
   } else {
-    console.log('Invalid template specified.');
+    await fsExtraCopy(
+      path.resolve(fileURLToPath(import.meta.url), '../templates/' + template),
+      targetDir
+    );
+    await move(targetDir + '/.env.example', targetDir + '/.env', {
+      overwrite: true,
+    });
+    await move(targetDir + '/.gitignore.example', targetDir + '/.gitignore', {
+      overwrite: true,
+    });
+    console.log(
+      grey`Created project with ${template} template at ./${relativeTargetDir}`
+    );
+    console.log();
+    console.log(grey`To get started, run:`);
+    console.log();
+    console.log(cyan`    cd ${relativeTargetDir}`);
+    console.log(cyan`    npm install`);
+    console.log(cyan`    npm run dev`);
+    console.log();
+
     return;
   }
+}
+
+const DEFAULT_VARIABLES = {
+  TRIPLIT_DB_URL: '',
+  TRIPLIT_SERVICE_TOKEN: '',
+  TRIPLIT_ANON_TOKEN: '',
+  VITE_TRIPLIT_SERVER_URL: '$TRIPLIT_SERVER_URL',
+  VITE_TRIPLIT_TOKEN: '$TRIPLIT_ANON_TOKEN',
+};
+
+function createEnvFile(targetDir: string, env: Record<string, string>) {
+  const envPath = path.join(targetDir, '.env');
+  const envContent = Object.entries(env)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
+  fs.writeFileSync(envPath, envContent);
 }
 
 function pkgFromUserAgent(userAgent: string | undefined) {
@@ -273,8 +352,8 @@ function pkgFromUserAgent(userAgent: string | undefined) {
   };
 }
 
-function formatTargetDir(targetDir: string | undefined) {
-  return targetDir?.trim().replace(/\/+$/g, '');
+function formatTargetDir(targetDir: string) {
+  return targetDir.trim().replace(/\/+$/g, '');
 }
 
 function isEmpty(path: string) {

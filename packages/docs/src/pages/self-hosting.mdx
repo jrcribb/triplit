@@ -2,19 +2,28 @@
 description: Learn how to self host Triplit using Docker, and how to deploy it to a cloud provider with Docker or Git.
 ---
 
+import { Callout } from 'nextra/components';
+
 # Self-hosting Triplit
 
-To enable sync, you need to run a Triplit servezr. The server is a Node.js application that talks to various Triplit clients over WebSockets and HTTP.
+To enable sync, you need to run a Triplit server. The server is a Node.js application that talks to various Triplit clients over WebSockets and HTTP.
 
 You have several options for running the server:
 
 - A local [development server](/local-development)
 - Use [Docker](#docker) and a cloud provider that supports container deployments
+- Use a [one-click deploy](#one-click-deploy) to a cloud provider that is integrated with Triplit.
 - Build [a custom server](#building-a-custom-server) and use a cloud provider that supports Git-based deploys
 
 ## Docker
 
 Each release of the server is [published as a Docker image](https://hub.docker.com/r/aspencloud/triplit-server/tags). You can deploy the server to a cloud provider like [fly.io](https://fly.io/docs/languages-and-frameworks/dockerfile/), [DigitalOcean](https://docs.digitalocean.com/products/app-platform/how-to/deploy-from-container-images/), or AWS. You'll also want to setup a volume to persist the database.
+
+## One-click deploy
+
+Triplit is integrated with [Railway](https://railway.app/), a cloud provider that supports one-click deploys. Read about how to deploy a Triplit server using Railway in our [Triplit Cloud guide](/triplit-cloud/self-hosted-deployments).
+
+We plan on adding support for more cloud providers in the future. If you have a favorite cloud provider that you'd like to see integrated with Triplit, let us know by [joining our Discord](https://discord.gg/q89sGWHqQ5).
 
 ## Building a custom server
 
@@ -49,9 +58,44 @@ process.on('SIGINT', function () {
 
 You can now deploy the server to a cloud provider that supports Git deploys, like [Vercel](https://vercel.com/docs/git), [Netlify](https://docs.netlify.com/configure-builds/get-started/), or [Render](https://docs.render.com/deploys).
 
+### Storage
+
+Triplit is designed to support any storage that can implement a key value store. You may specify the storage adapter you want to use by setting the `storage` option. Triplit provides some default configurations of our storage adapters, which you can use by setting the `storage` option to the appropriate string value for the adapter. These include:
+
+- `file` - A simple file-based storage adapter
+- `leveldb` - A LevelDB storage adapter, which requires the installation of the [`level` package](https://github.com/Level/level)
+- `lmdb` - An LMDB storage adapter, which requires the installation of the [`lmdb` package](https://github.com/kriszyp/lmdb-js)
+- `memory` (default) - See `memory-btree`
+- `memory-array` - An in-memory storage adapter backed by an array
+- `memory-btree` - An in-memory storage adapter backed by a B-Tree
+- `sqlite` - An SQLite storage adapter, which requires the installation of the [`better-sqlite3` package](https://github.com/WiseLibs/better-sqlite3)
+
+<Callout type="warning" emoji="⚠️">
+  In-memory storage adapters are not durable and are not recommended for
+  production use.
+</Callout>
+
+Typically this will use your `LOCAL_DATABASE_URL` environment variable so you'll want to make sure that's set.
+
+You can also pass in an instance of an adapter or a function that returns an instance of an adapter.
+
+```typescript
+function createAdapter() {
+  return new MyCustomAdapter();
+}
+
+const startServer = createServer({
+  storage: createAdapter,
+});
+```
+
 ## Secrets
 
-There are a few secrets that you need to provide to the server to enable certain features.
+There are a few secrets that you need to provide to the server to enable certain features. **If you are planning on using the Triplit Dashboard, you will need to set `PROJECT_ID` and `JWT_SECRET` to specific values associated with your project.** Read the [Triplit Cloud guide](/triplit-cloud/self-hosted-deployments#configuration) for more information.
+
+### `PROJECT_ID`
+
+The server uses a `PROJECT_ID` to identify your project. You can set the `PROJECT_ID` environment variable to a unique identifier for your project. If you would like to connect to the Triplit Dashboard, this value should be the unique identifier for your project. You can find this value in the dashboard in your project's settings.
 
 ### `JWT_SECRET`
 
@@ -85,7 +129,11 @@ const serviceKey = jwt.sign(
 );
 ```
 
-For more complicate authentication schemes, refer to our [authentication guide](/auth).
+For more complicated authentication schemes, refer to our [authentication guide](/auth).
+
+### `LOCAL_DATABASE_URL` (required for durable storage)
+
+An absolute path on the server's file system to a directory where the server will store any database files. This is required for durable storage options: `file`, `leveldb`, `lmdb`, and `sqlite`.
 
 ### `EXTERNAL_JWT_SECRET` (optional)
 
@@ -94,10 +142,6 @@ If you want your server to support JWTs signed by a second issuer, you can also 
 ### `CLAIMS_PATH` (optional)
 
 If you are using custom JWTs with nested Triplit-related claims, you can set the `CLAIMS_PATH` environment variable. The server will read the Triplit claims at the path specified by `CLAIMS_PATH`. The JWT should also have the `x-triplit-token-type` claim set to `external`. Read the [authentication guide](/auth) for more information.
-
-### `LOCAL_DATABASE_URL` (optional)
-
-If you use the `sqlite` storage adapter, the server will create the database file at `./app.db` in the server's directory. If you want to override this (as is sometimes necessary for Cloud providers with their own separately managed storage volumes) you can set the `LOCAL_DATABASE_URL` environment variable.
 
 ### `SENTRY_DSN` (optional)
 

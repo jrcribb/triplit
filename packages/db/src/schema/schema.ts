@@ -1,17 +1,12 @@
 import { TObject } from '@sinclair/typebox';
 import { InvalidSchemaPathError } from '../errors.js';
 import type { CollectionNameFromModels } from '../db.js';
-import type { Attribute, EAV, TripleRow } from '../triple-store-utils.js';
-import {
-  dbDocumentToTuples,
-  objectToTuples,
-  timestampedObjectToPlainObject,
-} from '../utils.js';
+import type { Attribute, TripleRow } from '../triple-store-utils.js';
+import { objectToTuples, timestampedObjectToPlainObject } from '../utils.js';
 import { constructEntity } from '../query.js';
-import { appendCollectionToId, StoreSchema } from '../db-helpers.js';
-import { typeFromJSON, DataType, TimestampType } from '../data-types/base.js';
+import { appendCollectionToId } from '../db-helpers.js';
+import { typeFromJSON, DataType } from '../data-types/base.js';
 import {
-  CollectionDefinition,
   CollectionsDefinition,
   SchemaDefinition,
 } from '../data-types/serialization.js';
@@ -23,6 +18,7 @@ import {
   Models,
   SchemaConfig,
   Collection,
+  StoreSchema,
 } from './types';
 
 // We infer TObject as a return type of some funcitons and this causes issues with consuming packages
@@ -31,6 +27,9 @@ export type { TObject };
 
 // This will generally be what we store in the DB for a path
 // Maybe refactor this to throw InvalidSchemaPathError more efficiently
+/**
+ * @deprecated use getAttributeFromSchema instead
+ */
 export function getSchemaFromPath(
   model: Model<any>,
   path: Attribute
@@ -151,24 +150,6 @@ export function collectionsDefinitionToSchema(
   );
 }
 
-export function schemaToTriples(schema: StoreSchema<Models<any, any>>): EAV[] {
-  const schemaData = schemaToJSON(schema);
-  const tuples = dbDocumentToTuples(schemaData);
-  const id = appendCollectionToId('_metadata', '_schema');
-
-  // Not sure if this is the best place to do it, but a schema is treated as an entity so needs extra entity triples
-  const collectionTuple = [id, ['_collection'], '_metadata'] as EAV;
-  const idTuple = [id, ['_metadata', 'id'], '_schema'] as EAV;
-
-  return [
-    collectionTuple,
-    idTuple,
-    ...tuples.map((tuple) => {
-      return [id, ['_metadata', ...tuple[0]], tuple[1]] as EAV;
-    }),
-  ];
-}
-
 export function triplesToSchema(triples: TripleRow[]) {
   const schemaEntity = constructEntity(
     triples,
@@ -182,9 +163,12 @@ export function timestampedSchemaToSchema(
   schema: Record<string, any>
 ): StoreSchema<Models<any, any>> | undefined {
   const schemaData = timestampedObjectToPlainObject(schema);
+  delete schemaData['_collection'];
+  delete schemaData['id'];
   const version = (schemaData.version as number) || 0;
   const collections = (schemaData.collections as CollectionsDefinition) || {};
   return JSONToSchema({
+    ...schemaData,
     version,
     collections,
   });
@@ -195,37 +179,7 @@ export function JSONToSchema(
 ): StoreSchema<Models<any, any>> | undefined {
   if (!schemaJSON) return undefined;
   const collections = collectionsDefinitionToSchema(schemaJSON.collections);
-  return { version: schemaJSON.version, collections };
-}
-
-export function schemaToJSON(
-  schema: StoreSchema<Models<any, any>>
-): SchemaDefinition;
-export function schemaToJSON(schema: undefined): undefined;
-export function schemaToJSON(
-  schema: StoreSchema<Models<any, any> | undefined>
-): SchemaDefinition | undefined;
-export function schemaToJSON(
-  schema: StoreSchema<Models<any, any> | undefined>
-): SchemaDefinition | undefined {
-  if (!schema) return undefined;
-  const collections: CollectionsDefinition = {};
-  for (const [collectionName, model] of Object.entries(schema.collections)) {
-    const collection = collectionSchemaToJSON(model);
-    collections[collectionName] = collection;
-  }
-  return { version: schema.version, collections };
-}
-
-function collectionSchemaToJSON(
-  collection: Collection<any>
-): CollectionDefinition {
-  const rulesObj = collection.rules ? { rules: collection.rules } : {};
-  return {
-    // @ts-expect-error need to refactor SchemaConfig type + id constant I think
-    schema: collection.schema.toJSON() as Model<any>,
-    ...rulesObj,
-  };
+  return { ...schemaJSON, version: schemaJSON.version, collections };
 }
 
 export function getDefaultValuesForCollection(

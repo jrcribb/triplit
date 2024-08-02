@@ -158,9 +158,11 @@ function friendlyReadyState(conn: WebSocket): ConnectionStatus {
   }
 }
 
-// temporary defensive check for node env
-// only run in browser for now
-if (typeof process === 'undefined') {
+if (
+  typeof WebSocket !== 'undefined' &&
+  typeof self !== 'undefined' &&
+  !!Object.getOwnPropertyDescriptor(self, 'WebSocket')?.writable
+) {
   // Add any changes to the WebSocket type here (ex more event handlers)
   var WebSocketProxy = new Proxy(WebSocket, {
     construct: function (target, args) {

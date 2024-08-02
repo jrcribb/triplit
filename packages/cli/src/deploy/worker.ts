@@ -8,7 +8,6 @@ import {
   ServerCloseReason,
   ParseResult,
   ClientSyncMessage,
-  ParsedToken,
 } from '@triplit/types/sync.js';
 import DurableObjectStore from '@triplit/db/storage/durable-object-tuple-store';
 
@@ -34,7 +33,7 @@ export interface Env {
 }
 // @ts-ignore
 import { schema } from '@/schema';
-import { parseAndValidateToken } from '@triplit/server-core/token';
+import { parseAndValidateToken, ProjectJWT } from '@triplit/server-core/token';
 
 export default {
   /**
@@ -79,8 +78,8 @@ export class TriplitDurableObject implements DurableObject {
 
     const { data: token, error } = await parseAndValidateToken(
       xTriplitToken,
-      jwt_secret!,
-      projectId!,
+      jwt_secret,
+      projectId,
       {
         payloadPath: external_jwt_path,
         externalSecret: external_jwt_secret,
@@ -127,7 +126,7 @@ export class TriplitDurableObject implements DurableObject {
 
   async handleWebSocketUpgrade(
     request: Request,
-    token: ParsedToken
+    token: ProjectJWT
   ): Promise<Response> {
     const url = new URL(request.url);
     const clientId = url.searchParams.get('client')!;

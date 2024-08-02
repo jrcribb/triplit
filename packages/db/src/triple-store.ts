@@ -45,8 +45,9 @@ import {
   RangeContraints,
   AVEIndex,
 } from './triple-store-utils.js';
-import { copyHooks } from './utils.js';
 import { TRIPLE_STORE_MIGRATIONS } from './triple-store-migrations.js';
+import { TransactionResult } from './query/types';
+import { MirroredArray } from './utils/mirrored-array.js';
 
 function isTupleStorage(object: any): object is AsyncTupleStorageApi {
   if (typeof object !== 'object') return false;
@@ -176,88 +177,120 @@ async function addIndexesToTransaction(
   }
 }
 
-export class TripleStore implements TripleStoreApi {
-  stores: Record<
-    string,
-    AsyncTupleDatabaseClient<WithTenantIdPrefix<TupleIndex>>
-  >;
+export class TripleStore<StoreKeys extends string = any>
+  implements TripleStoreApi
+{
   storageScope: string[];
   tupleStore: MultiTupleStore<TupleIndex>;
   clock: Clock;
   tenantId: string;
-  hooks: TripleStoreHooks;
-  reactivity: MultiTupleReactivity;
+  readonly hooks: TripleStoreHooks;
+  private _inheritedHooks: TripleStoreHooks;
+  private _ownHooks: TripleStoreHooks;
 
   constructor({
-    storage,
-    stores,
     tenantId,
     clock,
     reactivity,
     storageScope = [],
     enableGarbageCollection = false,
-  }: {
-    storage?:
-      | (TupleStorageApi | AsyncTupleStorageApi)
-      | Record<string, TupleStorageApi | AsyncTupleStorageApi>;
-    stores?: Record<
-      string,
-      AsyncTupleDatabaseClient<WithTenantIdPrefix<TupleIndex>>
-    >;
+    ...opts
+  }: (
+    | {
+        storage:
+          | (TupleStorageApi | AsyncTupleStorageApi)
+          | Record<StoreKeys, TupleStorageApi | AsyncTupleStorageApi>;
+      }
+    | {
+        stores: Record<
+          StoreKeys,
+          AsyncTupleDatabaseClient<WithTenantIdPrefix<TupleIndex>>
+        >;
+      }
+    | {
+        tupleStore: MultiTupleStore<TupleIndex>;
+      }
+  ) & {
     reactivity?: MultiTupleReactivity;
     tenantId?: string;
     storageScope?: string[];
     clock?: Clock;
     enableGarbageCollection?: boolean;
+    hooks?: TripleStoreHooks;
   }) {
+    this._inheritedHooks = opts.hooks ?? {
+      beforeCommit: [],
+      beforeInsert: [],
+      afterCommit: [],
+    };
+    this._ownHooks = {
+      beforeCommit: [],
+      beforeInsert: [],
+      afterCommit: [],
+    };
+    this.hooks = {
+      beforeCommit: MirroredArray(
+        this._inheritedHooks.beforeCommit,
+        this._ownHooks.beforeCommit
+      ),
+      beforeInsert: MirroredArray(
+        this._inheritedHooks.beforeInsert,
+        this._ownHooks.beforeInsert
+      ),
+      afterCommit: MirroredArray(
+        this._inheritedHooks.afterCommit,
+        this._ownHooks.afterCommit
+      ),
+    };
     this.hooks = {
       beforeCommit: [],
       beforeInsert: [],
       afterCommit: [],
     };
-    if (!stores && !storage)
-      throw new TripleStoreOptionsError(
-        'Must provide either storage or stores'
-      );
-    if (stores && storage)
-      throw new TripleStoreOptionsError(
-        'Cannot provide both storage and stores'
-      );
 
     this.storageScope = storageScope;
-    let normalizedStores;
-    if (stores) {
-      normalizedStores = stores;
+
+    // Server side database should provide a tenantId (project id)
+    this.tenantId = tenantId ?? 'client';
+
+    if ('tupleStore' in opts) {
+      this.tupleStore = opts.tupleStore;
     } else {
-      const confirmedStorage = storage!;
-      normalizedStores = isTupleStorage(confirmedStorage)
-        ? {
+      if (!('stores' in opts) && !('storage' in opts)) {
+        throw new TripleStoreOptionsError(
+          'Must provide either storage or stores'
+        );
+      }
+      let normalizedStores;
+      if ('stores' in opts) {
+        normalizedStores = opts.stores;
+      } else {
+        if (isTupleStorage(opts.storage)) {
+          normalizedStores = {
             primary: new AsyncTupleDatabaseClient<
               WithTenantIdPrefix<TupleIndex>
-            >(new AsyncTupleDatabase(confirmedStorage)),
-          }
-        : Object.fromEntries(
-            Object.entries(confirmedStorage).map(([k, v]) => [
+            >(new AsyncTupleDatabase(opts.storage)),
+          };
+        } else {
+          normalizedStores = Object.fromEntries(
+            Object.entries(opts.storage).map(([k, v]) => [
               k,
               new AsyncTupleDatabaseClient<WithTenantIdPrefix<TupleIndex>>(
                 new AsyncTupleDatabase(v)
               ),
             ])
           );
+        }
+      }
+      this.tupleStore = new MultiTupleStore<WithTenantIdPrefix<TupleIndex>>({
+        storage: normalizedStores,
+      }).subspace([this.tenantId]) as MultiTupleStore<TupleIndex>;
     }
-    // Server side database should provide a tenantId (project id)
-    this.stores = normalizedStores;
-    this.tenantId = tenantId ?? 'client';
-    this.reactivity = reactivity ?? new MultiTupleReactivity();
-    this.tupleStore = new MultiTupleStore<WithTenantIdPrefix<TupleIndex>>({
-      storage: normalizedStores,
-      reactivity: this.reactivity,
-    }).subspace([this.tenantId]) as MultiTupleStore<TupleIndex>;
 
     this.clock = clock ?? new MemoryClock();
     this.clock.assignToStore(this);
 
-    this.tupleStore.beforeCommit(addIndexesToTransaction);
+    // this.tupleStore.beforeCommit(addIndexesToTransaction);
 
     if (enableGarbageCollection) {
       this.afterCommit(
@@ -357,10 +390,10 @@ export class TripleStore implements TripleStoreApi {
   async transact<Output>(
     callback: (tx: TripleStoreTransaction) => Promise<Output>,
     scope?: StorageScope
-  ) {
-    let isCanceled = false;
+  ): Promise<TransactionResult<Output>> {
     const { tx, output } = await this.tupleStore.autoTransact(
       async (tupleTx) => {
+        tupleTx.beforeCommit(addIndexesToTransaction);
         tupleTx.beforeScan(async (args, tx) => {
           // We scan when checking write rules and repeated indexing is a bottleneck on large inserts
           // This is a bandaid fix, but we should try to prevent repeated indexing
@@ -370,15 +403,14 @@ export class TripleStore implements TripleStoreApi {
         const tx = new TripleStoreTransaction({
           tupleTx: tupleTx,
           clock: this.clock,
-          hooks: copyHooks(this.hooks),
+          hooks: this.hooks,
         });
         let output: Output | undefined;
-        if (isCanceled) return { tx, output };
+        if (tx.isCancelled) return { tx, output };
         try {
           output = await callback(tx);
         } catch (e) {
           if (e instanceof WriteRuleError) {
-            isCanceled = true;
             await tx.cancel();
           }
           throw e;
@@ -392,20 +424,20 @@ export class TripleStore implements TripleStoreApi {
         ? JSON.stringify(tx.assignedTimestamp)
         : undefined,
       output,
+      isCancelled: tx.isCancelled,
     };
   }
 
-  setStorageScope(storageKeys: (keyof typeof this.stores)[]) {
+  setStorageScope(storageKeys: StoreKeys[]) {
     return new TripleStore({
-      stores: Object.fromEntries(
-        Object.entries(this.stores).filter(([storagekey]) =>
-          storageKeys.includes(storagekey as keyof typeof this.stores)
-        )
-      ),
+      tupleStore: this.tupleStore.withStorageScope({
+        read: [...storageKeys],
+        write: [...storageKeys],
+      }),
       storageScope: storageKeys,
       tenantId: this.tenantId,
       clock: this.clock,
-      reactivity: this.reactivity,
+      hooks: this.hooks,
     });
   }
 

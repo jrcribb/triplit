@@ -1,5 +1,226 @@
 # @triplit/client
 
+## 0.3.82
+
+### Patch Changes
+
+- Updated dependencies [c8c955a5]
+  - @triplit/db@0.3.64
+
+## 0.3.81
+
+### Patch Changes
+
+- Updated dependencies [48bdee2]
+  - @triplit/db@0.3.63
+
+## 0.3.80
+
+### Patch Changes
+
+- 40e2e50: add transaction option manualSchemaRefresh
+- Updated dependencies [40e2e50]
+  - @triplit/db@0.3.62
+
+## 0.3.79
+
+### Patch Changes
+
+- 1c0bdf7: Fixup transaction types
+- Updated dependencies [c78aa65]
+- Updated dependencies [6ccbbd5]
+  - @triplit/db@0.3.61
+
+## 0.3.78
+
+### Patch Changes
+
+- Updated dependencies [41692f0]
+  - @triplit/db@0.3.60
+
+## 0.3.77
+
+### Patch Changes
+
+- Updated dependencies [7c5105d]
+- Updated dependencies [6c24a2c]
+  - @triplit/db@0.3.59
+
+## 0.3.76
+
+### Patch Changes
+
+- Updated dependencies [aa9e562]
+- Updated dependencies [2decc7f]
+  - @triplit/db@0.3.58
+
+## 0.3.75
+
+### Patch Changes
+
+- f636418: add serverUrl option to HttpClient
+
+## 0.3.74
+
+### Patch Changes
+
+- 5353395: Redirect logs from SharedWorker to console in tab
+- eb66825: Properly type worker client .transact()
+- Updated dependencies [eb66825]
+  - @triplit/db@0.3.57
+
+## 0.3.73
+
+### Patch Changes
+
+- c3fb0be: Fix executing update callbacks in transaction in worker
+- Updated dependencies [c3fb0be]
+  - @triplit/db@0.3.56
+
+## 0.3.72
+
+### Patch Changes
+
+- 607e020: Export Roles type
+
+## 0.3.71
+
+### Patch Changes
+
+- Updated dependencies [b65160e]
+  - @triplit/db@0.3.55
+
+## 0.3.70
+
+### Patch Changes
+
+- 2d2b360: add JSDoc comments
+- Updated dependencies [55ae69b]
+- Updated dependencies [a8c6f75]
+  - @triplit/db@0.3.54
+
+## 0.3.69
+
+### Patch Changes
+
+- 199684b: ensure query builder can be built incrementally without overwritinga
+- Updated dependencies [784b82f]
+- Updated dependencies [199684b]
+  - @triplit/db@0.3.53
+
+## 0.3.68
+
+### Patch Changes
+
+- 20b8bca: Use copy of query when mutating limits during pagination
+- Updated dependencies [546bda7]
+  - @triplit/db@0.3.52
+
+## 0.3.67
+
+### Patch Changes
+
+- 6914e65: add optional messagePort parameter to WorkerClient constructor
+
+## 0.3.66
+
+### Patch Changes
+
+- Updated dependencies [1b128fb]
+  - @triplit/db@0.3.51
+
+## 0.3.65
+
+### Patch Changes
+
+- Updated dependencies [76b3751]
+  - @triplit/db@0.3.50
+
+## 0.3.64
+
+### Patch Changes
+
+- Updated dependencies [0e9b4c4]
+- Updated dependencies [b68787d]
+  - @triplit/db@0.3.49
+
+## 0.3.63
+
+### Patch Changes
+
+- Updated dependencies [fddc883]
+  - @triplit/db@0.3.48
+
+## 0.3.62
+
+### Patch Changes
+
+- d7b2190: add `clear` method to client and workerclient
+
+## 0.3.61
+
+### Patch Changes
+
+- Updated dependencies [753a72c]
+  - @triplit/db@0.3.47
+
+## 0.3.60
+
+### Patch Changes
+
+- 98a0adf: Improve error logging
+- 922d93a: Fix websocket check to be even safer
+- Updated dependencies [98a0adf]
+- Updated dependencies [7fd83f6]
+  - @triplit/db@0.3.46
+
+## 0.3.59
+
+### Patch Changes
+
+- fef88d1: Fix connection status listening when using web worker client
+
+## 0.3.58
+
+### Patch Changes
+
+- 353976a: deprecate RemoteClient and client.remote in favor of HttpClient and client.http
+- e531de6: Fixup client query builder types so syncStatus() is always accessible
+- Updated dependencies [2c71802]
+  - @triplit/db@0.3.45
+
+## 0.3.57
+
+### Patch Changes
+
+- d17db78: Fix connection status tracking in certain environments like Vite
+
+## 0.3.56
+
+### Patch Changes
+
+- 7fac5a4: various types fixes and refactors
+- 42c4d0f: Properly unalias Entity helper type
+- Updated dependencies [f6468bf]
+- Updated dependencies [7fac5a4]
+  - @triplit/db@0.3.44
+
+## 0.3.55
+
+### Patch Changes
+
+- 3664595: ts fixes
+
+## 0.3.54
+
+### Patch Changes
+
+- 2c2a4d3: Improve type intellisense readability
+- 352b619: refactor fetchById to use fetchOne and simplify params, add id() to builder
+- Updated dependencies [2c2a4d3]
+- Updated dependencies [352b619]
+  - @triplit/db@0.3.43
+
 ## 0.3.53
 
 ### Patch Changes

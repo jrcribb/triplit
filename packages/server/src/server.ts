@@ -1,37 +1,38 @@
 import WS, { WebSocketServer } from 'ws';
 import express from 'express';
-import { DB, DBConfig, DurableClock, TriplitError } from '@triplit/db';
-import { MemoryBTreeStorage as MemoryStorage } from '@triplit/db/storage/memory-btree';
-import { SQLiteTupleStorage as SqliteStorage } from '@triplit/db/storage/sqlite';
+import { DB, DBConfig, DurableClock, Storage, TriplitError } from '@triplit/db';
 import {
   MalformedMessagePayloadError,
   RateLimitExceededError,
 } from '@triplit/server-core/errors';
 import cors from 'cors';
 import { useHttpToken, readWSToken } from './middleware/token-reader.js';
-import { rateLimiterMiddlewareWs } from './middleware/rate-limiter.js';
 import url from 'url';
 import {
   Server as TriplitServer,
   ServerCloseReason,
   ClientSyncMessage,
   ParseResult,
-  ParsedToken,
 } from '@triplit/server-core';
-import { parseAndValidateToken } from '@triplit/server-core/token';
+import { parseAndValidateToken, ProjectJWT } from '@triplit/server-core/token';
 import { logger } from './logger.js';
 import { Route } from '@triplit/server-core/triplit-server';
-import path from 'path';
 import multer from 'multer';
 import * as Sentry from '@sentry/node';
-// @ts-ignore
-import pjson from '../package.json' assert { type: 'json' };
-import { createRequire } from 'node:module';
+import {
+  StoreKeys,
+  defaultArrayStorage,
+  defaultBTreeStorage,
+  defaultFileStorage,
+  defaultLMDBStorage,
+  defaultLevelDBStorage,
+  defaultMemoryStorage,
+  defaultSQLiteStorage,
+} from './storage.js';
+import path from 'path';
+import { createRequire } from 'module';
 
-const require = createRequire(import.meta.url);
 const upload = multer();
-// ESM override for __dirname
-const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
 
 function parseClientMessage(
   message: WS.RawData
@@ -46,33 +47,25 @@ function parseClientMessage(
   }
 }
 
-// Set up database
-
-function setupSqliteStorage() {
-  const dbPath = process.env.LOCAL_DATABASE_URL || __dirname + '/app.db';
-  const sqlite = require('better-sqlite3');
-  const db = sqlite(dbPath);
-  db.exec(`
-    PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = NORMAL;
-    PRAGMA temp_store = memory;
-    PRAGMA mmap_size = 30000000000;
-  `);
-  return new SqliteStorage(db);
-}
-
 export type ServerOptions = {
-  storage?: 'sqlite' | 'memory';
+  storage?: StoreKeys | Storage | (() => Storage);
   dbOptions?: DBConfig<any>;
   watchMode?: boolean;
   verboseLogs?: boolean;
 };
-
 function initSentry() {
   if (process.env.SENTRY_DSN) {
+    // Warning: this is not bundler friendly
+    // Adding this with node 22 dropping support for assert (https://v8.dev/features/import-attributes#deprecation-and-eventual-removal-of-assert), preferring 'with'
+    // Issue: https://github.com/nodejs/node/issues/51622
+    // TODO: properly import package.json so in a way that works with bundlers, typescript, and all versions of node
+    // You may also need to upgrade typescript to support 'with' syntax
+    const require = createRequire(import.meta.url);
+    const __dirname = path.dirname(url.fileURLToPath(import.meta.url));
+    const packageDotJson = require(path.join(__dirname, '../package.json'));
     Sentry.init({
       dsn: process.env.SENTRY_DSN,
-      release: pjson.version,
+      release: packageDotJson.version,
     });
   }
 }
@@ -83,9 +76,35 @@ function captureException(e: any) {
   }
 }
 
+function resolveStorageStringOption(storage: StoreKeys): Storage {
+  switch (storage) {
+    case 'file':
+      return defaultFileStorage();
+    case 'leveldb':
+      return defaultLevelDBStorage();
+    case 'lmdb':
+      return defaultLMDBStorage();
+    case 'memory':
+      return defaultMemoryStorage();
+    case 'memory-array':
+      return defaultBTreeStorage();
+    case 'memory-btree':
+      return defaultArrayStorage();
+    case 'sqlite':
+      return defaultSQLiteStorage();
+    default:
+      throw new TriplitError(`Invalid storage option: ${storage}`);
+  }
+}
+
 export function createServer(options?: ServerOptions) {
-  const dbSource =
-    options?.storage === 'sqlite' ? setupSqliteStorage() : new MemoryStorage();
+  const dbSource = !!options?.storage
+    ? typeof options.storage === 'string'
+      ? resolveStorageStringOption(options.storage)
+      : typeof options.storage === 'function'
+      ? options.storage()
+      : options.storage
+    : undefined;
   if (options?.verboseLogs) logger.verbose = true;
   const triplitServers = new Map<string, TriplitServer>();
 
@@ -217,15 +236,6 @@ export function createServer(options?: ServerOptions) {
           }
         );
 
-      // Assign for usage in catch
-      const overLimit = !(await rateLimiterMiddlewareWs(socket));
-      if (overLimit) {
-        return sendErrorMessage(
-          socket,
-          parsedMessage,
-          new RateLimitExceededError()
-        );
-      }
       logger.logMessage('received', parsedMessage);
       session!.dispatchCommand(parsedMessage!);
     });
@@ -292,8 +302,8 @@ export function createServer(options?: ServerOptions) {
     const { schema, client, syncSchema, token: rawToken } = req.query;
     const { data: token, error } = await parseAndValidateToken(
       rawToken as string,
-      process.env.JWT_SECRET!,
-      process.env.PROJECT_ID!,
+      process.env.JWT_SECRET,
+      process.env.PROJECT_ID,
       {
         payloadPath: process.env.CLAIMS_PATH,
         externalSecret: process.env.EXTERNAL_JWT_SECRET,
@@ -361,7 +371,7 @@ export function createServer(options?: ServerOptions) {
 
     server.on('upgrade', (request, socket, head) => {
       wss.handleUpgrade(request, socket, head, async (socket) => {
-        let token: ParsedToken | undefined = undefined;
+        let token: ProjectJWT | undefined = undefined;
         try {
           const tokenRes = await readWSToken(request);
           if (tokenRes.error) throw tokenRes.error;

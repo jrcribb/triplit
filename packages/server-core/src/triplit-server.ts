@@ -1,5 +1,4 @@
 import { DB as TriplitDB, TriplitError } from '@triplit/db';
-import { ParsedToken } from '@triplit/types/sync';
 import {
   Connection,
   ConnectionOptions,
@@ -10,6 +9,7 @@ import {
 import type { ServerResponse as ServerResponseType } from './session.js';
 import { isTriplitError } from './utils.js';
 import { Logger, NullLogger } from './logging.js';
+import { ProjectJWT } from './token.js';
 
 /**
  * Represents a Triplit server for a specific tenant.
@@ -19,7 +19,7 @@ export class Server {
 
   constructor(public db: TriplitDB<any>, public logger: Logger = NullLogger) {}
 
-  createSession(token: ParsedToken) {
+  createSession(token: ProjectJWT) {
     return new Session(this, token);
   }
 
@@ -27,7 +27,7 @@ export class Server {
     return this.connections.get(clientId);
   }
 
-  openConnection(token: ParsedToken, connectionOptions: ConnectionOptions) {
+  openConnection(token: ProjectJWT, connectionOptions: ConnectionOptions) {
     const session = this.createSession(token);
     const connection = session.createConnection(connectionOptions);
     this.connections.set(connectionOptions.clientId, connection);
@@ -41,7 +41,7 @@ export class Server {
   async handleRequest(
     route: Route,
     maybeParams: any,
-    token: ParsedToken
+    token: ProjectJWT
   ): Promise<ServerResponseType> {
     const params: any = maybeParams || {};
     let resp: ServerResponseType;
@@ -51,6 +51,7 @@ export class Server {
       const session = this.createSession(token);
       const firstSegment = route[0];
       switch (firstSegment) {
+        case 'query-triples':
         case 'queryTriples':
           resp = await session.queryTriples(params);
           break;
@@ -140,18 +141,19 @@ export class Server {
 }
 
 const TRIPLIT_SEGEMENTS = [
-  'queryTriples',
+  'bulk-insert',
   'clear',
-  'stats',
-  'override-schema',
-  'schema',
+  'delete',
+  'delete-triples',
   'fetch',
   'insert',
-  'bulk-insert',
   'insert-triples',
-  'delete-triples',
+  'override-schema',
+  'queryTriples',
+  'query-triples',
+  'schema',
+  'stats',
   'update',
-  'delete',
 ] as const;
 
 const MIGRATION_SEGMENTS = ['status', 'apply'] as const;

@@ -3,6 +3,7 @@
 import {
   ChangeEvent,
   ForwardedRef,
+  Fragment,
   RefObject,
   forwardRef,
   useCallback,
@@ -141,6 +142,7 @@ function MessageList({ convoId }: { convoId: string }) {
     hasMore,
     loadMore,
   } = useMessages(convoId)
+
   const messageArray = useMemo(() => {
     if (!messages) return []
     return Array.from(messages).map(([_id, message]) => message)
@@ -201,9 +203,8 @@ function MessageList({ convoId }: { convoId: string }) {
               ).toLocaleDateString() !==
                 new Date(message.created_at).toLocaleDateString()
             return (
-              <>
+              <Fragment key={message.id}>
                 <ChatBubble
-                  key={message.id}
                   message={message}
                   delivered={true}
                   isOwnMessage={isOwnMessage}
@@ -221,7 +222,7 @@ function MessageList({ convoId }: { convoId: string }) {
                     })}
                   </div>
                 )}
-              </>
+              </Fragment>
             )
           })
         )}

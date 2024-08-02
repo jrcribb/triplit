@@ -1,5 +1,47 @@
 # create-triplit-app
 
+## 0.0.19
+
+### Patch Changes
+
+- c118a1d: add angular to create-triplit-app
+
+## 0.0.18
+
+### Patch Changes
+
+- 28e4744: fixup vue template instructions
+
+## 0.0.17
+
+### Patch Changes
+
+- e9fa966: add Vue template
+
+## 0.0.16
+
+### Patch Changes
+
+- 77f68b2: rename gitignore in build and executions
+
+## 0.0.15
+
+### Patch Changes
+
+- 0538b79: Include gitignore in published templates
+
+## 0.0.12
+
+### Patch Changes
+
+- 3a4f79d: fixup copy process
+
+## 0.0.11
+
+### Patch Changes
+
+- e9f0a61: Add new react and svelte templates
+
 ## 0.0.9
 
 ### Patch Changes

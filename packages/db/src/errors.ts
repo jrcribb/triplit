@@ -2,6 +2,7 @@ import {
   COLLECTION_TYPE_KEYS,
   VALUE_TYPE_KEYS,
 } from './data-types/serialization.js';
+import { SessionRole } from './schema/permissions.js';
 import { Models } from './schema/types';
 
 export const STATUS_CODES = {
@@ -48,7 +49,7 @@ export class TriplitError extends Error {
   toJSON() {
     return {
       name: this.name,
-      message: this.message,
+      message: this.baseMessage,
       status: this.status,
       contextMessage: this.contextMessage,
     };
@@ -305,6 +306,23 @@ export class WriteRuleError extends TriplitError {
   }
 }
 
+export class WritePermissionError extends TriplitError {
+  constructor(
+    collection: string,
+    entityId: string,
+    operation: string,
+    sessionRoles: SessionRole[],
+    ...args: any[]
+  ) {
+    super(...args);
+    this.name = 'WritePermissionError';
+    this.baseMessage = `Write to collection '${collection}' with id '${entityId}' is not permitted. Failed operation: ${operation}. Session roles: [${sessionRoles
+      .map((m) => m.key)
+      .join(', ')}].`;
+    this.status = STATUS_CODES.Unauthorized;
+  }
+}
+
 export class UnrecognizedPropertyInUpdateError extends TriplitError {
   constructor(propPointer: string, value: any, ...args: any[]) {
     super(...args);
@@ -511,5 +529,23 @@ export class InvalidWhereClauseError extends TriplitError {
     this.name = 'InvalidWhereClauseError';
     this.baseMessage = `A where clause has been determined to be invalid.`;
     this.status = STATUS_CODES['Bad Request'];
+  }
+}
+
+export class InvalidSelectClauseError extends TriplitError {
+  constructor(...args: any[]) {
+    super(...args);
+    this.name = 'InvalidSelectClauseError';
+    this.baseMessage = `The select clause of this query has been determined to be invalid.`;
+    this.status = STATUS_CODES['Bad Request'];
+  }
+}
+
+export class QueryNotPreparedError extends TriplitError {
+  constructor(...args: any[]) {
+    super(...args);
+    this.name = 'QueryNotPreparedError';
+    this.baseMessage = `The query has not been prepared yet. This indicates a bug. Please inform the Triplit team.`;
+    this.status = STATUS_CODES['Internal Server Error'];
   }
 }

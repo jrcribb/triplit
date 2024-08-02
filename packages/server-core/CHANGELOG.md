@@ -1,5 +1,174 @@
 # @triplit/server-core
 
+## 0.3.67
+
+### Patch Changes
+
+- Updated dependencies [c8c955a5]
+  - @triplit/db@0.3.64
+
+## 0.3.66
+
+### Patch Changes
+
+- Updated dependencies [48bdee2]
+  - @triplit/db@0.3.63
+
+## 0.3.65
+
+### Patch Changes
+
+- Updated dependencies [40e2e50]
+  - @triplit/db@0.3.62
+
+## 0.3.64
+
+### Patch Changes
+
+- Updated dependencies [c78aa65]
+- Updated dependencies [6ccbbd5]
+  - @triplit/db@0.3.61
+
+## 0.3.63
+
+### Patch Changes
+
+- Updated dependencies [41692f0]
+  - @triplit/db@0.3.60
+
+## 0.3.62
+
+### Patch Changes
+
+- Updated dependencies [7c5105d]
+- Updated dependencies [6c24a2c]
+  - @triplit/db@0.3.59
+
+## 0.3.61
+
+### Patch Changes
+
+- Updated dependencies [aa9e562]
+- Updated dependencies [2decc7f]
+  - @triplit/db@0.3.58
+
+## 0.3.60
+
+### Patch Changes
+
+- Updated dependencies [eb66825]
+  - @triplit/db@0.3.57
+
+## 0.3.59
+
+### Patch Changes
+
+- Updated dependencies [c3fb0be]
+  - @triplit/db@0.3.56
+
+## 0.3.58
+
+### Patch Changes
+
+- b410f2c: Remove (now) erroneous check on user id claim
+
+## 0.3.57
+
+### Patch Changes
+
+- Updated dependencies [b65160e]
+  - @triplit/db@0.3.55
+
+## 0.3.56
+
+### Patch Changes
+
+- Updated dependencies [55ae69b]
+- Updated dependencies [a8c6f75]
+  - @triplit/db@0.3.54
+
+## 0.3.55
+
+### Patch Changes
+
+- Updated dependencies [784b82f]
+- Updated dependencies [199684b]
+  - @triplit/db@0.3.53
+
+## 0.3.54
+
+### Patch Changes
+
+- Updated dependencies [546bda7]
+  - @triplit/db@0.3.52
+
+## 0.3.53
+
+### Patch Changes
+
+- Updated dependencies [1b128fb]
+  - @triplit/db@0.3.51
+
+## 0.3.52
+
+### Patch Changes
+
+- Updated dependencies [76b3751]
+  - @triplit/db@0.3.50
+
+## 0.3.51
+
+### Patch Changes
+
+- Updated dependencies [0e9b4c4]
+- Updated dependencies [b68787d]
+  - @triplit/db@0.3.49
+
+## 0.3.50
+
+### Patch Changes
+
+- Updated dependencies [fddc883]
+  - @triplit/db@0.3.48
+
+## 0.3.49
+
+### Patch Changes
+
+- Updated dependencies [753a72c]
+  - @triplit/db@0.3.47
+
+## 0.3.48
+
+### Patch Changes
+
+- Updated dependencies [98a0adf]
+- Updated dependencies [7fd83f6]
+  - @triplit/db@0.3.46
+
+## 0.3.47
+
+### Patch Changes
+
+- Updated dependencies [2c71802]
+  - @triplit/db@0.3.45
+
+## 0.3.46
+
+### Patch Changes
+
+- Updated dependencies [f6468bf]
+- Updated dependencies [7fac5a4]
+  - @triplit/db@0.3.44
+
+## 0.3.45
+
+### Patch Changes
+
+- Updated dependencies [2c2a4d3]
+- Updated dependencies [352b619]
+  - @triplit/db@0.3.43
+
 ## 0.3.44
 
 ### Patch Changes

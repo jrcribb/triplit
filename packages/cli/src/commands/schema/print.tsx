@@ -1,12 +1,16 @@
 import { Command } from '../../command.js';
 import * as Flag from '../../flags.js';
 import { serverRequesterMiddleware } from '../../middleware/add-server-requester.js';
-import { JSONToSchema, schemaToJSON } from '@triplit/db';
-import { schemaFileContentFromSchema } from '../migrate/codegen.js';
+import {
+  JSONToSchema,
+  schemaToJSON,
+  exportSchemaAsJSONSchema,
+} from '@triplit/db';
 import { format as formatFile } from 'prettier';
 import { projectSchemaMiddleware } from '../../middleware/project-schema.js';
+import { schemaFileContentFromSchema } from '../../schema.js';
 
-const DISPLAY_FORMATS = ['json', 'file'] as const;
+const DISPLAY_FORMATS = ['json', 'typescript', 'file', 'json-schema'] as const;
 type SchemaFormat = (typeof DISPLAY_FORMATS)[number];
 
 export default Command({
@@ -15,39 +19,30 @@ export default Command({
     location: Flag.Enum({
       char: 'l',
       description: 'Location of the schema file',
-      options: ['local', 'remote', 'both'],
-      default: 'both',
-    }),
-    raw: Flag.Boolean({
-      char: 'r',
-      description:
-        'Print exclusively the requested schema (useful for exporting to file)',
+      options: ['local', 'remote'],
+      default: 'remote',
     }),
     format: Flag.Enum({
       char: 'f',
       description: 'Format of the output',
       options: DISPLAY_FORMATS,
-      default: 'json',
+      default: 'typescript',
     }),
   },
   middleware: [serverRequesterMiddleware, projectSchemaMiddleware],
   run: async ({ flags, ctx }) => {
-    const alwaysLog = console.log;
-    if (flags.raw) console.log = () => {};
-    const locations =
-      flags.location === 'both' ? ['local', 'remote'] : [flags.location];
-    if (locations.includes('local')) {
-      console.log('Local schema:');
+    const location = flags.location;
+    if (location === 'local') {
       const schema = ctx.schema;
+      const roles = ctx.roles;
       if (!schema) return;
       const formattedSchema = await formatSchemaForDisplay(
-        { collections: schema, version: 0 },
+        { collections: schema, roles, version: 0 },
         flags.format as SchemaFormat
       );
-      alwaysLog(formattedSchema);
+      console.log(formattedSchema);
     }
-    if (locations.includes('remote')) {
-      console.log('Remote schema:');
+    if (location === 'remote') {
       const serverSchemaResponse = await ctx.requestServer('POST', '/schema', {
         format: 'json',
       });
@@ -60,7 +55,7 @@ export default Command({
           schema,
           flags.format as SchemaFormat
         );
-        alwaysLog(formattedSchema);
+        console.log(formattedSchema);
       } else {
         throw new Error('Unexpected response from server');
       }
@@ -73,9 +68,16 @@ async function formatSchemaForDisplay(
   format: SchemaFormat
 ): Promise<string> {
   if (format === 'json') {
-    return JSON.stringify(schemaToJSON(schema).collections, null, 2);
+    return JSON.stringify(schemaToJSON(schema), null, 2);
   }
-  if (format === 'file') {
+  if (format === 'json-schema') {
+    return JSON.stringify(
+      exportSchemaAsJSONSchema(schema.collections),
+      null,
+      2
+    );
+  }
+  if (format === 'file' || format === 'typescript') {
     return await formatFile(schemaFileContentFromSchema(schema), {
       parser: 'typescript',
     });

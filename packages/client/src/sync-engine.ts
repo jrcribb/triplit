@@ -10,7 +10,7 @@ import DB, {
   Timestamp,
   TripleStoreApi,
 } from '@triplit/db';
-import { SyncOptions, TriplitClient } from './triplit-client.js';
+import { SyncOptions, TriplitClient } from './client/triplit-client.js';
 import { Subject } from 'rxjs';
 import {
   ConnectionStatus,
@@ -29,7 +29,7 @@ import {
   RemoteSyncFailedError,
 } from './errors.js';
 import { Value } from '@sinclair/typebox/value';
-import { ClientFetchResult, ClientQuery } from './utils/query.js';
+import { ClientFetchResult, ClientQuery } from './client/types';
 import { Logger } from '@triplit/types/logger';
 
 type OnMessageReceivedCallback = (message: ServerSyncMessage) => void;

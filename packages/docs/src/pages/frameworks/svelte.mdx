@@ -3,17 +3,26 @@ description: Learn how use Svelte bindings for the Triplit client in your app.
 ---
 
 import { Tabs, Tab, Callout } from 'nextra-theme-docs';
+import CreateTriplitAppTabs from '../../components/CreateTriplitAppTabs.mdx';
 
 # Svelte
 
-<Callout type="warning">
+<Callout emoji="👉">
   In anticipation of the release of Svelte 5, Triplit's Svelte bindings use
   [runes](https://svelte.dev/blog/runes). You must be using one of the
   pre-release versions of Svelte 5. You can force the compiler into "runes mode"
   [like this](https://svelte-5-preview.vercel.app/docs/runes#how-to-opt-in).
 </Callout>
 
-If you are using Svelte, you can use the hooks provided by `@triplit/svelte`:
+### New projects
+
+The fast way to get started with Triplit is to use Create Triplit App which will scaffold a SvelteKit application with Triplit. Choose `Svelte` when prompted for the frontend framework.
+
+<CreateTriplitAppTabs />
+
+### Existing projects
+
+If you have an existing Svelte or Svelte project, you can add the hooks provided by `@triplit/svelte`:
 
 <Tabs items={['npm', 'pnpm', 'yarn', 'bun']}>
 
@@ -56,6 +65,20 @@ export const client = new TriplitClient({
 ```
 
 The suggested pattern is to create a client instance in a module and import it into your components.
+
+### `vite.config.ts`
+
+With the default SvelteKit configuration Vite will not be able to bundle files outside of the `src` or `node_modules` directory. To allow Vite to bundle the files in the `triplit` directory created with `triplit init`, you can add the following configuration to your `vite.config.ts` file:
+
+```ts filename="vite.config.ts" {6} copy
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  plugins: [sveltekit()],
+  server: { fs: { allow: ['./triplit'] } },
+});
+```
 
 ## useQuery
 

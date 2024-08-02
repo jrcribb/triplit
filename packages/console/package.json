@@ -1,23 +1,29 @@
 {
   "name": "@triplit/console",
-  "version": "0.3.58",
-  "type": "module",
+  "version": "0.3.88",
   "files": [
     "dist"
   ],
+  "type": "module",
+  "module": "./dist/components/console.js",
+  "types": "./dist/components/index.d.ts",
+  "main": "./dist/components/console.js",
   "exports": {
     ".": {
-      "import": "./dist/index.js"
+      "import": "./dist/components/console.js",
+      "types": "./dist/components/index.d.ts"
     }
   },
   "scripts": {
     "dev": "vite",
-    "build": "yarn build:web && yarn build:server",
-    "build:watch": "yarn build:web:watch & yarn build:server:watch",
+    "build": "yarn build:web && yarn build:server && yarn build:components",
+    "build:watch": "yarn build:web:watch & yarn build:server:watch & yarn build:components:watch",
     "build:web": "vite build --outDir dist/public",
     "build:web:watch": "vite build --outDir dist/public",
     "build:server": "yarn tsx build-server.ts",
     "build:server:watch": "yarn tsx watch build-server.ts",
+    "build:components": "vite build --config vite.config.components.ts --outDir dist/components",
+    "build:components:watch": "vite build -w --config vite.config.components.ts --outDir dist/components",
     "build:types": "tsc -p tsconfig.server.json",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
@@ -31,7 +37,6 @@
     "@triplit/client": "workspace:^",
     "@triplit/db": "workspace:^",
     "@triplit/react": "workspace:^",
-    "@triplit/server-core": "workspace:^",
     "jotai": "^2.4.2",
     "lucide-react": "^0.276.0",
     "nanoid": "^4.0.2",
@@ -40,7 +45,8 @@
     "react-router-dom": "^6.17.0",
     "superjson": "^2.2.1",
     "tailwind-merge": "^1.14.0",
-    "tailwindcss-animate": "^1.0.7"
+    "tailwindcss-animate": "^1.0.7",
+    "turbo": "^2.0.4"
   },
   "devDependencies": {
     "@triplit/ui": "workspace:^",
@@ -60,6 +66,7 @@
     "tsx": "^4.7.1",
     "typescript": "^5.2.2",
     "vite": "^5.1.5",
+    "vite-plugin-dts": "^3.9.1",
     "vite-tsconfig-paths": "^4.2.0"
   }
 }

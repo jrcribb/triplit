@@ -1,9 +1,7 @@
-import { Model, Models } from './types';
-import { Value as TBValue, ValuePointer } from '@sinclair/typebox/value';
+import { Model, Models, StoreSchema } from './types';
+import { Value as TBValue, ValuePointer, Diff } from '@sinclair/typebox/value';
 import { UserTypeOptions } from '../data-types/serialization.js';
-import { StoreSchema } from '../db-helpers.js';
 import { DBTransaction } from '../db-transaction.js';
-import DB from '../db.js';
 
 type ChangeToAttribute =
   | {
@@ -22,6 +20,7 @@ type ChangeToAttribute =
         options: any;
         optional: boolean;
       };
+      isNewCollection: boolean;
     }
   | {
       type: 'delete';
@@ -37,11 +36,39 @@ type AttributeDiff = {
 } & ChangeToAttribute;
 
 type CollectionAttributeDiff = {
+  _diff: 'collectionAttribute';
   collection: string;
 } & AttributeDiff;
+
+type CollectionRulesDiff = {
+  _diff: 'collectionRules';
+  collection: string;
+};
+
+type CollectionPermissionsDiff = {
+  _diff: 'collectionPermissions';
+  collection: string;
+};
+
+type RolesDiff = {
+  _diff: 'roles';
+};
+
+type Diff =
+  | CollectionAttributeDiff
+  | CollectionRulesDiff
+  | CollectionPermissionsDiff
+  | RolesDiff;
+
 // type AttributeDiff = AttributeChange;
 
-export function diffCollections(
+function isCollectionAttributeDiff(
+  diff: Diff
+): diff is CollectionAttributeDiff {
+  return diff._diff === 'collectionAttribute';
+}
+
+function diffCollectionSchemas(
   modelA: Model<any> | undefined,
   modelB: Model<any> | undefined,
   attributePathPrefix: string[] = []
@@ -53,7 +80,6 @@ export function diffCollections(
     ...Object.keys(propertiesA),
     ...Object.keys(propertiesB),
   ]);
-
   const diff: AttributeDiff[] = [];
 
   for (const prop of allProperties) {
@@ -68,6 +94,7 @@ export function diffCollections(
           options: propertiesB[prop].options,
           optional: modelB?.optional?.includes(prop) ?? false,
         },
+        isNewCollection: modelA === undefined,
       });
       continue;
     }
@@ -100,7 +127,7 @@ export function diffCollections(
       ) {
         // console.log('diffing record', propertiesA[prop], propertiesB[prop]);
         diff.push(
-          ...diffCollections(propertiesA[prop], propertiesB[prop], path)
+          ...diffCollectionSchemas(propertiesA[prop], propertiesB[prop], path)
         );
         continue;
       }
@@ -145,8 +172,11 @@ export function diffCollections(
   return diff;
 }
 
-function diffAttributeOptions(attr1: UserTypeOptions, attr2: UserTypeOptions) {
-  const diff: Partial<UserTypeOptions> = {};
+function diffAttributeOptions(
+  attr1: UserTypeOptions & { enum?: string[] },
+  attr2: UserTypeOptions & { enum?: string[] }
+) {
+  const diff: any = {};
   if (attr1.nullable !== attr2.nullable) {
     // TODO: determine how strict we want to be here about false vs. undefined
     diff.nullable = !!attr2.nullable;
@@ -154,31 +184,64 @@ function diffAttributeOptions(attr1: UserTypeOptions, attr2: UserTypeOptions) {
   if (attr1.default !== attr2.default) {
     diff.default = attr2.default;
   }
+  const changedFromAnyToAnEnum = attr2.enum && !attr1.enum;
+  const removedAnEnumOption =
+    attr1.enum &&
+    attr2.enum &&
+    !attr1.enum?.every((val) => attr2.enum?.includes(val));
+  if (changedFromAnyToAnEnum || removedAnEnumOption) {
+    diff.enum = attr2.enum;
+  }
   return diff;
 }
 
 export function diffSchemas(
   schemaA: StoreSchema<Models<any, any>>,
   schemaB: StoreSchema<Models<any, any>>
-): CollectionAttributeDiff[] {
+): Diff[] {
   const allCollections = new Set([
     ...Object.keys(schemaA.collections),
     ...Object.keys(schemaB.collections),
   ]);
-  const diff: CollectionAttributeDiff[] = [];
+  const diff: Diff[] = [];
   for (const collection of allCollections) {
     const collectionA = schemaA.collections[collection];
     const collectionB = schemaB.collections[collection];
+    // Diff schemas
     diff.push(
-      ...diffCollections(collectionA?.schema, collectionB?.schema).map(
-        (change) =>
-          ({
-            collection,
-            ...change,
-          } as CollectionAttributeDiff)
-      )
+      ...diffCollectionSchemas(
+        collectionA?.schema,
+        collectionB?.schema
+      ).map<CollectionAttributeDiff>((change) => ({
+        _diff: 'collectionAttribute',
+        collection,
+        ...change,
+      }))
     );
+    // Diff rules
+    const isRuleDiff = Diff(collectionA?.rules, collectionB?.rules).length > 0;
+    if (isRuleDiff)
+      diff.push({
+        _diff: 'collectionRules',
+        collection,
+      });
+    // Diff permissions
+    const isPermissionDiff =
+      Diff(collectionA?.permissions, collectionB?.permissions).length > 0;
+    if (isPermissionDiff)
+      diff.push({
+        _diff: 'collectionPermissions',
+        collection,
+      });
   }
+
+  // Diff roles
+  const isRoleDiff = Diff(schemaA.roles, schemaB.roles).length > 0;
+  if (isRoleDiff)
+    diff.push({
+      _diff: 'roles',
+    });
+
   return diff;
 }
 
@@ -187,19 +250,23 @@ type ALLOWABLE_DATA_CONSTRAINTS =
   | 'collection_is_empty'
   | 'attribute_is_empty' // undefined
   | 'attribute_has_no_undefined'
-  | 'attribute_has_no_null';
+  | 'attribute_has_no_null'
+  | 'attribute_satisfies_enum';
 
 type BackwardsIncompatibleEdits = {
   issue: string;
   allowedIf: ALLOWABLE_DATA_CONSTRAINTS;
   context: CollectionAttributeDiff;
-  attributeCure: (collection: string, attribute: string[]) => string | null;
+  attributeCure: (
+    collection: string,
+    attribute: string[],
+    enums?: string[]
+  ) => string | null;
 };
 
-export function getBackwardsIncompatibleEdits(
-  schemaDiff: CollectionAttributeDiff[]
-) {
+export function getBackwardsIncompatibleEdits(schemaDiff: Diff[]) {
   return schemaDiff.reduce((acc, curr) => {
+    if (!isCollectionAttributeDiff(curr)) return acc;
     const maybeDangerousEdit = DANGEROUS_EDITS.find((check) =>
       check.matchesDiff(curr)
     );
@@ -277,6 +344,7 @@ const DANGEROUS_EDITS = [
     matchesDiff: (diff: CollectionAttributeDiff) => {
       if (
         diff.type === 'insert' &&
+        !diff.isNewCollection &&
         diff.metadata.optional === false &&
         diff.metadata.type !== 'query'
       )
@@ -298,11 +366,32 @@ const DANGEROUS_EDITS = [
     allowedIf: 'attribute_has_no_null',
     attributeCure: () => null,
   },
+  {
+    description:
+      'added an enum to an attribute or removed an option from an existing enum',
+    matchesDiff: (diff: CollectionAttributeDiff) => {
+      if (diff.type === 'update') {
+        return diff.changes.options.enum !== undefined;
+      }
+      return false;
+    },
+    allowedIf: 'attribute_satisfies_enum',
+    attributeCure: (_collection, attribute, enumArray) =>
+      `revert the change to '${attribute.join(
+        '.'
+      )}' and create a different, optional, attribute with the new enum OR ensure all values of '${attribute.join(
+        '.'
+      )} are in the new enum: ${enumArray}`,
+  },
 ] satisfies {
   allowedIf: ALLOWABLE_DATA_CONSTRAINTS;
   description: string;
   matchesDiff: (diff: CollectionAttributeDiff) => boolean;
-  attributeCure: (collection: string, attribute: string[]) => string | null;
+  attributeCure: (
+    collection: string,
+    attribute: string[],
+    enumArray?: string[]
+  ) => string | null;
 }[];
 
 async function isEditSafeWithExistingData(
@@ -313,7 +402,10 @@ async function isEditSafeWithExistingData(
   return await DATA_CONSTRAINT_CHECKS[allowedIf](
     tx,
     attributeDiff.collection,
-    attributeDiff.attribute
+    attributeDiff.attribute,
+    attributeDiff?.type === 'update'
+      ? attributeDiff.changes.options.enum
+      : undefined
   );
 }
 
@@ -324,7 +416,7 @@ export type PossibleDataViolations = {
 
 export async function getSchemaDiffIssues(
   tx: DBTransaction<any>,
-  schemaDiff: CollectionAttributeDiff[]
+  schemaDiff: Diff[]
 ) {
   const backwardsIncompatibleEdits = getBackwardsIncompatibleEdits(schemaDiff);
   const results = await Promise.all(
@@ -357,7 +449,8 @@ const DATA_CONSTRAINT_CHECKS: Record<
   (
     tx: DBTransaction<any>,
     collection: string,
-    attribute: string[]
+    attribute: string[],
+    enumArray: string[]
   ) => Promise<boolean>
 > = {
   never: async () => false,
@@ -365,6 +458,7 @@ const DATA_CONSTRAINT_CHECKS: Record<
   attribute_is_empty: detectAttributeIsEmpty,
   attribute_has_no_undefined: detectAttributeHasNoUndefined,
   attribute_has_no_null: detectAttributeHasNoNull,
+  attribute_satisfies_enum: detectAttributeSatisfiesEnum,
 };
 
 const DATA_CHANGE_CURES: Record<
@@ -386,7 +480,28 @@ const DATA_CHANGE_CURES: Record<
     `ensure all values of '${attribute.join(
       '.'
     )}' are not null to allow this edit`,
+  attribute_satisfies_enum: (_collection, attribute) =>
+    `ensure all values of '${attribute.join(
+      '.'
+    )}' are in the enum to allow this edit`,
 };
+
+async function detectAttributeSatisfiesEnum(
+  tx: DBTransaction<any>,
+  collectionName: string,
+  attribute: string[],
+  enumArray: string[]
+) {
+  const allEntities = await tx.fetch(
+    tx.db
+      .query(collectionName)
+      .select([attribute.join('.')])
+      .where(attribute.join('.'), 'nin', enumArray)
+      .build(),
+    { skipRules: true }
+  );
+  return allEntities.size === 0;
+}
 
 async function detectAttributeHasNoUndefined(
   tx: DBTransaction<any>,

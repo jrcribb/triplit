@@ -1,7 +1,7 @@
 import { TriplitClient } from '@triplit/client';
-import { useInfiniteQuery, useQuery } from '@triplit/react';
-import { useMemo, useState, useCallback, useEffect } from 'react';
-import { CreateEntitySheet } from '.';
+import { useInfiniteQuery } from '@triplit/react';
+import { useMemo, useState } from 'react';
+import { ConsoleQuery, CreateEntitySheet, SetConsoleQuery } from '.';
 import { consoleClient } from '../../triplit/client';
 import { ColumnDef } from '@tanstack/react-table';
 import {
@@ -21,97 +21,35 @@ import { DeleteAttributeDialog } from './delete-attribute-dialog';
 import { atom, useAtom } from 'jotai';
 import { FiltersPopover } from './filters-popover';
 import { OrderPopover } from './order-popover';
-import { useSelectedCollection } from '../hooks/useSelectedCollection';
 import { SchemaDefinition } from '../../../db/src/data-types/serialization';
-import useUrlState from '@ahooksjs/use-url-state';
 import { DeleteEntitiesDialog } from './delete-entities-dialog.js';
 import { CollectionMenu } from './collection-menu.js';
 import { DeleteCollectionDialog } from './delete-collection-dialog.js';
 import { flattenSchema } from 'src/utils/flatten-schema.js';
+import { diffSchemas, getSchemaDiffIssues } from '@triplit/db';
+import { deleteAttribute } from 'src/utils/schema.js';
+import { useToast } from 'src/hooks/useToast.js';
 
 const deleteAttributeDialogIsOpenAtom = atom(false);
 
-window.client = consoleClient;
-
-async function onSelectEntity(
-  entityId: string,
-  collectionName: string,
-  projectId: string
-) {
-  await consoleClient.insert('selections', {
-    collectionName,
-    projectId,
-    id: entityId,
-  });
-}
-async function onDeselectEntity(entityId: string) {
-  await consoleClient.delete('selections', entityId);
-}
-
-async function onDeselectAllEntities(
-  collectionName: string,
-  projectId: string
-) {
-  await consoleClient.transact(async (tx) => {
-    const selectedEntities = await consoleClient.fetch(
-      consoleClient
-        .query('selections')
-        .where([
-          ['collectionName', '=', collectionName],
-          ['projectId', '=', projectId],
-        ])
-        .build()
-    );
-    await Promise.all(
-      Array.from(selectedEntities.keys()).map((selectedEnt) =>
-        tx.delete('selections', selectedEnt)
-      )
-    );
-  });
-}
-
-async function onSelectAllEntities(
-  entityIds: string[],
-  collectionName: string,
-  projectId: string
-) {
-  await consoleClient.transact(async (tx) => {
-    await Promise.all(
-      entityIds.map((entityId) =>
-        tx.insert('selections', { collectionName, projectId, id: entityId })
-      )
-    );
-  });
-}
-
-async function deleteAttribute(
-  client: TriplitClient<any>,
-  collectionName: string,
-  attributeName: string
-) {
-  try {
-    await client.db.dropAttribute({
-      collection: collectionName,
-      path: [attributeName],
-    });
-  } catch (e) {
-    console.error(e);
-  }
-}
+if (typeof window !== 'undefined') window.client = consoleClient;
 
 const PAGE_SIZE = 25;
 
 export function DataViewer({
   client,
   schema,
-  projectId,
   stats,
+  query,
+  setQuery,
 }: {
-  projectId: string;
   client: TriplitClient<any>;
   schema?: SchemaDefinition;
   stats?: { numEntities: number };
+  query: ConsoleQuery;
+  setQuery: SetConsoleQuery;
 }) {
+  const { toast } = useToast();
   const [deleteCollectionDialogOpen, setDeleteCollectionDialogOpen] =
     useState(false);
   const [deleteAttributeDialogIsOpen, setDeleteAttributeDialogIsOpen] = useAtom(
@@ -124,34 +62,15 @@ export function DataViewer({
   >(null);
   const [selectedAttribute, setSelectedAttribute] = useState<string>('');
   const [selectedCell, setSelectedCell] = useState<string | null>(null);
-  const [selectedCollection, _setSelectedCollection] = useSelectedCollection();
-  const [urlQueryState, setUrlQueryState] = useUrlState({
-    where: undefined,
-    order: undefined,
-  });
-  const selectedEntitiesQuery = useMemo(
-    () =>
-      consoleClient.query('selections').where([
-        ['collectionName', '=', selectedCollection],
-        ['projectId', '=', projectId],
-      ]),
-    [selectedCollection, projectId]
-  );
-  const { results: selectedEntities } = useQuery(
-    consoleClient,
-    selectedEntitiesQuery
+  const selectedCollection = query?.collection;
+  const [selectedEntities, setSelectedEntities] = useState<Set<string>>(
+    new Set()
   );
   const collectionSchema = schema?.collections?.[selectedCollection];
-  const filters = useMemo(
-    () => JSON.parse(urlQueryState.where ?? '[]'),
-    [urlQueryState.where]
-  );
-  const order = useMemo(
-    () => JSON.parse(urlQueryState.order ?? '[]'),
-    [urlQueryState.order]
-  );
+  const filters = query.where;
+  const order = query.order;
 
-  const query = useMemo(
+  const triplitQuery = useMemo(
     () =>
       client
         .query(selectedCollection)
@@ -169,14 +88,14 @@ export function DataViewer({
     fetchingMore,
     hasMore,
     loadMore,
-  } = useInfiniteQuery(client, query);
+  } = useInfiniteQuery(client, triplitQuery);
   const sortedAndFilteredEntities = useMemo(
     () => Array.from(orderedAndFilteredResults ?? []),
     [orderedAndFilteredResults]
   );
 
   const flattenedCollectionSchema = useMemo(() => {
-    if (!collectionSchema) return null;
+    if (!collectionSchema) return undefined;
     return flattenSchema(collectionSchema);
   }, [collectionSchema]);
 
@@ -213,20 +132,35 @@ export function DataViewer({
     );
   }, [sortedAndFilteredEntities, selectedEntities]);
 
-  const toggleSelectAllEntities = useCallback(() => {
+  function onDeselectAllEntities() {
+    setSelectedEntities(new Set());
+  }
+
+  function onDeselectEntity(entityId: string) {
+    setSelectedEntities((prev) => {
+      const next = new Set(prev);
+      next.delete(entityId);
+      return next;
+    });
+  }
+
+  function onSelectEntity(entityId: string) {
+    setSelectedEntities((prev) => {
+      const next = new Set(prev);
+      next.add(entityId);
+      return next;
+    });
+  }
+
+  function onSelectAllEntities() {
+    setSelectedEntities(new Set(sortedAndFilteredEntities.map(([id]) => id)));
+  }
+
+  function toggleSelectAllEntities() {
     allVisibleEntitiesAreSelected
-      ? onDeselectAllEntities(selectedCollection, projectId)
-      : onSelectAllEntities(
-          sortedAndFilteredEntities.map(([id]) => id),
-          selectedCollection,
-          projectId
-        );
-  }, [
-    sortedAndFilteredEntities,
-    selectedCollection,
-    projectId,
-    allVisibleEntitiesAreSelected,
-  ]);
+      ? onDeselectAllEntities()
+      : onSelectAllEntities();
+  }
 
   const idColumn: ColumnDef<any> = useMemo(
     () => ({
@@ -260,9 +194,7 @@ export function DataViewer({
               className="ml-4 mr-1"
               checked={selectedEntities && selectedEntities.has(entityId)}
               onCheckedChange={(checked) => {
-                checked
-                  ? onSelectEntity(entityId, selectedCollection, projectId)
-                  : onDeselectEntity(entityId);
+                checked ? onSelectEntity(entityId) : onDeselectEntity(entityId);
               }}
             />
             <DataCell
@@ -283,7 +215,6 @@ export function DataViewer({
     [
       allVisibleEntitiesAreSelected,
       selectedCollection,
-      projectId,
       toggleSelectAllEntities,
       selectedEntities,
     ]
@@ -320,9 +251,9 @@ export function DataViewer({
                         return [attribute, operator, parsedVal];
                       }
                     );
-                    setUrlQueryState({
-                      where: JSON.stringify(whereWithVariablesReplaced),
-                      collectionName: typeDef?.query?.collectionName,
+                    setQuery({
+                      where: whereWithVariablesReplaced,
+                      collection: typeDef?.query?.collectionName,
                     });
                   }}
                 />
@@ -439,7 +370,7 @@ export function DataViewer({
 
   return (
     <div className="flex flex-col max-w-full items-start h-screen overflow-hidden">
-      {collectionSchema && (
+      {flattenedCollectionSchema && (
         <>
           <SchemaAttributeSheet
             attributeToUpdateName={attributeToUpdateName}
@@ -453,6 +384,10 @@ export function DataViewer({
 
           <DeleteCollectionDialog
             open={deleteCollectionDialogOpen}
+            collection={query.collection}
+            onDeleteCollection={() => {
+              setQuery({}, false);
+            }}
             onOpenChange={setDeleteCollectionDialogOpen}
             client={client}
           />
@@ -465,11 +400,18 @@ export function DataViewer({
               if (!open) setSelectedAttribute('');
             }}
             onSubmit={async () => {
-              await deleteAttribute(
+              const error = await deleteAttribute(
                 client,
                 selectedCollection,
                 selectedAttribute
               );
+              if (error) {
+                toast({
+                  title: 'Error',
+                  description: error,
+                  variant: 'destructive',
+                });
+              }
               setDeleteAttributeDialogIsOpen(false);
             }}
           />
@@ -484,7 +426,7 @@ export function DataViewer({
             }}
             onAddAttribute={() => {
               setAddOrUpdateAttributeFormOpen(true);
-              setAttributeToUpdate(null);
+              setAttributeToUpdateName(null);
             }}
           />
         )}
@@ -493,11 +435,10 @@ export function DataViewer({
         <FiltersPopover
           filters={filters}
           uniqueAttributes={uniqueAttributes}
-          projectId={projectId}
           collection={selectedCollection}
           collectionSchema={flattenedCollectionSchema}
           onSubmit={(filters) => {
-            setUrlQueryState({ where: JSON.stringify(filters) });
+            setQuery({ where: filters });
           }}
         />
         <OrderPopover
@@ -506,7 +447,7 @@ export function DataViewer({
           collectionSchema={flattenedCollectionSchema}
           order={order}
           onSubmit={(order) => {
-            setUrlQueryState({ order: JSON.stringify(order) });
+            setQuery({ order });
           }}
         />
         <div className="text-sm px-2">{`Showing ${

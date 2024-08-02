@@ -7,15 +7,15 @@ import {
   CloseButton,
   Button,
 } from '@triplit/ui';
-import { useMemo, useState } from 'react';
-import { QueryOrder } from '../../../db/src/query';
+import { useState } from 'react';
+import { CollectionDefinition, OrderStatement } from '@triplit/db';
 
 type OrderPopoverProps = {
   collection: string;
   uniqueAttributes: Set<string>;
-  collectionSchema: any;
-  order: QueryOrder<any>;
-  onSubmit: (order: QueryOrder<any>) => void;
+  collectionSchema?: CollectionDefinition;
+  order: OrderStatement<any, any>;
+  onSubmit: (order: OrderStatement<any, any>) => void;
 };
 
 export function OrderPopover(props: OrderPopoverProps) {
@@ -26,18 +26,23 @@ export function OrderPopover(props: OrderPopoverProps) {
   const [draftOrder, setDraftOrder] = useState<Map<string, string>>(
     new Map(order)
   );
-  const orderableAttributes: string[] = useMemo(() => {
-    const nonSetAttributes = collectionSchema
-      ? [...uniqueAttributes].filter(
-          (attr) =>
-            !collectionSchema?.properties?.[attr].type.startsWith('set_')
+
+  const orderableAttributes = Array.from(
+    collectionSchema
+      ? Object.entries(collectionSchema.schema.properties).reduce(
+          (prev, [name, def]) => {
+            if (
+              def.type !== 'query' &&
+              def.type !== 'set' &&
+              !draftOrder.has(name)
+            )
+              prev.push(name);
+            return prev;
+          },
+          [] as string[]
         )
-      : [...uniqueAttributes];
-    const notAlreadyOrdered = nonSetAttributes.filter(
-      (attr) => !draftOrder?.has(attr)
-    );
-    return notAlreadyOrdered;
-  }, [uniqueAttributes, collectionSchema, draftOrder]);
+      : uniqueAttributes
+  );
   const hasOrders = order.length > 0;
   return (
     <Popover
@@ -61,7 +66,10 @@ export function OrderPopover(props: OrderPopoverProps) {
           </span>
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="flex flex-col gap-3 w-full">
+      <PopoverContent
+        align="start"
+        className="flex flex-col gap-3 min-w-[280px]"
+      >
         {draftOrder.size > 0 ? (
           Array.from(draftOrder).map(([attribute, direction]) => (
             <div key={attribute} className="flex flex-row gap-1 items-center">

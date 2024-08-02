@@ -3,29 +3,40 @@
 import type {
   ClientFetchResult,
   ClientQuery,
-  QueryBuilder,
+  ClientQueryBuilder,
   Models,
   SubscriptionOptions,
   TriplitClient,
+  Unalias,
 } from '@triplit/client';
 import { WorkerClient } from '@triplit/client/worker-client';
 
+/**
+ * A hook that subscribes to a query
+ *
+ * @param client - The client instance to query with
+ * @param query - The query to subscribe to
+ * @param options - Additional options for the subscription
+ * @param options.localOnly - If true, the subscription will only use the local cache. Defaults to false.
+ * @param options.onRemoteFulfilled - An optional callback that is called when the remote query has been fulfilled.
+ * @returns An object containing the fetching state, the result of the query, any error that occurred, and a function to update the query
+ */
 export function useQuery<
   M extends Models<any, any> | undefined,
   Q extends ClientQuery<M, any, any, any>
 >(
   client: TriplitClient<any> | WorkerClient<any>,
-  query: QueryBuilder<Q>,
+  query: ClientQueryBuilder<Q>,
   options?: Partial<SubscriptionOptions>
 ): {
   fetching: boolean;
   fetchingLocal: boolean;
   fetchingRemote: boolean;
-  results: ClientFetchResult<Q> | undefined;
+  results: Unalias<ClientFetchResult<Q>> | undefined;
   error: any;
-  updateQuery: (query: QueryBuilder<Q>) => void;
+  updateQuery: (query: ClientQueryBuilder<Q>) => void;
 } {
-  let results: ClientFetchResult<Q> | undefined = $state(undefined);
+  let results: Unalias<ClientFetchResult<Q>> | undefined = $state(undefined);
   let isInitialFetch = $state(true);
   let fetchingLocal = $state(false);
   let fetchingRemote = $state(client.connectionStatus !== 'CLOSED');
@@ -34,7 +45,7 @@ export function useQuery<
   let hasResponseFromServer = false;
   let builtQuery = $state(query && query.build());
 
-  function updateQuery(query: QueryBuilder<Q>) {
+  function updateQuery(query: ClientQueryBuilder<Q>) {
     builtQuery = query.build();
     results = undefined;
     fetchingLocal = true;
@@ -42,9 +53,11 @@ export function useQuery<
   }
 
   $effect(() => {
-    client.isFirstTimeFetchingQuery(builtQuery).then((isFirstFetch) => {
-      isInitialFetch = isFirstFetch;
-    });
+    client
+      .isFirstTimeFetchingQuery($state.snapshot(builtQuery))
+      .then((isFirstFetch) => {
+        isInitialFetch = isFirstFetch;
+      });
     const unsub = client.onConnectionStatusChange((status) => {
       if (status === 'CLOSING' || status === 'CLOSED') {
         fetchingRemote = false;
@@ -62,7 +75,7 @@ export function useQuery<
 
   $effect(() => {
     const unsubscribe = client.subscribe(
-      builtQuery,
+      $state.snapshot(builtQuery),
       (localResults) => {
         fetchingLocal = false;
         error = undefined;
@@ -105,6 +118,12 @@ export function useQuery<
   };
 }
 
+/**
+ * A hook that subscribes to the connection status of a client with the server
+ *
+ * @param client - The client instance to get the connection status of
+ * @returns An object containing `status`, the current connection status of the client with the server
+ */
 export function useConnectionStatus(
   client: TriplitClient<any> | WorkerClient<any>
 ) {

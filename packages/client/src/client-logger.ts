@@ -1,4 +1,5 @@
-import { LogLevel, Logger } from '@triplit/types/logger.js';
+import { LogLevel, Logger } from '@triplit/types/logger';
+import { TriplitError } from '@triplit/db';
 import superjson from 'superjson';
 
 export type LogListener = ((log: any) => void) | undefined;
@@ -50,27 +51,29 @@ export class DefaultLogger implements Logger {
   }
 
   info(message: any, ...args: any[]) {
-    const log = this.constructLogObj('info', message, ...args);
     if (this.levelIndex < 2) return;
+    const log = this.constructLogObj('info', message, ...args);
     console.info(`%c${log.scope}`, 'color: #888', message, args);
   }
 
   warn(message: any, ...args: any[]) {
-    const log = this.constructLogObj('warn', message, ...args);
     if (this.levelIndex < 1) return;
+    const log = this.constructLogObj('warn', message, ...args);
     console.warn(log.scope, message, args);
   }
 
   error(message: any, ...args: any[]) {
+    const errorArgs =
+      args.length === 1 && args[0] instanceof TriplitError
+        ? args[0].toJSON()
+        : args;
     const log = this.constructLogObj('error', message, ...args);
-    // console.error(log.scope, message, args);
-    console.error(log.scope, log.message);
-    console.error(...args);
+    console.error(log.scope, log.message, errorArgs);
   }
 
   debug(message: any, ...args: any[]) {
-    const obj = this.constructLogObj('debug', message, ...args);
     if (this.levelIndex < 3) return;
+    const obj = this.constructLogObj('debug', message, ...args);
     if (obj.scope === 'sync') {
       if (obj.message === 'sent') {
         console.debug(

@@ -1,5 +1,223 @@
 # @triplit/server
 
+## 0.3.72
+
+### Patch Changes
+
+- Updated dependencies [c8c955a5]
+  - @triplit/db@0.3.64
+  - @triplit/server-core@0.3.67
+
+## 0.3.71
+
+### Patch Changes
+
+- Updated dependencies [48bdee2]
+  - @triplit/db@0.3.63
+  - @triplit/server-core@0.3.66
+
+## 0.3.70
+
+### Patch Changes
+
+- Updated dependencies [40e2e50]
+  - @triplit/db@0.3.62
+  - @triplit/server-core@0.3.65
+
+## 0.3.69
+
+### Patch Changes
+
+- Updated dependencies [c78aa65]
+- Updated dependencies [6ccbbd5]
+  - @triplit/db@0.3.61
+  - @triplit/server-core@0.3.64
+
+## 0.3.68
+
+### Patch Changes
+
+- Updated dependencies [41692f0]
+  - @triplit/db@0.3.60
+  - @triplit/server-core@0.3.63
+
+## 0.3.67
+
+### Patch Changes
+
+- Updated dependencies [7c5105d]
+- Updated dependencies [6c24a2c]
+  - @triplit/db@0.3.59
+  - @triplit/server-core@0.3.62
+
+## 0.3.66
+
+### Patch Changes
+
+- Updated dependencies [aa9e562]
+- Updated dependencies [2decc7f]
+  - @triplit/db@0.3.58
+  - @triplit/server-core@0.3.61
+
+## 0.3.65
+
+### Patch Changes
+
+- Updated dependencies [eb66825]
+  - @triplit/db@0.3.57
+  - @triplit/server-core@0.3.60
+
+## 0.3.64
+
+### Patch Changes
+
+- Updated dependencies [c3fb0be]
+  - @triplit/db@0.3.56
+  - @triplit/server-core@0.3.59
+
+## 0.3.63
+
+### Patch Changes
+
+- f2beb55: Safely import version for sentry plugin
+
+## 0.3.62
+
+### Patch Changes
+
+- 5621dcc: Only read package.json when needed
+
+## 0.3.61
+
+### Patch Changes
+
+- 709fad1: hotfix: hardcode version in sentry
+
+## 0.3.60
+
+### Patch Changes
+
+- 3c7404e: use require to load package.json
+- Updated dependencies [b410f2c]
+  - @triplit/server-core@0.3.58
+
+## 0.3.59
+
+### Patch Changes
+
+- Updated dependencies [b65160e]
+  - @triplit/db@0.3.55
+  - @triplit/server-core@0.3.57
+
+## 0.3.58
+
+### Patch Changes
+
+- Updated dependencies [55ae69b]
+- Updated dependencies [a8c6f75]
+  - @triplit/db@0.3.54
+  - @triplit/server-core@0.3.56
+
+## 0.3.57
+
+### Patch Changes
+
+- Updated dependencies [784b82f]
+- Updated dependencies [199684b]
+  - @triplit/db@0.3.53
+  - @triplit/server-core@0.3.55
+
+## 0.3.56
+
+### Patch Changes
+
+- Updated dependencies [546bda7]
+  - @triplit/db@0.3.52
+  - @triplit/server-core@0.3.54
+
+## 0.3.55
+
+### Patch Changes
+
+- Updated dependencies [1b128fb]
+  - @triplit/db@0.3.51
+  - @triplit/server-core@0.3.53
+
+## 0.3.54
+
+### Patch Changes
+
+- Updated dependencies [76b3751]
+  - @triplit/db@0.3.50
+  - @triplit/server-core@0.3.52
+
+## 0.3.53
+
+### Patch Changes
+
+- Updated dependencies [0e9b4c4]
+- Updated dependencies [b68787d]
+  - @triplit/db@0.3.49
+  - @triplit/server-core@0.3.51
+
+## 0.3.52
+
+### Patch Changes
+
+- fddc883: Add shorthands for additional storage types and support a custom storage function in constructor
+- Updated dependencies [fddc883]
+  - @triplit/db@0.3.48
+  - @triplit/server-core@0.3.50
+
+## 0.3.51
+
+### Patch Changes
+
+- Updated dependencies [753a72c]
+  - @triplit/db@0.3.47
+  - @triplit/server-core@0.3.49
+
+## 0.3.50
+
+### Patch Changes
+
+- Updated dependencies [98a0adf]
+- Updated dependencies [7fd83f6]
+  - @triplit/db@0.3.46
+  - @triplit/server-core@0.3.48
+
+## 0.3.49
+
+### Patch Changes
+
+- bfb1193: Manual bump
+
+## 0.3.48
+
+### Patch Changes
+
+- Updated dependencies [2c71802]
+  - @triplit/db@0.3.45
+  - @triplit/server-core@0.3.47
+
+## 0.3.47
+
+### Patch Changes
+
+- Updated dependencies [f6468bf]
+- Updated dependencies [7fac5a4]
+  - @triplit/db@0.3.44
+  - @triplit/server-core@0.3.46
+
+## 0.3.46
+
+### Patch Changes
+
+- Updated dependencies [2c2a4d3]
+- Updated dependencies [352b619]
+  - @triplit/db@0.3.43
+  - @triplit/server-core@0.3.45
+
 ## 0.3.45
 
 ### Patch Changes

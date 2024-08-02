@@ -5,22 +5,20 @@ import {
   collectionsDefinitionToSchema,
   clientInputToDbModel,
 } from './schema/schema.js';
+import { schemaToJSON } from './schema/export/index.js';
 import {
   UpdateTypeFromModel,
   InsertTypeFromModel,
   Models,
+  StoreSchema,
+  PermissionWriteOperations,
 } from './schema/types';
 import { nanoid } from 'nanoid';
 import CollectionQueryBuilder, {
-  doesEntityObjMatchWhere,
   fetch,
   fetchOne,
-  FetchResult,
-  FetchResultEntity,
   initialFetchExecutionContext,
-  ReturnTypeFromQuery,
   convertEntityToJS,
-  ReturnTypeFromParts,
 } from './collection-query.js';
 import {
   DBSerializationError,
@@ -32,6 +30,8 @@ import {
   WriteRuleError,
   CollectionNotFoundError,
   InvalidSchemaPathError,
+  WritePermissionError,
+  TriplitError,
 } from './errors.js';
 import { ValuePointer } from '@sinclair/typebox/value';
 import DB, {
@@ -52,21 +52,18 @@ import DB, {
   DEFAULT_STORE_KEY,
   EntityOpSet,
   SetAttributeOptionalOperation,
+  OpSet,
 } from './db.js';
 import {
   validateExternalId,
   appendCollectionToId,
   validateTriple,
   readSchemaFromTripleStore,
-  StoreSchema,
   splitIdParts,
-  prepareQuery,
   fetchResultToJS,
 } from './db-helpers.js';
 import {
-  CollectionQuery,
   Entity,
-  Query,
   constructEntity,
   updateEntity,
   triplesToEntities,
@@ -87,7 +84,17 @@ import {
 } from './triple-store-utils.js';
 import { TripleStoreApi } from './triple-store.js';
 import { RecordType } from './data-types/record.js';
-import { Logger } from '@triplit/types/src/logger.js';
+import { Logger } from '@triplit/types/logger';
+import {
+  CollectionQuery,
+  FetchResult,
+  FetchResultEntity,
+  FetchResultEntityFromParts,
+  Query,
+  Unalias,
+} from './query/types';
+import { prepareQuery } from './query/prepare.js';
+import { getCollectionPermissions } from './schema/permissions.js';
 
 interface TransactionOptions<
   M extends Models<any, any> | undefined = undefined
@@ -95,9 +102,88 @@ interface TransactionOptions<
   schema?: StoreSchema<M>;
   skipRules?: boolean;
   logger?: Logger;
+  manualSchemaRefresh?: boolean;
 }
 
 const EXEMPT_FROM_WRITE_RULES = new Set(['_metadata']);
+
+async function checkWritePermissions<M extends Models<any, any> | undefined>(
+  dbTx: DBTransaction<M>,
+  storeTx: TripleStoreApi,
+  id: EntityId,
+  schema: StoreSchema<M> | undefined,
+  operation: PermissionWriteOperations
+) {
+  if (!schema) return;
+  const [collectionName, entityId] = splitIdParts(id);
+  if (EXEMPT_FROM_WRITE_RULES.has(collectionName)) return;
+  const sessionRoles = dbTx.db.sessionRoles;
+  const permissions = getCollectionPermissions(
+    schema.collections,
+    collectionName
+  );
+  // If no permissions for collection, its exempt from rules
+  if (!permissions) return;
+
+  let permissionsStatements = [];
+  let hasMatch = false;
+  if (sessionRoles) {
+    for (const sessionRole of sessionRoles) {
+      const rolePermissions = permissions[sessionRole.key];
+      const permission = rolePermissions?.[operation];
+
+      if (!permission) continue;
+
+      if (permission.filter) {
+        // Must opt in to the permission
+        hasMatch = true;
+        // TODO: handle empty arrays
+        if (Array.isArray(permission.filter)) {
+          permissionsStatements.push(...permission.filter);
+        }
+      }
+    }
+  }
+
+  if (!hasMatch) {
+    // postUpdate is optional, so if there's nothing to check against, we can skip
+    if (operation === 'postUpdate') return;
+    permissionsStatements = [false];
+  }
+
+  const query = prepareQuery(
+    {
+      collectionName,
+      where: [['id', '=', entityId], ...permissionsStatements],
+    } as CollectionQuery<M, any>,
+    schema.collections,
+    {
+      roles: dbTx.db.sessionRoles,
+    },
+    {
+      // Skip application of read rules
+      skipRules: true,
+    }
+  );
+
+  const { results } = await fetchOne<M, any>(
+    dbTx.db,
+    storeTx,
+    query,
+    initialFetchExecutionContext(),
+    {
+      schema: schema.collections,
+    }
+  );
+  if (!results) {
+    throw new WritePermissionError(
+      collectionName,
+      entityId,
+      operation,
+      sessionRoles ?? []
+    );
+  }
+}
 
 async function checkWriteRules<M extends Models<any, any> | undefined>(
   caller: DBTransaction<M>,
@@ -122,6 +208,9 @@ async function checkWriteRules<M extends Models<any, any> | undefined>(
       } as CollectionQuery<M, any>,
       collections,
       {
+        roles: caller.db.sessionRoles,
+      },
+      {
         skipRules: false,
       }
     );
@@ -139,6 +228,27 @@ async function checkWriteRules<M extends Models<any, any> | undefined>(
       throw new WriteRuleError(`Update does not match write rules`);
     }
   }
+}
+
+function triplesToDeltaOpSet(triples: TripleRow[]): OpSet<any> {
+  const deltas = Array.from(triplesToEntities(triples).entries());
+  const opSet: OpSet<any> = { inserts: [], updates: [], deletes: [] };
+  for (const [id, delta] of deltas) {
+    // default to update
+    let operation: 'insert' | 'update' | 'delete' = 'update';
+    // Inserts and deletes will include the _collection attribute
+    if ('_collection' in delta.data) {
+      // Deletes will set _collection to undefined
+      const isDelete = delta.data._collection[0] === undefined;
+      if (isDelete) operation = 'delete';
+      else operation = 'insert';
+    }
+
+    if (operation === 'insert') opSet.inserts.push([id, delta.data]);
+    else if (operation === 'update') opSet.updates.push([id, delta.data]);
+    else if (operation === 'delete') opSet.deletes.push([id, delta.data]);
+  }
+  return opSet;
 }
 
 async function triplesToEntityOpSet(
@@ -209,64 +319,91 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     this.schema = options.schema;
     this.storeTx.beforeInsert(this.ValidateTripleSchema);
     if (!options?.skipRules) {
-      // Pre-update write checks
-      this.storeTx.beforeCommit(async (triplesByStorage, tx) => {
-        /**
-         * This will check writes rules before we commit the transaction
-         * it will look for a _collection attribute to indicate an insert
-         * which means looking only at the inserted triples is sufficient
-         * to validate the rule.
-         * Otherwise treat any triples as an update/delete and fetch the entity
-         * from the store to validate the rule
-         */
-        for (const [storageId, triples] of Object.entries(triplesByStorage)) {
-          const insertedEntities: Set<string> = new Set();
-          const updatedEntities: Set<string> = new Set([
-            ...triples.map((t) => t.id),
-          ]);
-          const deletedEntities: Set<string> = new Set();
-          for (const triple of triples) {
-            if (
-              deletedEntities.has(triple.id) ||
-              insertedEntities.has(triple.id)
-            )
-              continue;
-            if (triple.attribute[0] === '_collection' && triple.expired) {
-              updatedEntities.delete(triple.id);
-              deletedEntities.add(triple.id);
-              continue;
-            }
-            if (triple.attribute[0] === '_collection' && !triple.expired) {
-              insertedEntities.add(triple.id);
-              updatedEntities.delete(triple.id);
-              continue;
-            }
-          }
-          // for each updatedEntity, load triples, construct entity, and check write rules
-          for (const id of updatedEntities) {
-            await checkWriteRules(this, tx, id, this.schema);
-          }
-          for (const id of insertedEntities) {
-            await checkWriteRules(this, tx, id, this.schema);
-          }
-          for (const id of deletedEntities) {
-            // Notably deletes use the original triples (using tx wont have data)
-            // We may not be able to differentiate between a delete elsewhere and a write rule failure
-            await checkWriteRules(
-              this,
-              this.db.tripleStore,
-              id,
-
-              this.schema
-            );
-          }
-        }
-      });
+      // Before we perform writes, check permissions
+      this.storeTx.beforeInsert(this.PreWriteCheckPermissions);
+      // After we perform writes, check permissions
+      this.storeTx.beforeCommit(this.PostCheckWritePermissions);
     }
-    this.storeTx.beforeInsert(this.UpdateLocalSchema);
+    if (!options.manualSchemaRefresh)
+      this.storeTx.beforeInsert(this.UpdateLocalSchema);
+
     this.storeTx.beforeCommit(this.CallBeforeCommitDBHooks);
     this.storeTx.afterCommit(this.CallAfterCommitDBHooks);
   }
+
+  // NOTE: this will only work on the server due to hooks limitaitons (requires a single storage)
+  private PreWriteCheckPermissions: TripleStoreBeforeInsertHook = async (
+    triples,
+    tx
+  ) => {
+    const deltas = triplesToDeltaOpSet(triples);
+    // Check permissions for updates before we've written
+    for (const [id, _delta] of deltas.updates) {
+      await checkWritePermissions(this, tx, id, this.schema, 'update');
+    }
+  };
+
+  private PostCheckWritePermissions: TripleStoreBeforeCommitHook = async (
+    triplesByStorage,
+    tx
+  ) => {
+    /**
+     * This will check writes rules before we commit the transaction
+     * it will look for a _collection attribute to indicate an insert
+     * which means looking only at the inserted triples is sufficient
+     * to validate the rule.
+     * Otherwise treat any triples as an update/delete and fetch the entity
+     * from the store to validate the rule
+     */
+    for (const [storageId, triples] of Object.entries(triplesByStorage)) {
+      const insertedEntities: Set<string> = new Set();
+      const updatedEntities: Set<string> = new Set([
+        ...triples.map((t) => t.id),
+      ]);
+      const deletedEntities: Set<string> = new Set();
+      for (const triple of triples) {
+        if (deletedEntities.has(triple.id) || insertedEntities.has(triple.id))
+          continue;
+        if (triple.attribute[0] === '_collection' && triple.expired) {
+          updatedEntities.delete(triple.id);
+          deletedEntities.add(triple.id);
+          continue;
+        }
+        if (triple.attribute[0] === '_collection' && !triple.expired) {
+          insertedEntities.add(triple.id);
+          updatedEntities.delete(triple.id);
+          continue;
+        }
+      }
+      // for each updatedEntity, load triples, construct entity, and check write rules
+      for (const id of updatedEntities) {
+        await checkWriteRules(this, tx, id, this.schema);
+        await checkWritePermissions(this, tx, id, this.schema, 'postUpdate');
+      }
+      for (const id of insertedEntities) {
+        await checkWriteRules(this, tx, id, this.schema);
+        await checkWritePermissions(this, tx, id, this.schema, 'insert');
+      }
+      for (const id of deletedEntities) {
+        // Notably deletes use the original triples (using tx wont have data)
+        // We may not be able to differentiate between a delete elsewhere and a write rule failure
+        await checkWriteRules(
+          this,
+          this.db.tripleStore,
+          id,
+
+          this.schema
+        );
+        await checkWritePermissions(
+          this,
+          this.db.tripleStore,
+          id,
+          this.schema,
+          'delete'
+        );
+      }
+    }
+  };
 
   private ValidateTripleSchema: TripleStoreBeforeInsertHook = async (
     triples
@@ -484,8 +621,41 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
   readonly METADATA_COLLECTION_NAME =
     '_metadata' as CollectionNameFromModels<M>;
 
+  // The original current schema operating on the transaction
   async getSchema() {
     return this.schema;
+  }
+
+  // Read the current schema based on stored data
+  async getSchemaFromStore() {
+    const { schemaTriples } = await readSchemaFromTripleStore(this.storeTx);
+    const entity = new Entity();
+    updateEntity(entity, schemaTriples);
+    // Type definitions are kinda ugly here
+    // @ts-expect-error - Probably want a way to override the output type of this
+    const schemaDefinition = timestampedObjectToPlainObject(entity.data) as
+      | SchemaDefinition
+      | undefined;
+
+    return {
+      version: schemaDefinition?.version ?? 0,
+      collections:
+        schemaDefinition?.collections &&
+        collectionsDefinitionToSchema(schemaDefinition.collections),
+    } as StoreSchema<M>;
+  }
+
+  // If you would like to update the schema within a transaction (data may not be queryable after this)
+  async refreshSchema() {
+    if (!this.options.manualSchemaRefresh)
+      throw new TriplitError(
+        'Schema refresh is disabled by default. To enable, set manualSchemaRefresh to true in the transaction options.'
+      );
+    this.schema = await this.getSchemaFromStore();
+  }
+
+  async getSchemaJson() {
+    return schemaToJSON(await this.getSchema());
   }
 
   async commit() {
@@ -496,9 +666,13 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     await this.storeTx.cancel();
   }
 
+  get isCancelled() {
+    return this.storeTx.isCancelled;
+  }
+
   async insert<CN extends CollectionNameFromModels<M>>(
     collectionName: CN,
-    doc: InsertTypeFromModel<ModelFromModels<M, CN>>
+    doc: Unalias<InsertTypeFromModel<ModelFromModels<M, CN>>>
   ) {
     if (!collectionName)
       throw new InvalidCollectionNameError(
@@ -569,7 +743,7 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
       insertedEntity.data as any,
       schema,
       collectionName
-    ) as ReturnTypeFromParts<M, CN>;
+    ) as Unalias<FetchResultEntityFromParts<M, CN>>;
     this.logger.debug('insert END', collectionName, insertedEntityJS);
     return insertedEntityJS;
   }
@@ -578,7 +752,7 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     collectionName: CN,
     entityId: string,
     updater: (
-      entity: UpdateTypeFromModel<ModelFromModels<M, CN>>
+      entity: Unalias<UpdateTypeFromModel<ModelFromModels<M, CN>>>
     ) => void | Promise<void>
   ) {
     this.logger.debug('update START', collectionName, entityId);
@@ -590,7 +764,9 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
         collectionName === '_metadata'
           ? createUpdateProxy<M, CN>(changes, entity)
           : createUpdateProxy<M, CN>(changes, entity, schema, collectionName);
-      await updater(updateProxy);
+      await updater(
+        updateProxy as Unalias<UpdateTypeFromModel<ModelFromModels<M, CN>>>
+      );
       // return dbDocumentToTuples(updateProxy);
       return changes.getTuples();
     });
@@ -612,7 +788,9 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
     ) => [Attribute, TupleValue][] | Promise<[Attribute, TupleValue][]>
   ) {
     this.logger.debug('updateRaw START');
+
     const storeId = appendCollectionToId(collectionName, entityId);
+
     const entityTriples = await this.storeTx.findByEntity(storeId);
     const timestampedEntity = constructEntity(entityTriples, storeId);
     const entity = timestampedObjectToPlainObject(timestampedEntity!.data);
@@ -675,11 +853,16 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
   async fetch<Q extends CollectionQuery<M, any>>(
     query: Q,
     options: DBFetchOptions = {}
-  ): Promise<FetchResult<Q>> {
+  ): Promise<Unalias<FetchResult<Q>>> {
     const schema = (await this.getSchema())?.collections as M;
-    const fetchQuery = prepareQuery(query, schema, {
-      skipRules: options.skipRules,
-    });
+    const fetchQuery = prepareQuery(
+      query,
+      schema,
+      { roles: this.db.sessionRoles },
+      {
+        skipRules: options.skipRules,
+      }
+    );
     // TODO: read scope?
     // See difference between this fetch and db fetch
     const { results } = await fetch<M, Q>(
@@ -706,21 +889,17 @@ export class DBTransaction<M extends Models<any, any> | undefined> {
   async fetchById<CN extends CollectionNameFromModels<M>>(
     collectionName: CN,
     id: string,
-    queryParams: FetchByIdQueryParams<M, CN> = {},
     options: DBFetchOptions = {}
   ) {
-    return this.fetchOne(
-      // @ts-ignore
-      this.query(collectionName, queryParams).where('id', '=', id).build(),
-      options
-    );
+    const query = this.query(collectionName).id(id).build();
+    return this.fetchOne(query, options);
   }
 
   async fetchOne<Q extends CollectionQuery<M, any>>(
     query: Q,
     options: DBFetchOptions = {}
-  ): Promise<FetchResultEntity<Q> | null> {
-    query.limit = 1;
+  ): Promise<Unalias<FetchResultEntity<Q>> | null> {
+    query = { ...query, limit: 1 };
     const result = await this.fetch(query, options);
     const entity = [...result.values()][0];
     if (!entity) return null;

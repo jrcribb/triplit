@@ -5,18 +5,21 @@ export type {
   ReturnTypeFromQuery,
   ModelFromModels,
   FetchByIdQueryParams,
-  QueryBuilder,
+  Unalias,
+  Roles,
 } from '@triplit/db';
-export { Schema } from '@triplit/db';
-export * from './triplit-client.js';
-export * from './remote-client.js';
+export { Schema, or, and, exists } from '@triplit/db';
+export * from './client/triplit-client.js';
+export * from './http-client/http-client.js';
 export * from './sync-engine.js';
 export * from './errors.js';
 export * from './transport/transport.js';
 export type {
   ClientFetchResult,
+  ClientFetchResultEntity,
   ClientQuery,
   ClientQueryDefault,
   ClientSchema,
   Entity,
-} from './utils/query.js';
+} from './client/types';
+export type { ClientQueryBuilder } from './client/query-builder.js';

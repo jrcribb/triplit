@@ -1,7 +1,7 @@
 {
   "name": "@triplit/react",
   "packageManager": "yarn@3.4.1",
-  "version": "0.3.56",
+  "version": "0.3.86",
   "source": "./src/index.ts",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -16,11 +16,12 @@
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && yarn validate:types",
     "build:watch": "tsc -w",
     "lint:build": "npx publint",
     "lint": "tsc --noEmit",
-    "publish-pkg": "node ../../scripts/npm-check-version-and-publish.js"
+    "publish-pkg": "node ../../scripts/npm-check-version-and-publish.js",
+    "validate:types": "node ../../scripts/check-for-local-references-in-declarations.js dist"
   },
   "files": [
     "/dist"

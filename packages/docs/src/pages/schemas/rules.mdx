@@ -1,15 +1,14 @@
 ---
-description: How to manage access control rules with a Triplit schema.
+description: Deprecated rules API.
 ---
 
 import { Callout } from 'nextra-theme-docs';
 
 # Access control
 
-<Callout type="info" emoji="ℹ️">
-  Although usable, access control is still a feature in development and the API
-  is planned to expand from here. More information is on the
-  [roadmap](https://triplit.dev/roadmap).
+<Callout type="error">
+  The rules API is deprecated and will be removed in a future release. Please
+  use the new [permissions API](/schemas/permissions) instead.
 </Callout>
 
 Access control in Triplit occurs at the entity level. Although this is an improvement over membership/room based apis, access control does not extends to individual properties.
@@ -20,7 +19,7 @@ Access control checks run exclusively on the server, and are not enforced on the
 
 ## Access control rules
 
-Rules for access control are defined in the `rules` property of a schema. Both `read` and `write` rules are defined with a unique identifier, an optional `description`, and a `filter`. The `filter` is a [filter clause](/client/query/where) that is appended any query for that collection.
+Permissions for a collection are defined in the `rules` property of a schema. Both `read` and `write` rules are defined with a unique identifier, an optional `description`, and a `filter`. The `filter` is a [filter clause](/client/query/where) that is appended any query for that collection.
 
 ```typescript
 import { Schema as S } from '@triplit/client';

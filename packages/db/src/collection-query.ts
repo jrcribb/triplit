@@ -1,18 +1,23 @@
 import {
-  Query,
-  FilterStatement,
-  FilterGroup,
-  SubQueryFilter,
-  CollectionQuery,
   triplesToEntities,
   Entity,
   updateEntity,
-  EntityPointer,
+  isExistsFilter,
+} from './query.js';
+import {
+  Query,
+  FilterStatement,
+  SubQueryFilter,
+  CollectionQuery,
   QueryResultCardinality,
-  QueryWhere,
   QueryValue,
-  QuerySelectionValue,
-  RelationSubquery,
+  WhereFilter,
+} from './query/types';
+import {
+  isBooleanFilter,
+  isSubQueryFilter,
+  isFilterGroup,
+  isFilterStatement,
 } from './query.js';
 import {
   createSchemaIterator,
@@ -20,34 +25,19 @@ import {
   getAttributeFromSchema,
   getSchemaFromPath,
 } from './schema/schema.js';
-import {
-  IsPropertyOptional,
-  Model,
-  ModelPaths,
-  Models,
-  PathFilteredTypeFromModel,
-  QuerySelectionFitleredTypeFromModel,
-} from './schema/types';
+import { Model, Models } from './schema/types';
 import { timestampedObjectToPlainObject } from './utils.js';
 import { Timestamp, timestampCompare } from './timestamp.js';
 import { TripleStore, TripleStoreApi } from './triple-store.js';
 import { FilterFunc, MapFunc, Pipeline } from './utils/pipeline.js';
-import {
-  EntityIdMissingError,
-  InvalidFilterError,
-  TriplitError,
-} from './errors.js';
+import { TriplitError } from './errors.js';
 import {
   stripCollectionFromId,
   appendCollectionToId,
   splitIdParts,
   someFilterStatements,
-  prepareQuery,
-  fetchResultToJS,
-  QueryPreparationOptions,
   isValueVariable,
   replaceVariablesInFilterStatements,
-  replaceVariable,
   getVariableComponents,
   isValueReferentialVariable,
 } from './db-helpers.js';
@@ -61,15 +51,29 @@ import {
 } from './db.js';
 import type DB from './db.js';
 import { QueryType } from './data-types/query.js';
-import { ExtractJSType, ExtractTimestampedType } from './data-types/type.js';
+import { ExtractTimestampedType } from './data-types/type.js';
 import {
   RangeContraints,
   TripleRow,
   TupleValue,
 } from './triple-store-utils.js';
 import { Equal } from '@sinclair/typebox/value';
-import { MAX, MIN, encodeValue } from '@triplit/tuple-database';
+import { MIN, encodeValue } from '@triplit/tuple-database';
 import { QueryBuilder } from './query/builder.js';
+import {
+  CollectionQueryDefault,
+  FetchResult,
+  FetchResultEntity,
+  QueryResult,
+} from './query/types';
+import {
+  getFilterPriorityOrder,
+  satisfiesFilter,
+  satisfiesRegisterFilter,
+  satisfiesSetFilter,
+} from './query/filters.js';
+import { prepareQuery } from './query/prepare.js';
+import { SessionRole } from './schema/permissions.js';
 
 export default function CollectionQueryBuilder<
   M extends Models<any, any> | undefined,
@@ -79,62 +83,27 @@ export default function CollectionQueryBuilder<
     collectionName,
     ...params,
   };
-  return new QueryBuilder<
-    CollectionQuery<M, CN, QuerySelectionValue<M, CN>, {}>
-  >(query);
+  return new QueryBuilder<CollectionQueryDefault<M, CN>>(query);
 }
-
-export type QueryResult<
-  Q extends CollectionQuery<any, any>,
-  C extends QueryResultCardinality
-> = C extends 'one' ? FetchResultEntity<Q> : FetchResult<Q>;
-
-export type FetchResult<C extends CollectionQuery<any, any>> = Map<
-  string,
-  FetchResultEntity<C>
->;
 
 export type TimestampedFetchResult<C extends CollectionQuery<any, any>> = Map<
   string,
   TimestampedFetchResultEntity<C>
 >;
 
-export type TimestampedFetchResultEntity<C extends CollectionQuery<any, any>> =
+type TimestampedFetchResultEntity<C extends CollectionQuery<any, any>> =
   C extends CollectionQuery<infer M, infer CN>
     ? M extends Models<any, any>
       ? TimestampedTypeFromModel<ModelFromModels<M, CN>>
       : any
     : never;
 
-export type CollectionNameFromQuery<Q extends CollectionQuery<any, any>> =
-  Q extends CollectionQuery<infer _M, infer CN> ? CN : never;
-
-export type ReturnTypeFromQuery<Q extends CollectionQuery<any, any, any>> =
-  Q extends CollectionQuery<infer M, infer CN, infer S, infer I>
-    ? ReturnTypeFromParts<M, CN, S, I>
-    : any;
-
-export type ReturnTypeFromParts<
-  M extends Models<any, any> | undefined,
-  CN extends CollectionNameFromModels<M>,
-  Selection extends QuerySelectionValue<M, CN> = QuerySelectionValue<M, CN>,
-  Inclusion extends Record<string, RelationSubquery<M, any>> = {}
-> = M extends Models<any, any>
-  ? ModelFromModels<M, CN> extends Model<any>
-    ? QuerySelectionFitleredTypeFromModel<M, CN, Selection, Inclusion>
-    : any
-  : any;
-
-export type FetchResultEntity<C extends CollectionQuery<any, any>> =
-  ReturnTypeFromQuery<C>;
-
 function getIdFilterFromQuery(query: CollectionQuery<any, any>): string | null {
   const { where, collectionName } = query;
 
-  const idEqualityFilters = (where ?? []).filter(
-    (filter) =>
-      filter instanceof Array && filter[0] === 'id' && filter[1] === '='
-  ) as FilterStatement<any, any>[];
+  const idEqualityFilters = (where ?? [])
+    .filter(isFilterStatement)
+    .filter((filter) => filter[0] === 'id' && filter[1] === '=');
 
   if (idEqualityFilters.length > 0) {
     return appendCollectionToId(
@@ -349,7 +318,10 @@ function findRangeFilter<
   if (!where) return -1;
   for (let i = after + 1; i < where.length; i++) {
     const filter = where[i];
-    if ('exists' in filter || 'mod' in filter) continue;
+    if (isBooleanFilter(filter)) continue;
+    if (isSubQueryFilter(filter)) continue;
+    if (isFilterGroup(filter)) continue;
+    if (isExistsFilter(filter)) continue;
     const [filterPath, op, value] = filter;
     if (filterPath === path) {
       if (type === 'gt' && GT_OPS.includes(op)) return i;
@@ -389,7 +361,10 @@ function findCandidateFilter<
   if (where) {
     for (let i = 0; i < where.length; i++) {
       const filter = where[i];
-      if ('exists' in filter || 'mod' in filter) continue;
+      if (isBooleanFilter(filter)) continue;
+      if (isSubQueryFilter(filter)) continue;
+      if (isFilterGroup(filter)) continue;
+      if (isExistsFilter(filter)) continue;
       const [path, op, value] = filter;
       if (EQUALITY_OPS.includes(op)) {
         return [
@@ -522,37 +497,6 @@ export function getRelationPathsFromIdentifier<
   );
 }
 
-export function validateIdentifier<
-  M extends Models<any, any>,
-  CN extends CollectionNameFromModels<M>
->(
-  identifier: string,
-  schema: M,
-  collectionName: CN,
-  validator: (
-    dataType: DataType | undefined,
-    i: number,
-    path: string[]
-  ) => {
-    valid: boolean;
-    reason?: string;
-  }
-): { valid: boolean; path?: string; reason?: string } {
-  let schemaTraverser = createSchemaTraverser(schema, collectionName);
-  const attrPath = identifier.split('.');
-  let traversedPath: string[] = [];
-  for (let i = 0; i < attrPath.length; i++) {
-    const attr = attrPath[i];
-    schemaTraverser = schemaTraverser.get(attr);
-    traversedPath.push(attr);
-    const { valid, reason } = validator(schemaTraverser.current, i, attrPath);
-    if (!valid) {
-      return { valid, path: traversedPath.join('.'), reason };
-    }
-  }
-  return { valid: true };
-}
-
 function getRootRelationAlias<
   M extends Models<any, any>,
   CN extends CollectionNameFromModels<M>
@@ -640,14 +584,7 @@ export async function fetchDeltaTriples<
   options: FetchFromStorageOptions = {}
 ) {
   const queryPermutations = generateQueryRootPermutations(
-    await replaceVariablesInQuery(
-      caller,
-      tx,
-      query,
-      caller.systemVars,
-      executionContext,
-      options
-    ) // TODO: subquery vars
+    await replaceVariablesInQuery(caller, tx, query, executionContext, options) // TODO: subquery vars
   );
 
   const changedEntityTriples = newTriples.reduce((entities, trip) => {
@@ -687,7 +624,7 @@ export async function fetchDeltaTriples<
       }
       const matchesSimpleFiltersBefore =
         !!entityBeforeStateVector &&
-        doesEntityObjMatchWhere(
+        doesEntityObjMatchBasicWhere(
           entityBeforeStateVector,
           queryPermutation.where,
           options.schema &&
@@ -695,7 +632,7 @@ export async function fetchDeltaTriples<
         );
       const matchesSimpleFiltersAfter =
         !!entityAfterStateVector &&
-        doesEntityObjMatchWhere(
+        doesEntityObjMatchBasicWhere(
           entityAfterStateVector,
           queryPermutation.where,
           options.schema &&
@@ -705,8 +642,8 @@ export async function fetchDeltaTriples<
         continue;
       }
 
-      const subQueries = (queryPermutation.where ?? []).filter(
-        (filter) => 'exists' in filter
+      const subQueries = (queryPermutation.where ?? []).filter((filter) =>
+        isSubQueryFilter(filter)
       ) as SubQueryFilter<M>[];
       let matchesBefore = matchesSimpleFiltersBefore;
       if (matchesSimpleFiltersBefore && subQueries.length > 0) {
@@ -832,13 +769,12 @@ function queryChainToQuery<
       ...first,
       where: [...(first.where ?? []), ...additionalFilters],
     };
-  const refVariableFilters = (first.where ?? []).filter(
-    (filter) => filter instanceof Array && isValueReferentialVariable(filter[2])
-  ) as FilterStatement<any, any>[];
-  const nonRefVariableFilters = (first.where ?? []).filter(
-    (filter) =>
-      !(filter instanceof Array && isValueReferentialVariable(filter[2]))
-  ) as FilterStatement<any, any>[];
+  const refVariableFilters = (first.where ?? [])
+    .filter(isFilterStatement)
+    .filter((filter) => isValueReferentialVariable(filter[2]));
+  const nonRefVariableFilters = (first.where ?? [])
+    .filter(isFilterStatement)
+    .filter((filter) => !isValueReferentialVariable(filter[2]));
   const next = queryChainToQuery(
     rest,
     refVariableFilters.map(reverseRelationFilter)
@@ -860,8 +796,8 @@ function* generateQueryChains<
   Q extends CollectionQuery<M, any>
 >(query: Q, prefix: Q[] = []): Generator<Q[]> {
   yield [...prefix, query];
-  const subQueryFilters = (query.where ?? []).filter(
-    (filter) => 'exists' in filter
+  const subQueryFilters = (query.where ?? []).filter((filter) =>
+    isSubQueryFilter(filter)
   ) as SubQueryFilter<M>[];
   const subQueryInclusions = Object.values(query.include ?? {});
   const subQueries = [
@@ -873,7 +809,7 @@ function* generateQueryChains<
     const queryWithoutSubQuery = {
       ...query,
       where: (query.where ?? []).filter(
-        (f) => !('exists' in f) || f.exists !== subQuery
+        (f) => !isSubQueryFilter(f) || f.exists !== subQuery
       ),
     };
     yield* generateQueryChains(subQuery as Q, [
@@ -910,7 +846,7 @@ function reverseRelationFilter(filter: FilterStatement<any, any>) {
   ] as FilterStatement<any, any>;
 }
 
-type QueryPipelineData = {
+export type QueryPipelineData = {
   entity: any;
   triples: TripleRow[];
   relationships: Record<string, TripleRow[]>;
@@ -936,65 +872,39 @@ function LoadCandidateEntities(
   };
 }
 
-function ApplyBasicFilters<
-  M extends Models<any, any>,
-  Q extends CollectionQuery<M, any>
->(
-  query: Q,
-  options: FetchFromStorageOptions
-): FilterFunc<[string, QueryPipelineData]> {
-  const { where, collectionName } = query;
-  const collectionSchema = options.schema?.[collectionName]?.schema;
-  return async ([id, { entity }]) => {
-    if (!entity) return false;
-    const basicFilters = (where ?? []).filter(
-      (filter) => !('exists' in filter)
-    );
-    if (!basicFilters.length) return true;
-    return doesEntityObjMatchWhere(entity, basicFilters, collectionSchema);
-  };
-}
-
-function ApplyExistsFilters<
+function ApplyFilters<
   M extends Models<any, any> | undefined,
   Q extends CollectionQuery<M, any>
 >(
-  caller: DB<M>,
+  db: DB<M>,
   tx: TripleStoreApi,
   query: Q,
   executionContext: FetchExecutionContext,
   options: FetchFromStorageOptions
 ): FilterFunc<[string, QueryPipelineData]> {
   const { where } = query;
-  return async ([id, { entity, existsFilterTriples }]) => {
+
+  // Apply filters in order of priority (if a filter is faster to run we'll run that first)
+  const filterOrder = getFilterPriorityOrder(query);
+
+  return async ([id, pipelineItem]) => {
+    const { entity } = pipelineItem;
     if (!entity) return false;
     if (!where) return true;
-    const subQueries = where.filter(
-      (filter) => 'exists' in filter
-    ) as SubQueryFilter<M>[];
-    for (const { exists: subQuery } of subQueries) {
-      const existsSubQuery = {
-        ...subQuery,
-        limit: 1,
-      };
 
-      const { results: subQueryResult, triples } = await loadSubquery(
-        caller,
+    // Must satisfy all filters for inclusion
+    for (const filterIdx of filterOrder) {
+      const filter = where[filterIdx];
+      const satisfied = await satisfiesFilter(
+        db,
         tx,
         query,
-        existsSubQuery,
-        'one',
         executionContext,
         options,
-        entity
+        pipelineItem,
+        filter
       );
-      const exists = !!subQueryResult;
-      if (!exists) return false;
-      for (const tripleSet of triples.values()) {
-        for (const triple of tripleSet) {
-          existsFilterTriples.push(triple);
-        }
-      }
+      if (!satisfied) return false;
     }
     return true;
   };
@@ -1189,7 +1099,7 @@ export function bumpSubqueryVar(varName: string) {
   return `${intPrefix + 1}.${rest}`;
 }
 
-async function loadSubquery<
+export async function loadSubquery<
   M extends Models<any, any> | undefined,
   CN extends CollectionNameFromModels<M>
 >(
@@ -1223,9 +1133,14 @@ async function loadSubquery<
     vars: { ...(parentQuery.vars ?? {}), ...(subquery.vars ?? {}) },
   } as CollectionQuery<M, any>;
 
-  fullSubquery = prepareQuery(fullSubquery, schema, {
-    skipRules: options.skipRules,
-  });
+  fullSubquery = prepareQuery(
+    fullSubquery,
+    schema as M,
+    { roles: caller.sessionRoles },
+    {
+      skipRules: options.skipRules,
+    }
+  );
 
   // Perform fetch
   const result =
@@ -1268,6 +1183,10 @@ export function initialFetchExecutionContext(): FetchExecutionContext {
   };
 }
 
+function isSystemKey(key: string) {
+  return key === '_collection';
+}
+
 /**
  * fetch
  * @summary This function is used to fetch entities from the database. It can be used to fetch a single entity or a collection of entities.
@@ -1304,7 +1223,6 @@ export async function fetch<
     caller,
     tx,
     query,
-    caller.systemVars,
     executionContext,
     options
   );
@@ -1322,15 +1240,8 @@ export async function fetch<
     .map(LoadCandidateEntities(tx))
     // Apply where filters
     // TODO: dont refilter if already applied
-    .filter(ApplyBasicFilters(queryWithInsertedVars, options))
     .filter(
-      ApplyExistsFilters(
-        caller,
-        tx,
-        queryWithInsertedVars,
-        executionContext,
-        options
-      )
+      ApplyFilters(caller, tx, queryWithInsertedVars, executionContext, options)
     )
     // Capture entity triples
     .tap(async ([id, { triples }]) => {
@@ -1362,7 +1273,8 @@ export async function fetch<
   }
 
   if (
-    (select && select.length > 0) ||
+    !select ||
+    select.length > 0 ||
     (query.include && Object.keys(query.include).length > 0)
   ) {
     // Load include relationships
@@ -1375,11 +1287,21 @@ export async function fetch<
           entId,
           { entity, relationships, triples, existsFilterTriples },
         ]) => {
-          const selectedAttributes: string[] = select ?? [];
+          const selectedAttributes: string[] = select
+            ? select // If we have a selection use that
+            : schema && query.collectionName !== '_metadata'
+            ? Object.entries<DataType>(
+                schema[query.collectionName].schema.properties
+              )
+                .filter(([_key, dataType]) => dataType.type !== 'query')
+                .map(([key]) => key) // If schema, use those props
+            : // If schemaless, use any props queried, without system keys
+              Object.keys(entity).filter((key) => !isSystemKey(key));
           const includedRelationships = Object.keys(query.include ?? {});
           const selectedEntity = selectedAttributes
             .concat(includedRelationships)
             .reduce<any>(selectParser(entity), {});
+
           return [
             entId,
             {
@@ -1456,7 +1378,7 @@ export async function fetchOne<
   executionContext: FetchExecutionContext,
   options: FetchFromStorageOptions = {}
 ): Promise<{
-  results: FetchResultEntity<Q> | null;
+  results: QueryResult<Q, 'one'>;
   triples: Map<string, TripleRow[]>;
 }> {
   query = { ...query, limit: 1 };
@@ -1468,26 +1390,21 @@ export async function fetchOne<
   };
 }
 
-export function doesEntityObjMatchWhere<Q extends CollectionQuery<any, any>>(
-  entityObj: any,
-  where: Q['where'],
-  schema?: CollectionQuerySchema<Q>
-) {
+// NOTE: this only matches simple filters, not relational
+// TODO: evaluate proper handling of relational filters
+export function doesEntityObjMatchBasicWhere<
+  Q extends CollectionQuery<any, any>
+>(entityObj: any, where: Q['where'], schema?: CollectionQuerySchema<Q>) {
   if (!where) return true;
-  const basicStatements = where.filter(
-    (statement): statement is FilterStatement<any, any> =>
-      statement instanceof Array
-  );
+  const basicStatements = where.filter(isFilterStatement);
 
-  const orStatements = where.filter(
-    (statement): statement is FilterGroup<any, any> =>
-      'mod' in statement && statement.mod === 'or'
-  );
+  const orStatements = where
+    .filter(isFilterGroup)
+    .filter((f) => f.mod === 'or');
 
-  const andStatements = where.filter(
-    (statement): statement is FilterGroup<any, any> =>
-      'mod' in statement && statement.mod === 'and'
-  );
+  const andStatements = where
+    .filter(isFilterGroup)
+    .filter((f) => f.mod === 'and');
 
   const matchesBasicFilters = entitySatisfiesAllFilters(
     entityObj,
@@ -1499,13 +1416,13 @@ export function doesEntityObjMatchWhere<Q extends CollectionQuery<any, any>>(
 
   const matchesOrFilters = orStatements.every(({ filters }) =>
     filters.some((filter) =>
-      doesEntityObjMatchWhere(entityObj, [filter], schema)
+      doesEntityObjMatchBasicWhere(entityObj, [filter], schema)
     )
   );
   if (!matchesOrFilters) return false;
 
   const matchesAndFilters = andStatements.every(({ filters }) =>
-    doesEntityObjMatchWhere(entityObj, filters, schema)
+    doesEntityObjMatchBasicWhere(entityObj, filters, schema)
   );
   if (!matchesAndFilters) return false;
 
@@ -1550,116 +1467,6 @@ function entitySatisfiesAllFilters(
   );
 }
 
-// TODO: this should probably go into the set defintion
-// TODO: handle possible errors with sets
-function satisfiesSetFilter(
-  entity: any,
-  path: string,
-  op: Operator,
-  filterValue: any
-) {
-  const pointer = '/' + path.replaceAll('.', '/');
-  const value: Record<string, [boolean, Timestamp]> = EntityPointer.Get(
-    entity,
-    pointer
-  );
-  // We dont really support "deleting" sets, but they can appear deleted if the entity is deleted
-  // Come back to this after refactoring triple reducer to handle nested data betters
-  if (Array.isArray(value)) {
-    // indicates set is deleted
-    if (value[0] === undefined) {
-      return false;
-    }
-  }
-
-  const setData = timestampedObjectToPlainObject(value);
-  if (!setData) return false;
-  const filteredSet = Object.entries(setData).filter(([_v, inSet]) => inSet);
-  if (op === 'has') {
-    return filteredSet.some(([v]) => v === filterValue);
-  }
-  if (op === '!has') {
-    return filteredSet.every(([v]) => v !== filterValue);
-  }
-
-  return filteredSet.some(([v]) => isOperatorSatisfied(op, v, filterValue));
-}
-
-function satisfiesRegisterFilter(
-  entity: any,
-  path: string,
-  op: Operator,
-  filterValue: any
-) {
-  const maybeValue = EntityPointer.Get(entity, '/' + path.replaceAll('.', '/'));
-
-  // maybeValue is expected to be of shape [value, timestamp]
-  // this may happen if a schema is expected but not there and we're reading a value that cant be parsed, the schema is incorrect somehow, or if the provided path is incorrect
-  const isTimestampedValue =
-    !!maybeValue && maybeValue instanceof Array && maybeValue.length === 2;
-  const isTerminalValue =
-    !!maybeValue &&
-    isTimestampedValue &&
-    (typeof maybeValue[0] !== 'object' || maybeValue[0] === null);
-  if (!!maybeValue && (!isTimestampedValue || !isTerminalValue)) {
-    console.warn(
-      `Received an unexpected value at path '${path}' in entity ${JSON.stringify(
-        entity
-      )} which could not be interpreted as a register when reading filter ${JSON.stringify(
-        [path, op, filterValue]
-      )}. This is likely caused by (1) the database not properly loading its schema and attempting to interpret a value that is not a regsiter as a register, (2) a schemaless database attempting to interpret a value that is not properly formatted as a register, or (3) a query with a path that does not lead to a leaf attribute in the entity.`
-    );
-    return false;
-  }
-  const [value, _ts] = maybeValue ?? [undefined, undefined];
-  return isOperatorSatisfied(op, value, filterValue);
-}
-
-function ilike(text: string, pattern: string): boolean {
-  // Escape special regex characters in the pattern
-  pattern = pattern.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
-  // Replace SQL LIKE wildcards (%) with equivalent regex wildcards (.*)
-  pattern = pattern.replace(/%/g, '.*');
-
-  // Replace SQL LIKE single-character wildcards (_) with equivalent regex wildcards (.)
-  pattern = pattern.replace(/_/g, '.');
-
-  // Create a RegExp object from the pattern
-  const regex = new RegExp(`^${pattern}$`, 'i');
-
-  // Test the text against the regex
-  return regex.test(text);
-}
-
-function isOperatorSatisfied(op: Operator, value: any, filterValue: any) {
-  switch (op) {
-    case '=':
-      return value == filterValue;
-    case '!=':
-      return value !== filterValue;
-    case '>':
-      return value > filterValue;
-    case '>=':
-      return value >= filterValue;
-    case '<':
-      return value < filterValue;
-    case '<=':
-      return value <= filterValue;
-
-    //TODO: move regex initialization outside of the scan loop to improve performance
-    case 'like':
-      return ilike(value, filterValue);
-    case 'nlike':
-      return !ilike(value, filterValue);
-    case 'in':
-      return new Set(filterValue).has(value);
-    case 'nin':
-      return !new Set(filterValue).has(value);
-    default:
-      throw new InvalidFilterError(`The operator ${op} is not recognized.`);
-  }
-}
-
 export type CollectionQuerySchema<Q extends CollectionQuery<any, any>> =
   Q extends CollectionQuery<infer M, infer CN> ? ModelFromModels<M, CN> : never;
 
@@ -1697,7 +1504,6 @@ export function subscribeResultsAndTriples<
         caller,
         tripleStore,
         query,
-        caller.systemVars,
         executionContext,
         options
       );
@@ -1707,7 +1513,9 @@ export function subscribeResultsAndTriples<
           // Handle queries with nested queries as a special case for now
           if (
             (where &&
-              someFilterStatements(where, (filter) => 'exists' in filter)) ||
+              someFilterStatements(where, (filter) =>
+                isSubQueryFilter(filter)
+              )) ||
             (include && Object.keys(include).length > 0) ||
             (order &&
               order.some(
@@ -1772,6 +1580,11 @@ export function subscribeResultsAndTriples<
           if (!updatedEntitiesForQuery.size) return;
 
           let queryShouldRefire = false;
+
+          // Helpers for limit window
+          const endOfWindow = [...nextResult.values()].at(-1);
+          const windowSize = nextResult.size;
+
           for (const entity of updatedEntitiesForQuery) {
             const entityTriples = await tripleStore.findByEntity(
               appendCollectionToId(query.collectionName, entity)
@@ -1822,7 +1635,7 @@ export function subscribeResultsAndTriples<
               entityObj['_collection'][0] === query.collectionName;
             const isInResult =
               isInCollection &&
-              doesEntityObjMatchWhere(
+              doesEntityObjMatchBasicWhere(
                 entityObj,
                 where ?? [],
                 options.schema && options.schema[query.collectionName]?.schema
@@ -1832,11 +1645,9 @@ export function subscribeResultsAndTriples<
             // Check if the result stays within the current range of the query based on the limit
             // If it doesnt, we'll remove and might add it back when we backfill
             let satisfiesLimitRange = true;
-            if (order && limit && nextResult.size >= limit) {
-              const allValues = [...nextResult.values()];
-              const endOfRange = allValues.at(-1);
+            if (order && limit && windowSize >= limit) {
               const sortFn = querySorter(query);
-              satisfiesLimitRange = sortFn(entityObj, endOfRange) < 1;
+              satisfiesLimitRange = sortFn(entityObj, endOfWindow) < 1;
             }
 
             // Add to result or prune as needed
@@ -2127,15 +1938,13 @@ async function replaceVariablesInQuery<
   caller: DB<M>,
   tx: TripleStoreApi,
   query: Q,
-  systemVars: SystemVariables | undefined,
   executionContext: FetchExecutionContext,
   options: FetchFromStorageOptions
 ): Promise<Q> {
   // Check that where clause statements have variables loaded
   // Performance: we may load this earlier than needed if it could be filtered out by another statement
-  const clauses = (query.where ?? [])
-    .filter((statement) => Array.isArray(statement))
-    .map((statment) => statment as FilterStatement<M, CN>);
+  const clauses = (query.where ?? []).filter(isFilterStatement);
+
   for (const clause of clauses) {
     const [prop, op, val] = clause;
     if (isValueVariable(val)) {
@@ -2149,7 +1958,11 @@ async function replaceVariablesInQuery<
     }
   }
 
-  const vars = getQueryVariables(query, systemVars, executionContext);
+  const vars = getQueryVariables(
+    query,
+    { systemVars: caller.systemVars, roles: caller.sessionRoles },
+    executionContext
+  );
 
   const where = query.where
     ? replaceVariablesInFilterStatements(query.where, vars)
@@ -2163,16 +1976,19 @@ async function replaceVariablesInQuery<
 export function getQueryVariables<
   M extends Models<any, any> | undefined,
   CN extends CollectionNameFromModels<M>,
-  Q extends Partial<Pick<CollectionQuery<M, CN>, 'vars'>>
+  Q extends Partial<Pick<CollectionQuery<M, CN>, 'collectionName' | 'vars'>>
 >(
   query: Q,
-  systemVars: SystemVariables | undefined,
+  session: {
+    systemVars?: SystemVariables;
+    roles?: SessionRole[];
+  },
   executionContext: FetchExecutionContext
 ) {
   // For backwards compatability we are including non-scoped variables, these values may conflict and cause issues
   const conflictingVariables = {
-    ...(systemVars?.global ?? {}),
-    ...(systemVars?.session ?? {}),
+    ...(session.systemVars?.global ?? {}),
+    ...(session.systemVars?.session ?? {}),
     ...(query.vars ?? {}),
     ...(executionContext?.queriedDataStack ?? []).reduce((acc, val) => {
       return { ...acc, ...val };
@@ -2180,16 +1996,24 @@ export function getQueryVariables<
   };
   // Prefix variables with their scopes to prevent conflicts
   const scopedVariables = {
-    global: systemVars?.global ?? {},
-    session: systemVars?.session ?? {},
+    global: session.systemVars?.global ?? {},
+    session: session.systemVars?.session ?? {},
     query: query.vars ?? {},
+    role:
+      // Small hack to prevent role variables from being accessed when loading schema initially
+      // TODO: Address when refactoring schema storage / loading
+      query.collectionName === '_metadata'
+        ? undefined
+        : session.roles?.reduce((acc, val) => {
+            return { ...acc, ...val.roleVars };
+          }, {}),
     ...(executionContext?.queriedDataStack ?? []).reduce((acc, val, i, arr) => {
       return { ...acc, [arr.length - i]: val };
     }, {}),
   };
   return {
-    ...scopedVariables,
     ...conflictingVariables,
+    ...scopedVariables,
   };
 }
 

@@ -1,5 +1,293 @@
 # @triplit/console
 
+## 0.3.88
+
+### Patch Changes
+
+- Updated dependencies [c8c955a5]
+  - @triplit/db@0.3.64
+  - @triplit/client@0.3.82
+  - @triplit/react@0.3.86
+
+## 0.3.87
+
+### Patch Changes
+
+- Updated dependencies [48bdee2]
+  - @triplit/db@0.3.63
+  - @triplit/client@0.3.81
+  - @triplit/react@0.3.85
+
+## 0.3.86
+
+### Patch Changes
+
+- 3d3d9b1: fixup issue with dropping collection
+- Updated dependencies [40e2e50]
+  - @triplit/client@0.3.80
+  - @triplit/db@0.3.62
+  - @triplit/react@0.3.84
+
+## 0.3.85
+
+### Patch Changes
+
+- 89107bc: Await schema sync on new collection creation
+- Updated dependencies [c78aa65]
+- Updated dependencies [1c0bdf7]
+- Updated dependencies [6ccbbd5]
+  - @triplit/db@0.3.61
+  - @triplit/client@0.3.79
+  - @triplit/react@0.3.83
+
+## 0.3.84
+
+### Patch Changes
+
+- Updated dependencies [41692f0]
+  - @triplit/db@0.3.60
+  - @triplit/client@0.3.78
+  - @triplit/react@0.3.82
+
+## 0.3.83
+
+### Patch Changes
+
+- Updated dependencies [7c5105d]
+- Updated dependencies [6c24a2c]
+  - @triplit/db@0.3.59
+  - @triplit/client@0.3.77
+  - @triplit/react@0.3.81
+
+## 0.3.82
+
+### Patch Changes
+
+- Updated dependencies [aa9e562]
+- Updated dependencies [2decc7f]
+  - @triplit/db@0.3.58
+  - @triplit/client@0.3.76
+  - @triplit/react@0.3.80
+
+## 0.3.81
+
+### Patch Changes
+
+- Updated dependencies [f636418]
+  - @triplit/client@0.3.75
+  - @triplit/react@0.3.79
+
+## 0.3.80
+
+### Patch Changes
+
+- Updated dependencies [eb66825]
+- Updated dependencies [5353395]
+- Updated dependencies [eb66825]
+  - @triplit/db@0.3.57
+  - @triplit/client@0.3.74
+  - @triplit/react@0.3.78
+
+## 0.3.79
+
+### Patch Changes
+
+- Updated dependencies [c3fb0be]
+- Updated dependencies [c3fb0be]
+  - @triplit/client@0.3.73
+  - @triplit/db@0.3.56
+  - @triplit/react@0.3.77
+
+## 0.3.78
+
+### Patch Changes
+
+- Updated dependencies [607e020]
+  - @triplit/client@0.3.72
+  - @triplit/react@0.3.76
+
+## 0.3.77
+
+### Patch Changes
+
+- Updated dependencies [b65160e]
+  - @triplit/db@0.3.55
+  - @triplit/client@0.3.71
+  - @triplit/react@0.3.75
+
+## 0.3.76
+
+### Patch Changes
+
+- a8c6f75: add supports for string enums
+- Updated dependencies [55ae69b]
+- Updated dependencies [2d2b360]
+- Updated dependencies [a8c6f75]
+  - @triplit/db@0.3.54
+  - @triplit/client@0.3.70
+  - @triplit/react@0.3.74
+
+## 0.3.75
+
+### Patch Changes
+
+- Updated dependencies [784b82f]
+- Updated dependencies [199684b]
+  - @triplit/db@0.3.53
+  - @triplit/client@0.3.69
+  - @triplit/react@0.3.73
+
+## 0.3.74
+
+### Patch Changes
+
+- Updated dependencies [20b8bca]
+- Updated dependencies [546bda7]
+  - @triplit/client@0.3.68
+  - @triplit/db@0.3.52
+  - @triplit/react@0.3.72
+
+## 0.3.73
+
+### Patch Changes
+
+- Updated dependencies [8caa826]
+- Updated dependencies [6914e65]
+  - @triplit/react@0.3.71
+  - @triplit/client@0.3.67
+
+## 0.3.72
+
+### Patch Changes
+
+- Updated dependencies [1b128fb]
+  - @triplit/db@0.3.51
+  - @triplit/client@0.3.66
+  - @triplit/react@0.3.70
+
+## 0.3.71
+
+### Patch Changes
+
+- Updated dependencies [76b3751]
+  - @triplit/db@0.3.50
+  - @triplit/client@0.3.65
+  - @triplit/react@0.3.69
+
+## 0.3.70
+
+### Patch Changes
+
+- 0f97270: fixup url merging with local dev params
+- Updated dependencies [8b90ba1]
+  - @triplit/react@0.3.68
+
+## 0.3.69
+
+### Patch Changes
+
+- Updated dependencies [0e9b4c4]
+- Updated dependencies [b68787d]
+  - @triplit/db@0.3.49
+  - @triplit/client@0.3.64
+  - @triplit/react@0.3.67
+
+## 0.3.68
+
+### Patch Changes
+
+- Updated dependencies [fddc883]
+  - @triplit/db@0.3.48
+  - @triplit/client@0.3.63
+  - @triplit/react@0.3.66
+
+## 0.3.67
+
+### Patch Changes
+
+- Updated dependencies [d7b2190]
+  - @triplit/client@0.3.62
+  - @triplit/react@0.3.65
+
+## 0.3.66
+
+### Patch Changes
+
+- Updated dependencies [753a72c]
+  - @triplit/db@0.3.47
+  - @triplit/client@0.3.61
+  - @triplit/react@0.3.64
+
+## 0.3.65
+
+### Patch Changes
+
+- Updated dependencies [98a0adf]
+- Updated dependencies [922d93a]
+- Updated dependencies [7fd83f6]
+  - @triplit/client@0.3.60
+  - @triplit/db@0.3.46
+  - @triplit/react@0.3.63
+
+## 0.3.64
+
+### Patch Changes
+
+- Updated dependencies [fef88d1]
+  - @triplit/client@0.3.59
+  - @triplit/react@0.3.62
+
+## 0.3.63
+
+### Patch Changes
+
+- Updated dependencies [353976a]
+- Updated dependencies [2c71802]
+- Updated dependencies [e531de6]
+  - @triplit/client@0.3.58
+  - @triplit/db@0.3.45
+  - @triplit/react@0.3.61
+
+## 0.3.62
+
+### Patch Changes
+
+- Updated dependencies [d17db78]
+  - @triplit/client@0.3.57
+  - @triplit/react@0.3.60
+
+## 0.3.61
+
+### Patch Changes
+
+- Updated dependencies [f6468bf]
+- Updated dependencies [7fac5a4]
+- Updated dependencies [42c4d0f]
+  - @triplit/db@0.3.44
+  - @triplit/client@0.3.56
+  - @triplit/server-core@0.3.46
+  - @triplit/react@0.3.59
+
+## 0.3.60
+
+### Patch Changes
+
+- Updated dependencies [3664595]
+  - @triplit/client@0.3.55
+  - @triplit/react@0.3.58
+
+## 0.3.59
+
+### Patch Changes
+
+- Updated dependencies [352b619]
+- Updated dependencies [2c2a4d3]
+- Updated dependencies [352b619]
+  - @triplit/react@0.3.57
+  - @triplit/client@0.3.54
+  - @triplit/db@0.3.43
+  - @triplit/server-core@0.3.45
+
 ## 0.3.58
 
 ### Patch Changes

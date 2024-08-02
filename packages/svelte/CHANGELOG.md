@@ -1,5 +1,206 @@
 # @triplit/svelte
 
+## 0.1.54
+
+### Patch Changes
+
+- @triplit/client@0.3.82
+
+## 0.1.53
+
+### Patch Changes
+
+- @triplit/client@0.3.81
+
+## 0.1.52
+
+### Patch Changes
+
+- Updated dependencies [40e2e50]
+  - @triplit/client@0.3.80
+
+## 0.1.51
+
+### Patch Changes
+
+- Updated dependencies [1c0bdf7]
+  - @triplit/client@0.3.79
+
+## 0.1.50
+
+### Patch Changes
+
+- @triplit/client@0.3.78
+
+## 0.1.49
+
+### Patch Changes
+
+- @triplit/client@0.3.77
+
+## 0.1.48
+
+### Patch Changes
+
+- @triplit/client@0.3.76
+
+## 0.1.47
+
+### Patch Changes
+
+- Updated dependencies [f636418]
+  - @triplit/client@0.3.75
+
+## 0.1.46
+
+### Patch Changes
+
+- Updated dependencies [5353395]
+- Updated dependencies [eb66825]
+  - @triplit/client@0.3.74
+
+## 0.1.45
+
+### Patch Changes
+
+- Updated dependencies [c3fb0be]
+  - @triplit/client@0.3.73
+
+## 0.1.44
+
+### Patch Changes
+
+- Updated dependencies [607e020]
+  - @triplit/client@0.3.72
+
+## 0.1.43
+
+### Patch Changes
+
+- @triplit/client@0.3.71
+
+## 0.1.42
+
+### Patch Changes
+
+- 2d2b360: add JSDoc comments
+- Updated dependencies [2d2b360]
+  - @triplit/client@0.3.70
+
+## 0.1.41
+
+### Patch Changes
+
+- Updated dependencies [199684b]
+  - @triplit/client@0.3.69
+
+## 0.1.40
+
+### Patch Changes
+
+- 7279628: add JSDoc comments
+- Updated dependencies [20b8bca]
+  - @triplit/client@0.3.68
+
+## 0.1.39
+
+### Patch Changes
+
+- Updated dependencies [6914e65]
+  - @triplit/client@0.3.67
+
+## 0.1.38
+
+### Patch Changes
+
+- @triplit/client@0.3.66
+
+## 0.1.37
+
+### Patch Changes
+
+- @triplit/client@0.3.65
+
+## 0.1.36
+
+### Patch Changes
+
+- @triplit/client@0.3.64
+
+## 0.1.35
+
+### Patch Changes
+
+- @triplit/client@0.3.63
+
+## 0.1.34
+
+### Patch Changes
+
+- Updated dependencies [d7b2190]
+  - @triplit/client@0.3.62
+
+## 0.1.33
+
+### Patch Changes
+
+- @triplit/client@0.3.61
+
+## 0.1.32
+
+### Patch Changes
+
+- Updated dependencies [98a0adf]
+- Updated dependencies [922d93a]
+  - @triplit/client@0.3.60
+
+## 0.1.31
+
+### Patch Changes
+
+- Updated dependencies [fef88d1]
+  - @triplit/client@0.3.59
+
+## 0.1.30
+
+### Patch Changes
+
+- 0e4d5d2: fix useQuery hook to work with WorkerClient
+- Updated dependencies [353976a]
+- Updated dependencies [e531de6]
+  - @triplit/client@0.3.58
+
+## 0.1.29
+
+### Patch Changes
+
+- Updated dependencies [d17db78]
+  - @triplit/client@0.3.57
+
+## 0.1.28
+
+### Patch Changes
+
+- Updated dependencies [7fac5a4]
+- Updated dependencies [42c4d0f]
+  - @triplit/client@0.3.56
+
+## 0.1.27
+
+### Patch Changes
+
+- Updated dependencies [3664595]
+  - @triplit/client@0.3.55
+
+## 0.1.26
+
+### Patch Changes
+
+- 2c2a4d3: Improve type intellisense readability
+- Updated dependencies [2c2a4d3]
+- Updated dependencies [352b619]
+  - @triplit/client@0.3.54
+
 ## 0.1.25
 
 ### Patch Changes

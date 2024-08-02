@@ -1,0 +1,66 @@
+---
+description: Learn about Triplit Cloud's managed machines.
+---
+
+import { Steps } from 'nextra-theme-docs';
+import Image from 'next/image';
+import managedMachines from '../../../public/dashboard-screenshots/managed-machines.png';
+import machineWidget from '../../../public/dashboard-screenshots/machine-widget.png';
+import createProject from '../../../public/dashboard-screenshots/create-project.png';
+
+# Managed machines
+
+Triplit Cloud offers managed machines for hosting your Triplit server. Managed machines are a great way to get started with Triplit, as they require no setup or maintenance on your part. We handle all the server management, so you can focus on building your app.
+
+<Steps>
+
+### Create a project
+
+- [Sign-in or sign-up for a Triplit account](https://triplit.dev/dashboard)
+- Click the **Create Project** button
+- Provide a name for your project. This will act as a friendly alias for your project throughout the dashboard.
+
+  <Image
+    src={createProject}
+    alt="Project creation page"
+    width={'100%'}
+    style={{ borderRadius: 16, marginTop: 32 }}
+  />
+
+### Choose and deploy a machine
+
+Once you've created a project, you'll be presented with a choice of deployment options under the **Triplit Cloud** tab:
+
+<Image
+  src={managedMachines}
+  alt="Managed machines options"
+  width={'100%'}
+  style={{ borderRadius: 16, marginTop: 32 }}
+/>
+
+Once you've chosen a deployment machine configuration and region, click the **Deploy** button. This will bring you to a checkout page, where you can review your order and enter your payment details.
+
+### View your machine
+
+Once your machine is deployed, you can view its status on the **Overview** tab of your project dashboard. Here you'll see information about your machine, including its region, storage and status.
+
+<Image
+  src={machineWidget}
+  alt="Machine widget"
+  width={'50%'}
+  style={{ borderRadius: 16, marginTop: 32 }}
+/>
+
+### Use the dashboard
+
+You can use the Triplit dashboard to:
+
+- Mint API keys and rotate them as needed
+- Allow your server to accept external tokens signed with different secrets
+- Manage your data and schema with the [Triplit Console](/triplit-cloud/triplit-console)
+
+Copy the secrets from the **Overview** tab (pictured below) into your app's `.env` file.
+
+![Overview tab information](/dashboard-screenshots/quickstart.png)
+
+</Steps>

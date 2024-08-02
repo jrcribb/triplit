@@ -1,0 +1,277 @@
+---
+description: How to manage access control rules with a Triplit schema.
+---
+
+import { Callout } from 'nextra-theme-docs';
+
+<Callout type="info">
+  This feature is available for all hosted [Triplit Cloud](/triplit-cloud)
+  users. If you are self-hosting Triplit, this feature is available in Triplit
+  0.3.58 and higher.
+</Callout>
+
+## Authorization and access control
+
+Triplit provides a flexible way to define access control rules for your database, ensuring that your application data is secure without the need for complex server-side logic.
+
+<Callout type="warning" emoji="⚠️">
+  Access control checks run exclusively on the server, and are not enforced on
+  the client. Invalid writes will only be rejected when they have been sent to
+  the server.
+</Callout>
+
+### Roles
+
+When a client authenticates with a Triplit server and begins a session, it provides a token that contains some information about itself (see [authentication](/auth) for more information on tokens). You can define `roles` to access information from a token to inform permissions decisions, like 'Can this user read this todo?'.
+
+Each role has an identifier and a `match` object. When a client authenticates with a Triplit server, Triplit will check if the token matches any defined roles in the schema. If it does, the client is granted that role and will be subject to any permissions that have been defined for that it.
+
+For example, you may author `admin` and `user` tokens with the following structure:
+
+```typescript
+// schema.ts
+import { Roles } from '@triplit/client';
+
+const roles: Roles = {
+  admin: {
+    match: {
+      type: 'admin',
+    },
+  },
+  user: {
+    match: {
+      type: 'user',
+      uid: '$userId',
+    },
+  },
+};
+```
+
+Wildcards in the `match` object (prefixed with `$`) will be assigned to [variables](/client/query/variables) with the prefix `$role`. For example, a JWT with the following structure would match the `user` role and assign the value `123` to the `$role.userId` variable for use in your application's permission definitions:
+
+```typescript
+// match object
+{
+  "type": "user",
+  "uid": "$userId",
+}
+// Token
+{
+  "type": "user",
+  "uid": 123
+}
+// Query - resolves to db.query('todos').where('authorId', '=', 123);
+db.query('todos').where('authorId', '=', '$role.userId');
+```
+
+### Permissions
+
+<Callout type="warning">
+  Access control at the attribute level is not yet supported, but will be in a
+  future release.
+</Callout>
+
+By default, there are no access controls on the database and they must be configured by adding a `permissions` definition to the schema. Each collection in a schema can have a `permissions` object that defines the access control rules for that collection. Once a permissions object is defined, Triplit will enforce the provided rules for each operation on the collection. If no rules for an operation are provided, the operation not be allowed by default.
+
+The following example turns off all access to the `todos` collection so it is only accessible with your [`service` token](/auth#tokens):
+
+```typescript
+// schema.ts
+const roles = {
+  // Role definitions
+};
+
+const schema = {
+  todos: {
+    schema: S.Schema({
+      id: S.Id(),
+      text: S.String(),
+      authorId: S.String(),
+    }),
+    permissions: {},
+  },
+};
+```
+
+Collection permissions are defined for each operation and role. If a role is not included, it will not be allowed to perform that operation. When performing each operation, Triplit will check the set of set of [filter clauses](/client/query/where) that must be satisfied for the operation to be allowed.
+
+```json
+{
+   "role": {
+      "operation": {
+         "filter": // Boolean filter expression
+      }
+   }
+}
+```
+
+#### Read
+
+To allow clients to read data, you must define a `read` permission that specifies the roles that may read data and any additional restrictions. The following example allows a `user` to read the todos that they authored and an `admin` to read any todo:
+
+```typescript
+// schema.ts
+const roles = {
+  // Role definitions
+};
+
+const schema = {
+  todos: {
+    schema: S.Schema({
+      id: S.Id(),
+      text: S.String(),
+      authorId: S.String(),
+    }),
+    permissions: {
+      read: {
+        admin: {
+          // Allow all reads
+          filter: [true],
+        },
+        user: {
+          // Allow reads where authorId is the user's id
+          filter: [['authorId', '=', '$role.userId']],
+        },
+      },
+    },
+  },
+};
+```
+
+#### Insert
+
+To allow clients to insert data, you must define an `insert` permission that specifies the roles that may insert data and any additional restrictions. The following example allows a `user` to insert a todo that they author and an `admin` to insert any todo:
+
+```typescript
+// schema.ts
+const roles = {
+  // Role definitions
+};
+
+const schema = {
+  todos: {
+    schema: S.Schema({
+      id: S.Id(),
+      text: S.String(),
+      authorId: S.String(),
+    }),
+    permissions: {
+      insert: {
+        admin: {
+            // Allow all inserts
+          filter: [true],
+        }
+        user: {
+            // Allow inserts where authorId is the user's id
+          filter: [['authorId', '=', '$role.userId']],
+        },
+      },
+    },
+  },
+};
+```
+
+#### Update
+
+To allow users to update data, you must define an `update` permission that specifies the roles that may update data and any additional restrictions. For updates, the permission is checked against the "old" state of the entity, before it has been updated. The following example allows a `user` to update todos that they authored and an `admin` to update any todo:
+
+```typescript
+// schema.ts
+const roles = {
+  // Role definitions
+};
+
+const schema = {
+  todos: {
+    schema: S.Schema({
+      id: S.Id(),
+      text: S.String(),
+      authorId: S.String(),
+    }),
+    permissions: {
+      update: {
+        admin: {
+          // Allow all updates
+          filter: [true],
+        },
+        user: {
+          // Allow updates where authorId is the user's id
+          filter: [['authorId', '=', '$role.userId']],
+        },
+      },
+    },
+  },
+};
+```
+
+#### Post update
+
+You may also optionally define a `postUpdate` permission that will be run after an update operation has been completed. This is useful for confirming that updated data is valid. For example, this checks that a `user` has not re-assigned a todo to another `user`:
+
+```typescript
+// schema.ts
+const roles = {
+  // Role definitions
+};
+
+const schema = {
+  todos: {
+    schema: S.Schema({
+      id: S.Id(),
+      text: S.String(),
+      authorId: S.String(),
+    }),
+    permissions: {
+      update: {
+        user: {
+          // Allow updates where authorId is the user's id
+          filter: [['authorId', '=', '$role.userId']],
+        },
+      },
+      postUpdate: {
+        user: {
+          // Check that the authorId has not changed
+          filter: [['authorId', '=', '$role.userId']],
+        },
+      },
+    },
+  },
+};
+```
+
+#### Delete
+
+To allow users to delete data, you must define a `delete` permission that specifies the roles that may delete data and any additional restrictions. The following example allows a `user` to delete todos that they authored and an `admin` to delete any todo:
+
+```typescript
+// schema.ts
+const roles = {
+  // Role definitions
+};
+
+const schema = {
+  todos: {
+    schema: S.Schema({
+      id: S.Id(),
+      text: S.String(),
+      authorId: S.String(),
+    }),
+    permissions: {
+      delete: {
+        admin: {
+          // Allow all deletes
+          filter: [true],
+        },
+        user: {
+          // Allow deletes where authorId is the user's id
+          filter: [['authorId', '=', '$role.userId']],
+        },
+      },
+    },
+  },
+};
+```
+
+### Editing permissions
+
+Permissions are a part of your schema and can be added or updated by [modifying your schema](/schemas/updating). In a future release, you will be able to manage permissions in your project's [Dashboard](https://www.triplit.dev/dashboard).

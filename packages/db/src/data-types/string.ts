@@ -14,21 +14,28 @@ import {
 const STRING_OPERATORS = ['=', '!=', 'like', 'nlike', 'in', 'nin'] as const;
 type StringOperators = typeof STRING_OPERATORS;
 
-export type StringType<TypeOptions extends UserTypeOptions = {}> =
-  ValueInterface<
-    'string',
-    TypeWithOptions<string, TypeOptions>,
-    TypeWithOptions<string, TypeOptions>,
-    StringOperators
-  >;
+export type StringType<TypeOptions extends StringTypeOptions<any> = {}> =
+  TypeOptions extends StringTypeOptions<infer E>
+    ? ValueInterface<
+        'string',
+        TypeWithOptions<E, TypeOptions>,
+        TypeWithOptions<E, TypeOptions>,
+        StringOperators,
+        TypeOptions
+      >
+    : never;
 
-export function StringType<TypeOptions extends UserTypeOptions = {}>(
-  options: TypeOptions = {} as TypeOptions
-): StringType<TypeOptions> {
+type StringTypeOptions<E extends string> = UserTypeOptions & {
+  enum?: ReadonlyArray<E>;
+};
+
+export function StringType<
+  TypeOptions extends StringTypeOptions<any> = UserTypeOptions
+>(options: TypeOptions = {} as TypeOptions): StringType<TypeOptions> {
   if (options && !userTypeOptionsAreValid(options)) {
     throw new InvalidTypeOptionsError(options);
   }
-
+  // @ts-expect-error
   return {
     type: 'string',
     supportedOperations: STRING_OPERATORS,
@@ -46,7 +53,6 @@ export function StringType<TypeOptions extends UserTypeOptions = {}>(
     convertDBValueToJS(val) {
       return val;
     },
-    // @ts-expect-error
     convertJSONToJS(val) {
       if (options.nullable && val === null) return null;
       if (typeof val !== 'string') throw new JSONValueParseError('string', val);
@@ -59,15 +65,28 @@ export function StringType<TypeOptions extends UserTypeOptions = {}>(
       return calcDefaultValue(options) as string | undefined;
     },
     validateInput(val: any) {
-      if (typeof val === 'string' || (!!options.nullable && val === null))
-        return;
-      return valueMismatchMessage('string', options, val);
+      if (!!options.nullable && val === null) return;
+      if (typeof val !== 'string')
+        return valueMismatchMessage('string', options, val);
+      if (options.enum && !options.enum.includes(val))
+        return enumMismatchMessage(options.enum, val);
+      return;
     },
     validateTripleValue(val) {
-      return typeof val === 'string' || (!!options.nullable && val === null);
+      return (
+        (typeof val === 'string' &&
+          (!options.enum || options.enum.includes(val))) ||
+        (!!options.nullable && val === null)
+      );
     },
     fromString(val: string) {
       return val;
     },
   };
+}
+
+function enumMismatchMessage(enums: readonly string[], val: any) {
+  return `Expected a value in the enum [${enums.join(
+    ', '
+  )}], but got ${val} instead.`;
 }

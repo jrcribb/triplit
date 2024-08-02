@@ -10,18 +10,27 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@triplit/ui';
-import { useSelectedCollection } from 'src/hooks/useSelectedCollection.js';
 import { ComponentProps } from 'react';
+import { useToast } from 'src/hooks/useToast.js';
+import { dropCollection } from 'src/utils/schema.js';
 
 type DeleteCollectionDialogProps = {
   client: TriplitClient<any>;
+  collection: string;
+  onDeleteCollection: () => void;
 };
 
 export function DeleteCollectionDialog(
   props: DeleteCollectionDialogProps & ComponentProps<typeof AlertDialog>
 ) {
-  const { onOpenChange, client, ...dialogProps } = props;
-  const [collection, setSelectedCollection] = useSelectedCollection();
+  const {
+    onOpenChange,
+    client,
+    collection,
+    onDeleteCollection,
+    ...dialogProps
+  } = props;
+  const { toast } = useToast();
   return (
     <AlertDialog onOpenChange={onOpenChange} {...dialogProps}>
       <AlertDialogContent>
@@ -38,8 +47,16 @@ export function DeleteCollectionDialog(
           <AlertDialogCancel>Cancel</AlertDialogCancel>
           <AlertDialogAction
             onClick={async () => {
-              await client.db.dropCollection({ name: collection });
-              setSelectedCollection(undefined);
+              const error = await dropCollection(client, collection);
+              if (error) {
+                toast({
+                  title: 'Error',
+                  description: error,
+                  variant: 'destructive',
+                });
+                return;
+              }
+              onDeleteCollection();
               onOpenChange && onOpenChange(false);
             }}
           >

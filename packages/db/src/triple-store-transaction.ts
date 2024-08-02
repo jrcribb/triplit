@@ -5,7 +5,6 @@ import {
   StorageScope,
 } from './multi-tuple-store.js';
 import { Clock } from './clocks/clock.js';
-import { ValueCursor } from './query.js';
 import { TripleStoreApi } from './triple-store.js';
 import { InvalidTripleStoreValueError } from './errors.js';
 import {
@@ -35,6 +34,7 @@ import {
   RangeContraints,
 } from './triple-store-utils.js';
 import { copyHooks } from './utils.js';
+import { MirroredArray } from './utils/mirrored-array.js';
 
 function extractTriplesFromTx(tx: MultiTupleTransaction<TupleIndex>) {
   return Object.fromEntries(
@@ -56,7 +56,9 @@ export class TripleStoreTransaction implements TripleStoreApi {
 
   readonly clock: Clock;
 
-  hooks: TripleStoreHooks;
+  readonly hooks: TripleStoreHooks;
+  private _inheritedHooks: TripleStoreHooks;
+  private _ownHooks: TripleStoreHooks;
 
   constructor({
     tupleTx,
@@ -69,17 +71,40 @@ export class TripleStoreTransaction implements TripleStoreApi {
   }) {
     this.tupleTx = tupleTx;
     this.clock = clock;
-    this.hooks = hooks;
+    this._inheritedHooks = hooks ?? {
+      beforeCommit: [],
+      beforeInsert: [],
+      afterCommit: [],
+    };
+    this._ownHooks = {
+      beforeCommit: [],
+      beforeInsert: [],
+      afterCommit: [],
+    };
+    this.hooks = {
+      beforeCommit: MirroredArray(
+        this._inheritedHooks.beforeCommit,
+        this._ownHooks.beforeCommit
+      ),
+      beforeInsert: MirroredArray(
+        this._inheritedHooks.beforeInsert,
+        this._ownHooks.beforeInsert
+      ),
+      afterCommit: MirroredArray(
+        this._inheritedHooks.afterCommit,
+        this._ownHooks.afterCommit
+      ),
+    };
 
     // register tuple store hooks
     this.hooks.beforeCommit.forEach((hook) => {
-      this.tupleTx.hooks.beforeCommit.push((tx) => {
+      this.tupleTx.beforeCommit((tx) => {
         const triples = extractTriplesFromTx(tx);
         return hook(triples, this);
       });
     });
     this.hooks.afterCommit.forEach((hook) => {
-      this.tupleTx.hooks.afterCommit.push((tx) => {
+      this.tupleTx.afterCommit((tx) => {
         const triples = extractTriplesFromTx(tx);
         return hook(triples, this);
       });
@@ -359,6 +384,10 @@ export class TripleStoreTransaction implements TripleStoreApi {
     await this.tupleTx.cancel();
   }
 
+  get isCancelled() {
+    return this.tupleTx.isCancelled;
+  }
+
   withScope(scope: StorageScope) {
     return new TripleStoreTransaction({
       // @ts-expect-error
@@ -369,18 +398,14 @@ export class TripleStoreTransaction implements TripleStoreApi {
   }
 
   beforeInsert(callback: TripleStoreBeforeInsertHook) {
-    this.hooks.beforeInsert.push(callback);
+    this._ownHooks.beforeInsert.push(callback);
   }
 
   beforeCommit(callback: TripleStoreBeforeCommitHook) {
-    this.tupleTx.hooks.beforeCommit.push((tx) =>
-      callback(extractTriplesFromTx(tx), this)
-    );
+    this.tupleTx.beforeCommit((tx) => callback(extractTriplesFromTx(tx), this));
   }
 
   afterCommit(callback: TripleStoreAfterCommitHook) {
-    this.tupleTx.hooks.afterCommit.push((tx) =>
-      callback(extractTriplesFromTx(tx), this)
-    );
+    this.tupleTx.afterCommit((tx) => callback(extractTriplesFromTx(tx), this));
   }
 }

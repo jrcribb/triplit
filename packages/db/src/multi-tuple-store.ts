@@ -15,6 +15,7 @@ import {
   RemoveTupleValuePairPrefix,
 } from '@triplit/tuple-database/database/typeHelpers';
 import { DBScanFailureError, NotImplementedError } from './errors.js';
+import { MirroredArray } from './utils/mirrored-array.js';
 
 export type StorageScope = {
   read?: string[];
@@ -58,7 +59,9 @@ type MultiTupleStoreHooks<TupleSchema extends KeyValuePair> = {
 export default class MultiTupleStore<TupleSchema extends KeyValuePair> {
   readonly storageScope?: StorageScope;
   storage: Record<string, AsyncTupleDatabaseClient<TupleSchema>>;
-  hooks: MultiTupleStoreHooks<TupleSchema>;
+  readonly hooks: MultiTupleStoreHooks<TupleSchema>;
+  private _inheritedHooks: MultiTupleStoreHooks<TupleSchema>;
+  private _ownHooks: MultiTupleStoreHooks<TupleSchema>;
   reactivity: MultiTupleReactivity;
   // subspacePrefix: Tuple;
 
@@ -75,13 +78,46 @@ export default class MultiTupleStore<TupleSchema extends KeyValuePair> {
   }) {
     this.storage = storage;
     this.storageScope = storageScope;
-    this.hooks = hooks ?? {
+    this._inheritedHooks = hooks ?? {
       beforeCommit: [],
       beforeInsert: [],
       beforeScan: [],
       afterCommit: [],
     };
+    this._ownHooks = {
+      beforeCommit: [],
+      beforeInsert: [],
+      beforeScan: [],
+      afterCommit: [],
+    };
+    this.hooks = {
+      beforeCommit: MirroredArray(
+        this._inheritedHooks.beforeCommit,
+        this._ownHooks.beforeCommit
+      ),
+      beforeInsert: MirroredArray(
+        this._inheritedHooks.beforeInsert,
+        this._ownHooks.beforeInsert
+      ),
+      beforeScan: MirroredArray(
+        this._inheritedHooks.beforeScan,
+        this._ownHooks.beforeScan
+      ),
+      afterCommit: MirroredArray(
+        this._inheritedHooks.afterCommit,
+        this._ownHooks.afterCommit
+      ),
+    };
     this.reactivity = reactivity ?? new MultiTupleReactivity();
+  }
+
+  withStorageScope(scope: StorageScope) {
+    return new MultiTupleStore({
+      storage: this.storage,
+      storageScope: scope,
+      hooks: this.hooks,
+      reactivity: this.reactivity,
+    });
   }
 
   getStorageClients(context?: 'read' | 'write') {
@@ -103,19 +139,19 @@ export default class MultiTupleStore<TupleSchema extends KeyValuePair> {
   }
 
   beforeInsert(callback: MultiTupleStoreBeforeInsertHook<TupleSchema>) {
-    this.hooks.beforeInsert.push(callback);
+    this._ownHooks.beforeInsert.push(callback);
   }
 
   beforeCommit(callback: MultiTupleStoreBeforeCommitHook<TupleSchema>) {
-    this.hooks.beforeCommit.push(callback);
+    this._ownHooks.beforeCommit.push(callback);
   }
 
   afterCommit(callback: MultiTupleStoreAfterCommitHook<TupleSchema>) {
-    this.hooks.afterCommit.push(callback);
+    this._ownHooks.afterCommit.push(callback);
   }
 
   beforeScan(callback: MultiTupleStoreBeforeScanHook<TupleSchema>) {
-    this.hooks.beforeScan.push(callback);
+    this._ownHooks.beforeScan.push(callback);
   }
 
   async scan<T extends Tuple, P extends TuplePrefix<T>>(
@@ -196,16 +232,8 @@ export default class MultiTupleStore<TupleSchema extends KeyValuePair> {
     return new MultiTupleStore({
       storage: prefixedStorages,
       storageScope: this.storageScope,
-      hooks: {
-        // @ts-ignore
-        beforeCommit: [...this.hooks.beforeCommit],
-        // @ts-ignore
-        beforeInsert: [...this.hooks.beforeInsert],
-        // @ts-ignore
-        beforeScan: [...this.hooks.beforeScan],
-        // @ts-ignore
-        afterCommit: [...this.hooks.afterCommit],
-      },
+      // @ts-expect-error
+      hooks: this.hooks,
       reactivity: this.reactivity,
     }) as MultiTupleStore<RemoveTupleValuePairPrefix<TupleSchema, P>>;
   }
@@ -214,12 +242,7 @@ export default class MultiTupleStore<TupleSchema extends KeyValuePair> {
     return new MultiTupleTransaction({
       scope: scope ?? this.storageScope,
       store: this,
-      hooks: {
-        beforeCommit: [...this.hooks.beforeCommit],
-        beforeInsert: [...this.hooks.beforeInsert],
-        beforeScan: [...this.hooks.beforeScan],
-        afterCommit: [...this.hooks.afterCommit],
-      },
+      hooks: this.hooks,
     });
   }
 
@@ -240,12 +263,7 @@ export default class MultiTupleStore<TupleSchema extends KeyValuePair> {
           ? new MultiTupleStore({
               storage: this.storage,
               storageScope: scope,
-              hooks: {
-                beforeCommit: [...this.hooks.beforeCommit],
-                beforeInsert: [...this.hooks.beforeInsert],
-                beforeScan: [...this.hooks.beforeScan],
-                afterCommit: [...this.hooks.afterCommit],
-              },
+              hooks: this.hooks,
               reactivity: this.reactivity,
             })
           : this
@@ -357,8 +375,10 @@ export class MultiTupleTransaction<
 > extends ScopedMultiTupleOperator<TupleSchema> {
   readonly txs: Record<string, AsyncTupleRootTransactionApi<TupleSchema>>;
   readonly store: MultiTupleStore<TupleSchema>;
-  isCanceled = false;
-  hooks: MultiTupleStoreHooks<TupleSchema>;
+  isCancelled = false;
+  readonly hooks: MultiTupleStoreHooks<TupleSchema>;
+  private _inheritedHooks: MultiTupleStoreHooks<TupleSchema>;
+  private _ownHooks: MultiTupleStoreHooks<TupleSchema>;
 
   id: string = Math.random().toString(36).slice(2);
 
@@ -389,7 +409,36 @@ export class MultiTupleTransaction<
     }
     this.txs = txs;
     this.store = store;
-    this.hooks = hooks;
+    this._inheritedHooks = hooks ?? {
+      beforeCommit: [],
+      beforeInsert: [],
+      beforeScan: [],
+      afterCommit: [],
+    };
+    this._ownHooks = {
+      beforeCommit: [],
+      beforeInsert: [],
+      beforeScan: [],
+      afterCommit: [],
+    };
+    this.hooks = {
+      beforeCommit: MirroredArray(
+        this._inheritedHooks.beforeCommit,
+        this._ownHooks.beforeCommit
+      ),
+      beforeInsert: MirroredArray(
+        this._inheritedHooks.beforeInsert,
+        this._ownHooks.beforeInsert
+      ),
+      beforeScan: MirroredArray(
+        this._inheritedHooks.beforeScan,
+        this._ownHooks.beforeScan
+      ),
+      afterCommit: MirroredArray(
+        this._inheritedHooks.afterCommit,
+        this._ownHooks.afterCommit
+      ),
+    };
   }
 
   get writes() {
@@ -399,7 +448,15 @@ export class MultiTupleTransaction<
   }
 
   beforeScan(callback: MultiTupleStoreBeforeScanHook<TupleSchema>) {
-    this.hooks.beforeScan.push(callback);
+    this._ownHooks.beforeScan.push(callback);
+  }
+
+  beforeCommit(callback: MultiTupleStoreBeforeCommitHook<TupleSchema>) {
+    this._ownHooks.beforeCommit.push(callback);
+  }
+
+  afterCommit(callback: MultiTupleStoreAfterCommitHook<TupleSchema>) {
+    this._ownHooks.afterCommit.push(callback);
   }
 
   async scan<T extends Tuple, P extends TuplePrefix<T>>(
@@ -430,7 +487,7 @@ export class MultiTupleTransaction<
   }
 
   async commit() {
-    if (this.isCanceled) {
+    if (this.isCancelled) {
       console.warn('Cannot commit already canceled transaction.');
       return;
     }
@@ -451,12 +508,12 @@ export class MultiTupleTransaction<
     this.store.reactivity.emit(this.id);
   }
   async cancel() {
-    if (this.isCanceled) {
+    if (this.isCancelled) {
       console.warn('Attempted to cancel already canceled transaction.');
       return;
     }
     await Promise.all(Object.values(this.txs).map((tx) => tx.cancel()));
-    this.isCanceled = true;
+    this.isCancelled = true;
   }
 }
 

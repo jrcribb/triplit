@@ -1,5 +1,212 @@
 # @triplit/react
 
+## 0.3.86
+
+### Patch Changes
+
+- @triplit/client@0.3.82
+
+## 0.3.85
+
+### Patch Changes
+
+- @triplit/client@0.3.81
+
+## 0.3.84
+
+### Patch Changes
+
+- Updated dependencies [40e2e50]
+  - @triplit/client@0.3.80
+
+## 0.3.83
+
+### Patch Changes
+
+- Updated dependencies [1c0bdf7]
+  - @triplit/client@0.3.79
+
+## 0.3.82
+
+### Patch Changes
+
+- @triplit/client@0.3.78
+
+## 0.3.81
+
+### Patch Changes
+
+- @triplit/client@0.3.77
+
+## 0.3.80
+
+### Patch Changes
+
+- @triplit/client@0.3.76
+
+## 0.3.79
+
+### Patch Changes
+
+- Updated dependencies [f636418]
+  - @triplit/client@0.3.75
+
+## 0.3.78
+
+### Patch Changes
+
+- Updated dependencies [5353395]
+- Updated dependencies [eb66825]
+  - @triplit/client@0.3.74
+
+## 0.3.77
+
+### Patch Changes
+
+- Updated dependencies [c3fb0be]
+  - @triplit/client@0.3.73
+
+## 0.3.76
+
+### Patch Changes
+
+- Updated dependencies [607e020]
+  - @triplit/client@0.3.72
+
+## 0.3.75
+
+### Patch Changes
+
+- @triplit/client@0.3.71
+
+## 0.3.74
+
+### Patch Changes
+
+- 2d2b360: add JSDoc comments
+- Updated dependencies [2d2b360]
+  - @triplit/client@0.3.70
+
+## 0.3.73
+
+### Patch Changes
+
+- Updated dependencies [199684b]
+  - @triplit/client@0.3.69
+
+## 0.3.72
+
+### Patch Changes
+
+- Updated dependencies [20b8bca]
+  - @triplit/client@0.3.68
+
+## 0.3.71
+
+### Patch Changes
+
+- 8caa826: add JSDoc comments
+- Updated dependencies [6914e65]
+  - @triplit/client@0.3.67
+
+## 0.3.70
+
+### Patch Changes
+
+- @triplit/client@0.3.66
+
+## 0.3.69
+
+### Patch Changes
+
+- @triplit/client@0.3.65
+
+## 0.3.68
+
+### Patch Changes
+
+- 8b90ba1: Fix memoizaton of query in usePaginatedQuery
+
+## 0.3.67
+
+### Patch Changes
+
+- @triplit/client@0.3.64
+
+## 0.3.66
+
+### Patch Changes
+
+- @triplit/client@0.3.63
+
+## 0.3.65
+
+### Patch Changes
+
+- Updated dependencies [d7b2190]
+  - @triplit/client@0.3.62
+
+## 0.3.64
+
+### Patch Changes
+
+- @triplit/client@0.3.61
+
+## 0.3.63
+
+### Patch Changes
+
+- Updated dependencies [98a0adf]
+- Updated dependencies [922d93a]
+  - @triplit/client@0.3.60
+
+## 0.3.62
+
+### Patch Changes
+
+- Updated dependencies [fef88d1]
+  - @triplit/client@0.3.59
+
+## 0.3.61
+
+### Patch Changes
+
+- Updated dependencies [353976a]
+- Updated dependencies [e531de6]
+  - @triplit/client@0.3.58
+
+## 0.3.60
+
+### Patch Changes
+
+- Updated dependencies [d17db78]
+  - @triplit/client@0.3.57
+
+## 0.3.59
+
+### Patch Changes
+
+- Updated dependencies [7fac5a4]
+- Updated dependencies [42c4d0f]
+  - @triplit/client@0.3.56
+
+## 0.3.58
+
+### Patch Changes
+
+- Updated dependencies [3664595]
+  - @triplit/client@0.3.55
+
+## 0.3.57
+
+### Patch Changes
+
+- 352b619: add hook useQueryOne
+- 2c2a4d3: Improve type intellisense readability
+- Updated dependencies [2c2a4d3]
+- Updated dependencies [352b619]
+  - @triplit/client@0.3.54
+
 ## 0.3.56
 
 ### Patch Changes

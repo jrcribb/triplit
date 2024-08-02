@@ -1,5 +1,205 @@
 # @triplit/cli
 
+## 0.4.22
+
+### Patch Changes
+
+- c8c955a5: Manual version bump for CLI dependencies
+
+## 0.4.21
+
+### Patch Changes
+
+- 48bdee2: Manual version bump for CLI dependencies
+
+## 0.4.20
+
+### Patch Changes
+
+- 40e2e50: Manual version bump for CLI dependencies
+
+## 0.4.19
+
+### Patch Changes
+
+- c78aa65: Manual version bump for CLI dependencies
+
+## 0.4.18
+
+### Patch Changes
+
+- 41692f0: Manual version bump for CLI dependencies
+
+## 0.4.17
+
+### Patch Changes
+
+- ae7357f: Fixup cjs file reads
+
+## 0.4.16
+
+### Patch Changes
+
+- 294a9b8: Add json-schema format to schema print
+- 6c24a2c: Manual version bump for CLI dependencies
+
+## 0.4.15
+
+### Patch Changes
+
+- aa9e562: Manual version bump for CLI dependencies
+
+## 0.4.14
+
+### Patch Changes
+
+- f636418: Manual version bump for CLI dependencies
+
+## 0.4.13
+
+### Patch Changes
+
+- eb66825: Manual version bump for CLI dependencies
+- 8360dd7: Fixup schema print with no permissions
+
+## 0.4.12
+
+### Patch Changes
+
+- 607e020: Manual version bump for CLI dependencies
+- 607e020: Push roles with schema
+
+## 0.4.11
+
+### Patch Changes
+
+- f2beb55: Manual version bump for CLI dependencies
+
+## 0.4.10
+
+### Patch Changes
+
+- 5621dcc: Manual version bump for CLI dependencies
+
+## 0.4.9
+
+### Patch Changes
+
+- 709fad1: Manual version bump for CLI dependencies
+
+## 0.4.8
+
+### Patch Changes
+
+- 42a81e2: Add version command to CLI
+- 3c7404e: Manual version bump for CLI dependencies
+
+## 0.4.7
+
+### Patch Changes
+
+- b65160e: Manual version bump for CLI dependencies
+
+## 0.4.5
+
+### Patch Changes
+
+- 7912cba: Hide ugly connection errors in REPL
+
+## 0.4.4
+
+### Patch Changes
+
+- 311a156: add vue as option to triplit init
+
+## 0.4.3
+
+### Patch Changes
+
+- fddc883: Add additional storage options to the dev command
+
+## 0.4.2
+
+### Patch Changes
+
+- 45f8d5e: Update parjs
+- d2ff9fb: Improve schema diff output
+
+## 0.4.1
+
+### Patch Changes
+
+- 1a343ae: Fix fsevents dep causing issues on non-Mac OSes
+
+## 0.4.0
+
+### Minor Changes
+
+- 052c918: Majorly improve install speed
+
+## 0.3.71
+
+### Patch Changes
+
+- Updated dependencies [bfb1193]
+  - @triplit/server@0.3.49
+
+## 0.3.70
+
+### Patch Changes
+
+- Updated dependencies [fef88d1]
+  - @triplit/client@0.3.59
+
+## 0.3.69
+
+### Patch Changes
+
+- Updated dependencies [353976a]
+- Updated dependencies [2c71802]
+- Updated dependencies [e531de6]
+  - @triplit/client@0.3.58
+  - @triplit/db@0.3.45
+  - @triplit/server@0.3.48
+  - @triplit/server-core@0.3.47
+
+## 0.3.68
+
+### Patch Changes
+
+- Updated dependencies [d17db78]
+  - @triplit/client@0.3.57
+
+## 0.3.67
+
+### Patch Changes
+
+- Updated dependencies [f6468bf]
+- Updated dependencies [7fac5a4]
+- Updated dependencies [42c4d0f]
+  - @triplit/db@0.3.44
+  - @triplit/client@0.3.56
+  - @triplit/server@0.3.47
+  - @triplit/server-core@0.3.46
+
+## 0.3.66
+
+### Patch Changes
+
+- Updated dependencies [3664595]
+  - @triplit/client@0.3.55
+
+## 0.3.65
+
+### Patch Changes
+
+- Updated dependencies [2c2a4d3]
+- Updated dependencies [352b619]
+  - @triplit/client@0.3.54
+  - @triplit/db@0.3.43
+  - @triplit/server@0.3.46
+  - @triplit/server-core@0.3.45
+
 ## 0.3.64
 
 ### Patch Changes

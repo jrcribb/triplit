@@ -1,7 +1,21 @@
 {
   "name": "@triplit/client",
+  "repository": "github:aspen-cloud/triplit",
+  "homepage": "https://triplit.dev",
+  "license": "AGPL-3.0-only",
+  "keywords": [
+    "triplit",
+    "react",
+    "vue",
+    "indexeddb",
+    "crdt",
+    "fullstack",
+    "database",
+    "offline",
+    "sqlite"
+  ],
   "packageManager": "yarn@3.4.1",
-  "version": "0.3.53",
+  "version": "0.3.82",
   "source": "./src/index.ts",
   "main": "./dist/index.js",
   "type": "module",
@@ -14,24 +28,27 @@
       "default": "./dist/index.js"
     },
     "./worker-client": {
-      "types": "./dist/worker-client.d.ts",
-      "import": "./dist/worker-client.js",
-      "default": "./dist/worker-client.js"
+      "types": "./dist/worker-client/worker-client.d.ts",
+      "import": "./dist/worker-client/worker-client.js",
+      "default": "./dist/worker-client/worker-client.js"
     },
     "./worker-client-operator": {
-      "types": "./dist/worker-client-operator.d.ts",
-      "import": "./dist/worker-client-operator.js",
-      "default": "./dist/worker-client-operator.js"
+      "types": "./dist/worker-client/worker-client-operator.d.ts",
+      "import": "./dist/worker-client/worker-client-operator.js",
+      "default": "./dist/worker-client/worker-client-operator.js"
     }
   },
   "scripts": {
-    "build": "tsc && yarn build-worker",
+    "build": "tsc && yarn validate:types && yarn build-worker",
     "build:watch": "tsc -w",
     "lint:build": "npx publint",
     "lint": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "yarn test:unit && yarn typecheck",
+    "test:unit": "vitest run",
+    "typecheck": "vitest --typecheck.only --no-watch",
     "publish-pkg": "node ../../scripts/npm-check-version-and-publish.js",
-    "build-worker": "esbuild ./src/worker-client-operator.ts --bundle --minify --platform=browser --outfile=./dist/worker-client-operator.js --format=esm --sourcemap"
+    "build-worker": "esbuild ./src/worker-client/worker-client-operator.ts --bundle --minify --platform=browser --outfile=./dist/worker-client/worker-client-operator.js --format=esm",
+    "validate:types": "node ../../scripts/check-for-local-references-in-declarations.js dist"
   },
   "files": [
     "/dist"

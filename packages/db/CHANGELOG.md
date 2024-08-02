@@ -1,5 +1,146 @@
 # @triplit/db
 
+## 0.3.64
+
+### Patch Changes
+
+- c8c955a5: Fixup prepare query inclusion merging
+
+## 0.3.63
+
+### Patch Changes
+
+- 48bdee2: Fixup query preparation with deep inclusions
+
+## 0.3.62
+
+### Patch Changes
+
+- 40e2e50: add transaction option manualSchemaRefresh
+
+## 0.3.61
+
+### Patch Changes
+
+- c78aa65: Fixup errors not catching on initial subscription
+- 6ccbbd5: Add isCancelled to transaction output
+
+## 0.3.60
+
+### Patch Changes
+
+- 41692f0: Fixup subscription order bug
+
+## 0.3.59
+
+### Patch Changes
+
+- 7c5105d: export schema export methods
+- 6c24a2c: fixup nullable transform for json schema export
+
+## 0.3.58
+
+### Patch Changes
+
+- aa9e562: serialize schema before logging
+- 2decc7f: Fix issue where index hooks were over registering
+
+## 0.3.57
+
+### Patch Changes
+
+- eb66825: Add type TransactionResult
+
+## 0.3.56
+
+### Patch Changes
+
+- c3fb0be: Add method to get schema as json in a transaction
+
+## 0.3.55
+
+### Patch Changes
+
+- b65160e: Support undefined roles in db constructor
+
+## 0.3.54
+
+### Patch Changes
+
+- 55ae69b: Add permissions api
+- a8c6f75: add supports for string enums
+
+## 0.3.53
+
+### Patch Changes
+
+- 784b82f: Fix erroneous back-copat check for new collections
+- 199684b: ensure query builder can be built incrementally without overwritinga
+
+## 0.3.52
+
+### Patch Changes
+
+- 546bda7: Add option to db.clear() to clear all data vs application data
+
+## 0.3.51
+
+### Patch Changes
+
+- 1b128fb: fixup package config
+
+## 0.3.50
+
+### Patch Changes
+
+- 76b3751: Upgrade @triplit/tuple-database, fixing Expo Sqlite typo
+
+## 0.3.49
+
+### Patch Changes
+
+- 0e9b4c4: Add helper for exists queries
+- b68787d: export return types
+
+## 0.3.48
+
+### Patch Changes
+
+- fddc883: Bump @triplit/tuple-database version
+
+## 0.3.47
+
+### Patch Changes
+
+- 753a72c: bug fix: properly parse date input
+
+## 0.3.46
+
+### Patch Changes
+
+- 98a0adf: Improve error logging
+- 7fd83f6: Support relations in filter groups (ie and/or clauses)
+
+## 0.3.45
+
+### Patch Changes
+
+- 2c71802: Cut max relationship type completion depth to 3
+
+## 0.3.44
+
+### Patch Changes
+
+- f6468bf: fixup spread params type in where() in query builder
+- 7fac5a4: various types fixes and refactors
+
+## 0.3.43
+
+### Patch Changes
+
+- 2c2a4d3: Improve type intellisense readability
+- 352b619: refactor fetchById to use fetchOne and simplify params, add id() to builder
+
 ## 0.3.42
 
 ### Patch Changes

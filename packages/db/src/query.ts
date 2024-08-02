@@ -1,65 +1,31 @@
 import {
-  ModelPaths,
   Models,
   Path,
-  RelationAttributes,
-  SchemaPaths,
+  RelationPaths,
+  RelationshipCollectionName,
 } from './schema/types';
 import { Timestamp, timestampCompare } from './timestamp.js';
 import { CollectionNameFromModels, ModelFromModels } from './db.js';
-import { ExtractOperators, ExtractValueInputs } from './data-types/type.js';
-import { RecordType } from './data-types/record.js';
-import { EntityId, TripleRow } from './triple-store-utils.js';
+import { TripleRow } from './triple-store-utils.js';
 import { encodeValue } from '@triplit/tuple-database';
+import {
+  AndFilterGroup,
+  CollectionQuery,
+  FilterGroup,
+  FilterStatement,
+  OrFilterGroup,
+  QueryValue,
+  QueryWhere,
+  RelationshipExistsFilter,
+  SubQueryFilter,
+  ValueCursor,
+  WhereFilter,
+} from './query/types';
 
-// Should be friendly types that we pass into queries
-// Not to be confused with the Value type that we store in the triple store
-export type QueryValue =
-  | number
-  | string
-  | boolean
-  | Date
-  | null
-  | number[]
-  | boolean[]
-  | string[];
-
-export type FilterStatement<
+export function isFilterStatement<
   M extends Models<any, any> | undefined,
-  CN extends CollectionNameFromModels<M>,
-  K extends M extends Models<any, any>
-    ? SchemaPaths<M, CN>
-    : Path = M extends Models<any, any> ? SchemaPaths<M, CN> : Path
-> = [
-  K,
-  M extends Models<any, any>
-    ? ExtractOperators<ExtractTypeAtPath<ModelFromModels<M, CN>, K>>
-    : string,
-  M extends Models<any, any>
-    ? ExtractValueInputs<ExtractTypeAtPath<ModelFromModels<M, CN>, K>>
-    : QueryValue
-];
-
-type ExtractTypeAtPath<
-  M extends RecordType<any>,
-  P extends any // should be a dot notation path
-> = P extends `${infer K}.${infer Rest}` // if path is nested
-  ? K extends keyof M['properties'] // if key is a valid key
-    ? M['properties'][K] extends RecordType<any> // if value at key is a record type
-      ? ExtractTypeAtPath<
-          // @ts-ignore
-          M['properties'][K],
-          Rest
-        > // recurse
-      : never // if value at key is not a record type
-    : never // if key is not a valid key
-  : P extends keyof M['properties'] // if path is not nested
-  ? M['properties'][P] // return value at path
-  : never; // if path is not valid
-
-export function isFilterStatement(
-  filter: WhereFilter<any, any>
-): filter is FilterStatement<any, any> {
+  CN extends CollectionNameFromModels<M>
+>(filter: WhereFilter<M, CN>): filter is FilterStatement<M, CN> {
   return (
     filter instanceof Array &&
     filter.length === 3 &&
@@ -68,88 +34,44 @@ export function isFilterStatement(
   );
 }
 
-export type FilterGroup<
+export function isFilterGroup<
   M extends Models<any, any> | undefined,
   CN extends CollectionNameFromModels<M>
-> = {
-  mod: 'or' | 'and';
-  filters: WhereFilter<M, CN>[];
-};
+>(filter: WhereFilter<M, CN>): filter is FilterGroup<M, CN> {
+  return filter instanceof Object && 'mod' in filter;
+}
 
-export type SubQueryFilter<
-  M extends Models<any, any> | undefined = any,
-  CN extends CollectionNameFromModels<M> = any
-> = {
-  exists: CollectionQuery<M, CN>;
-};
-
-export type WhereFilter<
+export function isSubQueryFilter<
   M extends Models<any, any> | undefined,
   CN extends CollectionNameFromModels<M>
-> = FilterStatement<M, CN> | FilterGroup<M, CN> | SubQueryFilter;
+>(filter: WhereFilter<M, CN>): filter is SubQueryFilter<M, CN> {
+  return filter instanceof Object && 'exists' in filter;
+}
 
-export type QueryWhere<
+export function isExistsFilter<
   M extends Models<any, any> | undefined,
   CN extends CollectionNameFromModels<M>
-> = WhereFilter<M, CN>[];
+>(filter: WhereFilter<M, CN>): filter is RelationshipExistsFilter<M, CN> {
+  return (
+    filter instanceof Object &&
+    'type' in filter &&
+    filter['type'] === 'relationshipExists'
+  );
+}
 
-export type ValueCursor = [value: QueryValue, entityId: EntityId];
-
-export type QueryOrder<
+export function isBooleanFilter<
   M extends Models<any, any> | undefined,
   CN extends CollectionNameFromModels<M>
-> = [
-  property: M extends Models<any, any> ? SchemaPaths<M, CN> : Path,
-  direction: 'ASC' | 'DESC'
-];
-
-export type QueryResultCardinality = 'one' | 'many';
-
-export type RelationSubquery<
-  M extends Models<any, any> | undefined,
-  CN extends CollectionNameFromModels<M>
-> = {
-  subquery: CollectionQuery<M, CN>;
-  cardinality: QueryResultCardinality;
-};
-
-export type QuerySelectionValue<
-  M extends Models<any, any> | undefined,
-  CN extends CollectionNameFromModels<M>
-> = M extends Models<any, any> ? ModelPaths<M, CN> : Path;
-
-export type CollectionQuery<
-  M extends Models<any, any> | undefined,
-  CN extends CollectionNameFromModels<M>,
-  Selection extends QuerySelectionValue<M, CN> = QuerySelectionValue<M, CN>,
-  Inclusions extends Record<string, RelationSubquery<M, any>> = Record<
-    string,
-    RelationSubquery<M, any>
-  >
-> = {
-  where?: QueryWhere<M, CN>;
-  select?: Selection[];
-  // | [string, CollectionQuery<M, any>]
-  order?: QueryOrder<M, CN>[];
-  limit?: number;
-  after?: [ValueCursor, boolean];
-  entityId?: string; // Syntactic sugar for where("id", "=", entityId), should not be relied on in query engine
-  vars?: Record<string, any>;
-  collectionName: CN;
-  include?: Inclusions;
-};
-
-export type Query<
-  M extends Models<any, any> | undefined,
-  CN extends CollectionNameFromModels<M>,
-  Selection extends QuerySelectionValue<M, CN> = QuerySelectionValue<M, CN>
-> = Omit<CollectionQuery<M, CN, Selection>, 'collectionName'>;
+>(filter: WhereFilter<M, CN>): filter is boolean {
+  return typeof filter === 'boolean';
+}
 
 type TimestampedData =
   | [QueryValue, Timestamp]
   | [Record<string, TimestampedData>, Timestamp];
 type EntityData = Record<string, TimestampedData>;
 
+// TODO: although at one point this was a servicable abstraction, we can probably do better
 export class Entity {
   data: EntityData = {};
   triples: Record<string, TripleRow> = {};
@@ -175,6 +97,9 @@ export class Entity {
 
     // Set tombstones as undefined, so we can continue to reduce and check timestamp
     let value: any = isExpired ? undefined : rawValue;
+
+    // Copy array values to prevent mutation
+    if (Array.isArray(value)) value = [...value];
 
     // Handle _collection attribute
     if (attribute[0] === '_collection') {
@@ -424,15 +349,33 @@ function setRecordToArrayRecord(
 export function or<
   M extends Models<any, any> | undefined,
   CN extends CollectionNameFromModels<M>
->(where: QueryWhere<M, CN>) {
+>(where: QueryWhere<M, CN>): OrFilterGroup<M, CN> {
   return { mod: 'or' as const, filters: where };
 }
 
 export function and<
   M extends Models<any, any> | undefined,
   CN extends CollectionNameFromModels<M>
->(where: QueryWhere<M, CN>) {
+>(where: QueryWhere<M, CN>): AndFilterGroup<M, CN> {
   return { mod: 'and' as const, filters: where };
+}
+
+export function exists<
+  M extends Models<any, any> | undefined,
+  CN extends CollectionNameFromModels<M>,
+  P extends M extends Models<any, any>
+    ? RelationPaths<ModelFromModels<M, CN>, M>
+    : Path = M extends Models<any, any>
+    ? RelationPaths<ModelFromModels<M, CN>, M>
+    : Path
+>(
+  relationship: P,
+  query?: Pick<
+    CollectionQuery<M, RelationshipCollectionName<M, CN, P>>,
+    'where'
+  >
+): RelationshipExistsFilter<M, CN, P> {
+  return { type: 'relationshipExists', relationship, query };
 }
 
 export function compareCursors(

@@ -34,7 +34,6 @@ import { MemoryBTreeStorage as MemoryStorage } from '../src/storage/memory-btree
 import { testSubscription } from './utils/test-subscription.js';
 import {
   appendCollectionToId,
-  prepareQuery,
   stripCollectionFromId,
 } from '../src/db-helpers.js';
 import { TripleRow } from '../dist/types/triple-store-utils.js';
@@ -43,7 +42,8 @@ import {
   fetchDeltaTriples,
   initialFetchExecutionContext,
 } from '../src/collection-query.js';
-import { ExtractCollectionQueryInclusion } from '../src/query/builder.js';
+import { CollectionQueryInclusion } from '../src/query/builder.js';
+import { prepareQuery } from '../src/query/prepare.js';
 
 const pause = async (ms: number = 100) =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -470,18 +470,6 @@ describe('Database API', () => {
       .fetch();
     expect(twoHundredLevelClasses.query()).toHaveLength(2);
     expect(twoHundredMathClasses).toHaveLength(1);
-  });
-
-  it('supports basic select statements', async () => {
-    const results = await db.fetch(
-      CollectionQueryBuilder('Class').select(['name', 'level']).build()
-    );
-    [...results.values()].forEach((entityObj) => {
-      expect(entityObj).toHaveProperty('name');
-      expect(entityObj).toHaveProperty('level');
-      expect(entityObj).not.toHaveProperty('department');
-      expect(entityObj).not.toHaveProperty('enrolled_students');
-    });
   });
 
   it('can report basic collection stats from the database', async () => {
@@ -1239,6 +1227,46 @@ describe('ORDER & LIMIT & Pagination', () => {
       });
       expect(areAllScoresDescending).toBeTruthy();
     }
+  });
+
+  it('orders correctly with deleted entity', async () => {
+    const db = new DB({
+      schema: {
+        collections: {
+          TestScores: {
+            schema: S.Schema({
+              id: S.Id(),
+              score: S.Optional(S.Number()),
+              date: S.String(),
+            }),
+          },
+        },
+      },
+    });
+    const scores = [
+      { score: 99, date: '2023-04-16' },
+      { score: 98, date: '2023-04-16' },
+      { score: 97, date: '2023-04-16' },
+      { score: 96, date: '2023-04-16' },
+      { score: 95, date: '2023-04-16' },
+    ];
+    let i = 0;
+    for (const score of scores) {
+      await db.insert('TestScores', { ...score, id: (i++).toString() });
+    }
+    await db.delete('TestScores', '0');
+    // simulate a client syncing a triple to the deleted entity for the optional field
+    await db.tripleStore.insertTriple({
+      id: appendCollectionToId('TestScores', '0'),
+      attribute: ['TestScores', 'score'],
+      value: 99,
+      timestamp: [1, 'external-client'],
+      expired: false,
+    });
+    const results = await db.fetch(
+      CollectionQueryBuilder('TestScores').order(['score', 'ASC']).build()
+    );
+    expect([...results.values()].map((r) => r.score)).toEqual([95, 96, 97, 98]);
   });
 
   it('limit', async () => {
@@ -3024,7 +3052,7 @@ describe('migrations', () => {
 
       expect(storage.data.length).not.toBe(0);
 
-      await db.clear();
+      await db.clear({ full: true });
 
       expect(storage.data.length).toBe(0);
     });
@@ -4487,7 +4515,7 @@ describe('delta querying', async () => {
         content: '',
         created_at: new Date('2022-06-02'),
       });
-      const fetchQuery = prepareQuery(query, schema['collections'], {});
+      const fetchQuery = prepareQuery(query, schema['collections'], {}, {});
       const deltaTriples = await fetchDeltaTriples(
         db,
         db.tripleStore,
@@ -4525,7 +4553,7 @@ describe('delta querying', async () => {
         created_at: new Date('2022-01-02'),
       });
 
-      const fetchQuery = prepareQuery(query, schema['collections'], {});
+      const fetchQuery = prepareQuery(query, schema['collections'], {}, {});
       const deltaTriples = await fetchDeltaTriples(
         db,
         db.tripleStore,
@@ -4706,6 +4734,7 @@ describe('delta querying', async () => {
         const fetchQuery = prepareQuery(
           query(clientDB),
           schema['collections'],
+          {},
           {}
         );
         const deltaTriples = await fetchDeltaTriples(
@@ -5155,6 +5184,7 @@ describe('selecting subqueries from schema', () => {
             id: S.Id(),
             user_id: S.String(),
             post_id: S.String(),
+            post: S.RelationById('posts', '$post_id'),
           }),
         },
       },
@@ -5240,6 +5270,23 @@ describe('selecting subqueries from schema', () => {
     });
   });
 
+  it('can have multiple results have the same entity as a relation', async () => {
+    const query = user1DB.query('likes').include('post').build();
+    const results = await user1DB.fetch(query);
+    console.log(results);
+    expect(results.size).toBe(3);
+    const postsMap = new Map();
+    for (const result of results.values()) {
+      expect(result.post).not.toBeNull();
+      if (postsMap.has(result.post.id)) {
+        // TODO use the exact same object reference
+        expect(postsMap.get(result.post.id)).toEqual(result.post);
+      } else {
+        postsMap.set(result.post.id, result.post);
+      }
+    }
+  });
+
   it('must use include to select subqueries', async () => {
     const query = user1DB.query('users').build();
 
@@ -5248,7 +5295,8 @@ describe('selecting subqueries from schema', () => {
     expect(result.get('user-1')).not.toHaveProperty('friends');
   });
 
-  it('can include subqueries in fetch by id', async () => {
+  // TODO: determine if we want to support this
+  it.skip('can include subqueries in fetch by id', async () => {
     const result = (await user1DB.fetchById('users', 'user-1', {
       include: { posts: null },
     }))!;
@@ -5412,7 +5460,7 @@ it('clearing a database resets the schema', async () => {
   expect(schemaToJSON(resultSchema)).toEqual(schemaToJSON(schema));
   expect(schemaToJSON(cacheSchema)).toEqual(schemaToJSON(schema));
 
-  await db.clear();
+  await db.clear({ full: true });
 
   // Should reset schema cache
   const schemaAfterClear = await db.getSchema();

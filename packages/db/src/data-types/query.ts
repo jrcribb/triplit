@@ -1,14 +1,16 @@
-import { FetchResult } from '../collection-query.js';
 import { CollectionNameFromModels } from '../db.js';
 import {
   CollectionNotFoundError,
-  InvalidCollectionNameError,
   InvalidQueryCardinalityError,
   TriplitError,
 } from '../errors.js';
-import { CollectionQuery, QueryResultCardinality } from '../query.js';
 import { Models } from '../schema/types';
 import { TypeInterface } from './type.js';
+import {
+  CollectionQuery,
+  FetchResult,
+  QueryResultCardinality,
+} from '../query/types';
 
 export type SubQuery<
   M extends Models<any, any>,

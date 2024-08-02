@@ -2,17 +2,7 @@
 import dotenv from 'dotenv';
 import dotenvExpand from 'dotenv-expand';
 dotenvExpand.expand(dotenv.config());
-import {
-  bgGreenBright,
-  bold,
-  dim,
-  green,
-  inverse,
-  italic,
-  red,
-  white,
-  whiteBright,
-} from 'ansis/colors';
+import { bold, dim, red } from 'ansis/colors';
 import React from 'react';
 import { render } from 'ink';
 import {
@@ -29,10 +19,45 @@ import { WebSocket } from 'ws';
 import fetch from 'node-fetch';
 import { Flag } from './flags.js';
 import { ArgDefinitions, CommandDefinition } from './command.js';
+import { PostHog } from 'posthog-node';
+import { readFileSync } from 'node:fs';
+import * as Path from 'node:path';
+import { getInstallId, getTelemetryEnabled } from './config.js';
+
 // @ts-ignore
 global.WebSocket = WebSocket;
 // @ts-ignore
 global.fetch = fetch;
+
+// reads the package.json file and gets the version
+const cliVersion = JSON.parse(
+  readFileSync(
+    Path.resolve(fileURLToPath(import.meta.url), '../../package.json'),
+    'utf-8'
+  )
+).version;
+
+const posthog = new PostHog('phc_wqlg7bicph69twhGZbS7vPW5V73UoWWz0pppf24x6WN', {
+  host: 'https://us.i.posthog.com',
+});
+
+const isInteractiveSession = process.stdout.isTTY && process.stdin.isTTY;
+
+// Heuristic to determine if the CLI is being used by a person rather than in CI/CD
+const isBeingUsedByHuman = isInteractiveSession;
+
+if (!getTelemetryEnabled() || !isBeingUsedByHuman) {
+  await posthog.disable();
+}
+
+let installId = getInstallId();
+
+posthog.identify({
+  distinctId: installId,
+  properties: {
+    cliVersion,
+  },
+});
 
 const argv = minimist(process.argv.slice(2), { stopEarly: false });
 
@@ -47,12 +72,14 @@ export async function execute(args: string[], flags: {}) {
 
   let command: CommandTree | CommandInfo = commands;
 
+  let fullCmdPath: string[] = [];
   let i: number;
   for (i = 0; i < argv._.length; i++) {
     const part: string = argv._[i];
     if (isCommandInfo(command) || !command[part]) {
       break;
     }
+    fullCmdPath.push(part);
     command = command[part];
   }
 
@@ -166,7 +193,16 @@ export async function execute(args: string[], flags: {}) {
   } else {
     parsedCommandArgs = commandArgs;
   }
-
+  const cmdFullName = fullCmdPath.join(':');
+  posthog.capture({
+    distinctId: installId,
+    event: 'cli_command_run',
+    properties: {
+      command: cmdFullName ?? cmdDef.name,
+      flags: unaliasedFlags,
+      args: parsedCommandArgs,
+    },
+  });
   const result = await cmdDef.run({
     flags: unaliasedFlags,
     args: parsedCommandArgs,
@@ -175,6 +211,7 @@ export async function execute(args: string[], flags: {}) {
   if (result && React.isValidElement(result)) {
     render(result, { patchConsole: false });
   }
+  await posthog.shutdown();
 }
 
 async function printDirectoryHelp(name: string, commands: CommandTree) {

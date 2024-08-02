@@ -3,10 +3,19 @@ description: Learn how use React bindings for the Triplit client in your app.
 ---
 
 import { Tabs, Tab, Callout } from 'nextra-theme-docs';
+import CreateTriplitAppTabs from '../../components/CreateTriplitAppTabs.mdx';
 
 # React
 
-If you are using React, you can use the hooks provided by `@triplit/react`:
+### New projects
+
+The fast way to get started with Triplit is to use Create Triplit App which will scaffold a React application with Triplit. Choose `React` when prompted for the frontend framework.
+
+<CreateTriplitAppTabs />
+
+### Existing projects
+
+If you have an existing React project, you can install the hooks provided by `@triplit/react`:
 
 <Tabs items={['npm', 'pnpm', 'yarn', 'bun']}>
 
@@ -73,21 +82,24 @@ function App() {
   should only wait for the cache, use `fetchingLocal`.
 </Callout>
 
-## useEntity
+## useQueryOne
 
-The `useEntity` hook subscribes to the provided entity inside your React component and will automatically unsubscribe from updates to the entity when the component unmounts.
+The `useQueryOne` hook subscribes to a single entity that matches the provided query. You can use this hook inside your React component and it will automatically unsubscribe from updates to the entity when the component unmounts.
 
-The result of the hook is the same as the result of `useQuery`, but the `results` property will only contain the entity you subscribed to.
+The result of the hook is the same as the result of `useQuery`, but the `result` property will only have a single the entity or null.
 
 ```tsx copy filename="app.tsx"
-import { useEntity } from '@triplit/react';
+import { useQueryOne } from '@triplit/react';
 
 const client = new TriplitClient();
 
 function App() {
-  const { results: entity } = useEntity(client, 'todos', '1');
+  const { result: todo } = useQueryOne(
+    client,
+    client.query('todos').id('todo-id')
+  );
 
-  return <div>{entity.text}</div>;
+  return <div>{todo.text}</div>;
 }
 ```
 
@@ -110,7 +122,7 @@ function App() {
     prevPage,
   } = usePaginatedQuery(
     client,
-    client.query('todos').limit(10).orderBy('created_at', 'DESC')
+    client.query('todos').limit(10).order('created_at', 'DESC')
   );
 
   return (
@@ -140,7 +152,7 @@ const client = new TriplitClient();
 function App() {
   const { results, fetchingMore, hasMore, loadMore } = useInfiniteQuery(
     client,
-    client.query('todos').limit(10).orderBy('created_at', 'DESC')
+    client.query('todos').limit(10).order('created_at', 'DESC')
   );
 
   return (

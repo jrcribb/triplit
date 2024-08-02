@@ -29,7 +29,7 @@ export async function selectOrCreateAnOrganization() {
       value.length > 0 ? true : 'Organization name cannot be empty',
   });
   const { error: orgError, data: newId } = await supabase.rpc(
-    'insert_organization_and_member',
+    'rpc_create_organization',
     { org_name: organizationName }
   );
 
@@ -40,7 +40,7 @@ export async function selectOrCreateAnOrganization() {
   const { error: fetchError, data: newOrg } = await supabase
     .from('organizations')
     .select('*')
-    .eq('name', organizationName)
+    .eq('id', newId)
     .single();
   if (fetchError) {
     console.error('Error fetching new organization', fetchError);
