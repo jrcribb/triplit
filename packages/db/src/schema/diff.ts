@@ -1,6 +1,6 @@
-import { Model, Models, StoreSchema } from './types';
+import { Model, Models, StoreSchema } from './types/index.js';
 import { Value as TBValue, ValuePointer, Diff } from '@sinclair/typebox/value';
-import { UserTypeOptions } from '../data-types/serialization.js';
+import { UserTypeOptions } from '../data-types/types/index.js';
 import { DBTransaction } from '../db-transaction.js';
 
 type ChangeToAttribute =
@@ -69,13 +69,14 @@ function isCollectionAttributeDiff(
 }
 
 function diffCollectionSchemas(
-  modelA: Model<any> | undefined,
-  modelB: Model<any> | undefined,
+  modelA: Model | undefined,
+  modelB: Model | undefined,
   attributePathPrefix: string[] = []
 ): AttributeDiff[] {
   if (modelA === undefined && modelB === undefined) return [];
-  const propertiesA = modelA?.properties ?? {};
-  const propertiesB = modelB?.properties ?? {};
+  // TODO: properly type these
+  const propertiesA: any = modelA?.properties ?? {};
+  const propertiesB: any = modelB?.properties ?? {};
   const allProperties = new Set([
     ...Object.keys(propertiesA),
     ...Object.keys(propertiesB),
@@ -196,8 +197,8 @@ function diffAttributeOptions(
 }
 
 export function diffSchemas(
-  schemaA: StoreSchema<Models<any, any>>,
-  schemaB: StoreSchema<Models<any, any>>
+  schemaA: StoreSchema<Models>,
+  schemaB: StoreSchema<Models>
 ): Diff[] {
   const allCollections = new Set([
     ...Object.keys(schemaA.collections),
@@ -500,7 +501,7 @@ async function detectAttributeSatisfiesEnum(
       .build(),
     { skipRules: true }
   );
-  return allEntities.size === 0;
+  return allEntities.length === 0;
 }
 
 async function detectAttributeHasNoUndefined(
@@ -552,7 +553,7 @@ async function detectAttributeHasNoNull(
       .build(),
     { skipRules: true }
   );
-  return allEntities.size === 0;
+  return allEntities.length === 0;
 }
 
 async function detectCollectionIsEmpty(
@@ -563,5 +564,5 @@ async function detectCollectionIsEmpty(
     tx.db.query(collectionName).select([]).limit(1).build(),
     { skipRules: true }
   );
-  return allEntities.size === 0;
+  return allEntities.length === 0;
 }

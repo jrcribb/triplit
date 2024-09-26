@@ -12,13 +12,13 @@ describe('query root permutations', () => {
             collectionName: 'cars',
             where: [
               ['type', '=', 'SUV'],
-              ['manufacturer', '=', '$id'],
+              ['manufacturer', '=', '$1.id'],
             ],
           },
         },
       ],
     };
-    const permutations = generateQueryRootPermutations<any, any>(query);
+    const permutations = generateQueryRootPermutations(query);
     // prettyPrint(permutations);
     expect(permutations).toHaveLength(2);
   });
@@ -32,13 +32,13 @@ describe('query root permutations', () => {
             collectionName: 'cars',
             where: [
               ['type', '=', 'SUV'],
-              ['manufacturer', '=', '$id'],
+              ['manufacturer', '=', '$1.id'],
             ],
           },
         },
       },
     };
-    const permutations = generateQueryRootPermutations<any, any>(query);
+    const permutations = generateQueryRootPermutations(query);
     // prettyPrint(permutations);
     expect(permutations).toHaveLength(2);
   });
@@ -51,6 +51,7 @@ describe('query builder', () => {
     expect(query1.order).toEqual([['name', 'ASC']]);
     const query2 = db
       .query('test')
+      // TODO: actually address this
       // TODO: This should be an error?
       .order(['name', 'ASC'], ['age', 'ASC'])
       .build();

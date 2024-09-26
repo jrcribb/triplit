@@ -26,7 +26,7 @@ export function CreateCollectionDialog(props: CreateCollectionDialogProps) {
       <DialogTrigger asChild>
         <Button
           disabled={props.disabled}
-          className="h-auto py-1 px-3 flex flex-row gap-1"
+          className="h-auto py-1 px-1 lg:px-3  flex flex-row gap-1"
           variant="secondary"
         >
           <Plus className="shrink-0 h-4 w-4" />

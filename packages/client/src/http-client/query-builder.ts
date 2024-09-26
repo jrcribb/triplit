@@ -1,21 +1,26 @@
 import {
   CollectionNameFromModels,
   CollectionQuery,
+  CollectionQueryDefault,
+  ModelQueries,
+  Models,
   QueryBuilder,
-  QuerySelectionValue,
+  QuerySelection,
 } from '@triplit/db';
 import { ClientSchema } from '../client/types';
 
 export class HttpClientQueryBuilder<
-  CQ extends CollectionQuery<any, any, any, any>
-> extends QueryBuilder<CQ> {
-  constructor(query: CQ) {
+  M extends Models,
+  CN extends CollectionNameFromModels<M>,
+  Q extends ModelQueries<M, CN> = CollectionQueryDefault<M, CN>
+> extends QueryBuilder<M, CN, Q> {
+  constructor(query: Q) {
     super(query);
   }
 }
 
 export function httpClientQueryBuilder<
-  M extends ClientSchema | undefined,
+  M extends ClientSchema,
   CN extends CollectionNameFromModels<M>
   // syncStatus doesn't apply for the remote client
 >(collectionName: CN, params?: Omit<CollectionQuery<M, CN>, 'collectionName'>) {
@@ -24,6 +29,8 @@ export function httpClientQueryBuilder<
     ...params,
   };
   return new QueryBuilder<
-    CollectionQuery<M, CN, QuerySelectionValue<M, CN>, {}>
+    M,
+    CN,
+    CollectionQuery<M, CN, QuerySelection<M, CN>, {}>
   >(query);
 }

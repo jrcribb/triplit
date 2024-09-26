@@ -15,7 +15,7 @@
     "sqlite"
   ],
   "packageManager": "yarn@3.4.1",
-  "version": "0.3.82",
+  "version": "0.5.1",
   "source": "./src/index.ts",
   "main": "./dist/index.js",
   "type": "module",
@@ -36,6 +36,11 @@
       "types": "./dist/worker-client/worker-client-operator.d.ts",
       "import": "./dist/worker-client/worker-client-operator.js",
       "default": "./dist/worker-client/worker-client-operator.js"
+    },
+    "./client-comlink-wrapper": {
+      "types": "./dist/worker-client/client-comlink-wrapper.d.ts",
+      "import": "./dist/worker-client/client-comlink-wrapper.js",
+      "default": "./dist/worker-client/client-comlink-wrapper.js"
     }
   },
   "scripts": {
@@ -63,9 +68,11 @@
   "devDependencies": {
     "@triplit/types": "workspace:^",
     "@types/node": "^20.4.0",
+    "@vitest/web-worker": "^2.0.5",
     "esbuild": "^0.21.3",
+    "tinybench": "^2.9.0",
     "typescript": "^5.2.2",
-    "vitest": "^1.4.0"
+    "vitest": "^2.0.5"
   },
   "engines": {
     "node": ">=18.0.0"

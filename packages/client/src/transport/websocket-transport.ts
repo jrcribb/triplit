@@ -4,11 +4,16 @@ import {
   SyncTransport,
   TransportConnectParams,
 } from './transport.js';
+import { WebSocketsUnavailableError } from '../errors.js';
 
 const DEFAULT_PAYLOAD_SIZE_LIMIT = (1024 * 1024) / 2;
 
 interface WebSocketTransportOptions {
   messagePayloadSizeLimit?: number;
+}
+
+function webSocketsAreAvailable(): boolean {
+  return typeof WebSocket !== 'undefined';
 }
 
 export class WebSocketTransport implements SyncTransport {
@@ -93,6 +98,9 @@ export class WebSocketTransport implements SyncTransport {
     const wsUri = `${
       secure ? 'wss' : 'ws'
     }://${server}?${wsOptions.toString()}`;
+    if (!webSocketsAreAvailable()) {
+      throw new WebSocketsUnavailableError();
+    }
     this.ws = new WebSocket(wsUri);
     this.ws.onconnectionchange = (status) => {
       this.connectionListeners.forEach((listener) => listener(status));

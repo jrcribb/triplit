@@ -1,5 +1,181 @@
 # @triplit/server
 
+## 0.4.16
+
+### Patch Changes
+
+- Updated dependencies [8966b0fe]
+- Updated dependencies [761648cf]
+- Updated dependencies [761648cf]
+  - @triplit/db@0.4.1
+  - @triplit/client@0.5.1
+  - @triplit/server-core@0.4.1
+
+## 0.4.15
+
+### Patch Changes
+
+- Updated dependencies [0a09013b]
+- Updated dependencies [38746526]
+- Updated dependencies [f894e435]
+- Updated dependencies [abe8bea8]
+- Updated dependencies [38746526]
+- Updated dependencies [abe8bea8]
+  - @triplit/server-core@0.4.0
+  - @triplit/client@0.5.0
+  - @triplit/db@0.4.0
+
+## 0.4.14
+
+### Patch Changes
+
+- Updated dependencies [5fed7f42]
+- Updated dependencies [3c7fd004]
+  - @triplit/db@0.3.75
+  - @triplit/client@0.4.13
+  - @triplit/server-core@0.3.79
+
+## 0.4.13
+
+### Patch Changes
+
+- Updated dependencies [5eae93dc]
+  - @triplit/db@0.3.74
+  - @triplit/client@0.4.12
+  - @triplit/server-core@0.3.78
+
+## 0.4.12
+
+### Patch Changes
+
+- Updated dependencies [99a5b854]
+  - @triplit/db@0.3.73
+  - @triplit/client@0.4.11
+  - @triplit/server-core@0.3.77
+
+## 0.4.11
+
+### Patch Changes
+
+- @triplit/db@0.3.72
+- @triplit/client@0.4.10
+- @triplit/server-core@0.3.76
+
+## 0.4.10
+
+### Patch Changes
+
+- Updated dependencies [4f99c558]
+- Updated dependencies [a902f8b8]
+  - @triplit/db@0.3.71
+  - @triplit/server-core@0.3.75
+  - @triplit/client@0.4.9
+
+## 0.4.9
+
+### Patch Changes
+
+- Updated dependencies [cb72c28c]
+- Updated dependencies [b1127b7b]
+- Updated dependencies [7ea2a0a9]
+  - @triplit/server-core@0.3.74
+  - @triplit/client@0.4.8
+
+## 0.4.8
+
+### Patch Changes
+
+- e0a7ba6e: Update server types
+- Updated dependencies [104027d8]
+- Updated dependencies [b5374280]
+- Updated dependencies [22b3e245]
+- Updated dependencies [39183482]
+- Updated dependencies [833b69c9]
+- Updated dependencies [ecc5a959]
+  - @triplit/db@0.3.70
+  - @triplit/client@0.4.7
+  - @triplit/server-core@0.3.73
+
+## 0.4.7
+
+### Patch Changes
+
+- c28904d5: truncate large logs
+
+## 0.4.6
+
+### Patch Changes
+
+- Updated dependencies [a6caa166]
+- Updated dependencies [96d4d8ff]
+- Updated dependencies [d11d57e2]
+- Updated dependencies [ffb00f68]
+  - @triplit/server-core@0.3.72
+  - @triplit/db@0.3.69
+  - @triplit/client@0.4.6
+
+## 0.4.5
+
+### Patch Changes
+
+- Updated dependencies [79df5162]
+- Updated dependencies [51cde34e]
+  - @triplit/db@0.3.68
+  - @triplit/client@0.4.5
+  - @triplit/server-core@0.3.71
+
+## 0.4.4
+
+### Patch Changes
+
+- Updated dependencies [e6e07458]
+  - @triplit/client@0.4.4
+
+## 0.4.3
+
+### Patch Changes
+
+- Updated dependencies [38bdff77]
+  - @triplit/db@0.3.67
+  - @triplit/client@0.4.3
+  - @triplit/server-core@0.3.70
+
+## 0.4.2
+
+### Patch Changes
+
+- Updated dependencies [73d638ec]
+- Updated dependencies [bbc64ede]
+- Updated dependencies [12650423]
+- Updated dependencies [bbc64ede]
+  - @triplit/db@0.3.66
+  - @triplit/client@0.4.2
+  - @triplit/server-core@0.3.69
+
+## 0.4.1
+
+### Patch Changes
+
+- f2e5cc21: Add healthcheck endpoint
+- Updated dependencies [28d32b51]
+- Updated dependencies [0139e1a4]
+  - @triplit/db@0.3.65
+  - @triplit/client@0.4.1
+  - @triplit/server-core@0.3.68
+
+## 0.4.0
+
+### Minor Changes
+
+- f9470ad1: Add basic support for syncing server with an upstream server
+
+### Patch Changes
+
+- Updated dependencies [ba9f0d6c]
+- Updated dependencies [6d249ce2]
+- Updated dependencies [f9470ad1]
+  - @triplit/client@0.4.0
+
 ## 0.3.72
 
 ### Patch Changes

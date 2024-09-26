@@ -1,13 +1,11 @@
 import {
   FetchExecutionContext,
   FetchFromStorageOptions,
-  QueryPipelineData,
   loadSubquery,
 } from '../collection-query.js';
-import { Operator } from '../data-types/base.js';
-import DB from '../db.js';
 import { InvalidFilterError, QueryNotPreparedError } from '../errors.js';
 import {
+  EntityData,
   EntityPointer,
   isBooleanFilter,
   isExistsFilter,
@@ -15,7 +13,7 @@ import {
   isSubQueryFilter,
 } from '../query.js';
 import { getAttributeFromSchema } from '../schema/schema.js';
-import { Models } from '../schema/types';
+import { Models } from '../schema/types/index.js';
 import { Timestamp } from '../timestamp.js';
 import { TripleStoreApi } from '../triple-store.js';
 import { timestampedObjectToPlainObject } from '../utils.js';
@@ -25,62 +23,42 @@ import {
   SubQueryFilter,
   WhereFilter,
   CollectionQuery,
-} from './types';
+  Operator,
+} from './types/index.js';
 
 /**
  * During query execution, determine if an entity satisfies a filter
  */
-export async function satisfiesFilter<
-  M extends Models<any, any> | undefined,
-  Q extends CollectionQuery<M, any>
->(
-  db: DB<M>,
+export async function satisfiesFilter<Q extends CollectionQuery>(
   tx: TripleStoreApi,
   query: Q,
   executionContext: FetchExecutionContext,
   options: FetchFromStorageOptions,
-  pipelineItem: QueryPipelineData,
-  filter: WhereFilter<M, Q['collectionName']>
+  entityEntry: [entityId: string, entity: EntityData],
+  filter: WhereFilter<any, any>
 ): Promise<boolean> {
   if (isBooleanFilter(filter)) return filter;
   if (isFilterGroup(filter)) {
     const { mod, filters } = filter;
     if (mod === 'and') {
       return await everyAsync(filters, (f) =>
-        satisfiesFilter(
-          db,
-          tx,
-          query,
-          executionContext,
-          options,
-          pipelineItem,
-          f
-        )
+        satisfiesFilter(tx, query, executionContext, options, entityEntry, f)
       );
     }
     if (mod === 'or') {
       return await someAsync(filters, (f) =>
-        satisfiesFilter(
-          db,
-          tx,
-          query,
-          executionContext,
-          options,
-          pipelineItem,
-          f
-        )
+        satisfiesFilter(tx, query, executionContext, options, entityEntry, f)
       );
     }
     return false;
   }
   if (isSubQueryFilter(filter)) {
     return await satisfiesRelationalFilter(
-      db,
       tx,
       query,
       executionContext,
       options,
-      pipelineItem,
+      entityEntry,
       filter
     );
   }
@@ -91,20 +69,19 @@ export async function satisfiesFilter<
     throw new QueryNotPreparedError('Untranslated exists filter');
   }
 
-  return satisfiesFilterStatement(query, options, pipelineItem, filter);
+  return satisfiesFilterStatement(query, options, entityEntry[1], filter);
 }
 
 async function satisfiesRelationalFilter<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   Q extends CollectionQuery<M, any>
 >(
-  db: DB<M>,
   tx: TripleStoreApi,
   query: Q,
   executionContext: FetchExecutionContext,
   options: FetchFromStorageOptions,
-  pipelineItem: QueryPipelineData,
-  filter: SubQueryFilter
+  entityEntry: [entityId: string, entity: EntityData],
+  filter: SubQueryFilter<M, Q['collectionName']>
 ) {
   const { exists: subQuery } = filter;
   const existsSubQuery = {
@@ -112,61 +89,42 @@ async function satisfiesRelationalFilter<
     limit: 1,
   };
 
-  const { results: subQueryResult, triples } = await loadSubquery(
-    db,
+  const subQueryResult = await loadSubquery(
     tx,
     query,
     existsSubQuery,
     'one',
     executionContext,
     options,
-    pipelineItem.entity
+    'exists',
+    entityEntry
   );
-  const exists = !!subQueryResult;
-  if (!exists) return false;
-  for (const tripleSet of triples.values()) {
-    for (const triple of tripleSet) {
-      pipelineItem.existsFilterTriples.push(triple);
-    }
-  }
 
-  return true;
+  if (subQueryResult) executionContext.fulfillmentEntities.add(subQueryResult);
+  return !!subQueryResult;
 }
 
 function satisfiesFilterStatement<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   Q extends CollectionQuery<M, any>
 >(
   query: Q,
   options: FetchFromStorageOptions,
-  pipelineItem: QueryPipelineData,
+  entity: EntityData,
   filter: FilterStatement<M, Q['collectionName']>
 ) {
   const { collectionName } = query;
   const { schema } = options;
-  const { entity } = pipelineItem;
   const [path, op, filterValue] = filter;
   const dataType = schema
     ? getAttributeFromSchema(path.split('.'), schema, collectionName)
     : undefined;
   // If we have a schema handle specific cases
   if (dataType && dataType.type === 'set') {
-    return satisfiesSetFilter(
-      entity,
-      path,
-      // @ts-expect-error
-      op,
-      filterValue
-    );
+    return satisfiesSetFilter(entity, path, op, filterValue);
   }
   // Use register as default
-  return satisfiesRegisterFilter(
-    entity,
-    path,
-    // @ts-expect-error
-    op,
-    filterValue
-  );
+  return satisfiesRegisterFilter(entity, path, op, filterValue);
 }
 
 // TODO: this should probably go into the set defintion
@@ -192,16 +150,21 @@ export function satisfiesSetFilter(
   }
 
   const setData = timestampedObjectToPlainObject(value);
-  if (!setData) return false;
-  const filteredSet = Object.entries(setData).filter(([_v, inSet]) => inSet);
   if (op === 'has') {
+    if (!setData) return false;
+    const filteredSet = Object.entries(setData).filter(([_v, inSet]) => inSet);
     return filteredSet.some(([v]) => v === filterValue);
-  }
-  if (op === '!has') {
+  } else if (op === '!has') {
+    if (!setData) return true;
+    const filteredSet = Object.entries(setData).filter(([_v, inSet]) => inSet);
     return filteredSet.every(([v]) => v !== filterValue);
+  } else if (op === 'isDefined') {
+    return filterValue ? setData !== undefined : setData === undefined;
+  } else {
+    if (!setData) return false;
+    const filteredSet = Object.entries(setData).filter(([_v, inSet]) => inSet);
+    return filteredSet.some(([v]) => isOperatorSatisfied(op, v, filterValue));
   }
-
-  return filteredSet.some(([v]) => isOperatorSatisfied(op, v, filterValue));
 }
 
 export function satisfiesRegisterFilter(
@@ -241,12 +204,24 @@ function isOperatorSatisfied(op: Operator, value: any, filterValue: any) {
     case '!=':
       return value !== filterValue;
     case '>':
+      // Null is not greater than anything
+      if (value === null) return false;
+      // Null is less than everything
+      if (filterValue === null) return true;
       return value > filterValue;
     case '>=':
+      if (value === null) return filterValue === null;
+      if (filterValue === null) return true;
       return value >= filterValue;
     case '<':
+      // Null is not less than anything
+      if (filterValue === null) return false;
+      // Null is less than everything
+      if (value === null) return true;
       return value < filterValue;
     case '<=':
+      if (filterValue === null) return value === null;
+      if (value === null) return true;
       return value <= filterValue;
 
     //TODO: move regex initialization outside of the scan loop to improve performance
@@ -258,6 +233,9 @@ function isOperatorSatisfied(op: Operator, value: any, filterValue: any) {
       return new Set(filterValue).has(value);
     case 'nin':
       return !new Set(filterValue).has(value);
+
+    case 'isDefined':
+      return filterValue ? value !== undefined : value === undefined;
     default:
       throw new InvalidFilterError(`The operator ${op} is not recognized.`);
   }
@@ -299,10 +277,9 @@ function determineFilterType(
 /**
  * Based on the type of filter, determine its priority in execution
  */
-export function getFilterPriorityOrder<
-  M extends Models<any, any> | undefined,
-  Q extends CollectionQuery<M, any>
->(query: Q): number[] {
+export function getFilterPriorityOrder(
+  query: CollectionQuery<any, any>
+): number[] {
   const { where = [] } = query;
   const basicFilters = [];
   const relationalFilters = [];

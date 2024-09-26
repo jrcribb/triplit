@@ -4,7 +4,6 @@ import {
   WriteOps,
   AsyncTupleDatabase,
   TupleStorageApi,
-  compareTuple,
 } from '@triplit/tuple-database';
 import { Timestamp } from './timestamp.js';
 import MultiTupleStore, {
@@ -14,13 +13,12 @@ import MultiTupleStore, {
 } from './multi-tuple-store.js';
 import { Clock } from './clocks/clock.js';
 import { MemoryClock } from './clocks/memory-clock.js';
-import { TripleStoreOptionsError, WriteRuleError } from './errors.js';
+import { TripleStoreOptionsError } from './errors.js';
 import { TripleStoreTransaction } from './triple-store-transaction.js';
 import {
   EAV,
   TupleIndex,
   TripleStoreHooks,
-  TripleMetadata,
   EATIndex,
   TripleStoreBeforeInsertHook,
   findByEntity,
@@ -46,8 +44,9 @@ import {
   AVEIndex,
 } from './triple-store-utils.js';
 import { TRIPLE_STORE_MIGRATIONS } from './triple-store-migrations.js';
-import { TransactionResult } from './query/types';
+import { TransactionResult } from './query/types/index.js';
 import { MirroredArray } from './utils/mirrored-array.js';
+import { genToArr } from './utils/generator.js';
 
 function isTupleStorage(object: any): object is AsyncTupleStorageApi {
   if (typeof object !== 'object') return false;
@@ -58,6 +57,10 @@ function isTupleStorage(object: any): object is AsyncTupleStorageApi {
   ];
   return storageKeys.every((objKey) => objKey in object);
 }
+
+export type ClearOptions = {
+  full?: boolean;
+};
 
 export interface TripleStoreApi {
   // Mutation methods
@@ -77,19 +80,22 @@ export interface TripleStoreApi {
   findByCollection(
     collection: string,
     direction?: 'ASC' | 'DESC'
-  ): Promise<TripleRow[]>;
+  ): AsyncGenerator<TripleRow>;
+
   findMaxClientTimestamp(clientId: string): Promise<Timestamp | undefined>;
+
   findByClientTimestamp(
     clientId: string,
     scanDirection: 'lt' | 'lte' | 'gt' | 'gte',
     timestamp: Timestamp | undefined
-  ): Promise<TripleRow[]>;
+  ): AsyncGenerator<TripleRow>;
+
   findAllClientIds(): Promise<string[]>;
 
   findByEAT(
     [entityId, attribute]: [entityId?: EntityId, attribute?: Attribute],
     direction?: 'ASC' | 'DESC'
-  ): Promise<TripleRow[]>;
+  ): AsyncGenerator<TripleRow>;
 
   findByAVE(
     [attribute, value, entityId]: [
@@ -98,21 +104,21 @@ export interface TripleStoreApi {
       entityId?: EntityId
     ],
     direction?: 'ASC' | 'DESC'
-  ): Promise<TripleRow[]>;
+  ): AsyncGenerator<TripleRow>;
 
-  findByEntity(id?: EntityId): Promise<TripleRow[]>;
+  findByEntity(id?: EntityId): AsyncGenerator<TripleRow>;
 
   findByEntityAttribute(
     id: EntityId,
     attribute: Attribute
-  ): Promise<TripleRow[]>;
+  ): AsyncGenerator<TripleRow>;
 
-  findByAttribute(attribute: Attribute): Promise<TripleRow[]>;
+  findByAttribute(attribute: Attribute): AsyncGenerator<TripleRow>;
 
   findValuesInRange(
     attribute: Attribute,
     constraints: RangeContraints | undefined
-  ): Promise<TripleRow[]>;
+  ): AsyncGenerator<TripleRow>;
 
   // metadata operations
   readMetadataTuples(entityId: string, attribute?: Attribute): Promise<EAV[]>;
@@ -152,11 +158,11 @@ async function addIndexesToTransaction(
       if (isExpired) {
         expiredAVE.push(['AVE', attribute, value, id, timestamp]);
       } else {
-        scopedTx.set(['AVE', attribute, value, id, timestamp], {
+        await scopedTx.set(['AVE', attribute, value, id, timestamp], {
           expired: isExpired,
         });
       }
-      scopedTx.set(
+      await scopedTx.set(
         [
           'clientTimestamp',
           (timestamp as Timestamp)[1],
@@ -291,14 +297,6 @@ export class TripleStore<StoreKeys extends string = any>
     this.clock.assignToStore(this);
 
     // this.tupleStore.beforeCommit(addIndexesToTransaction);
-
-    if (enableGarbageCollection) {
-      this.afterCommit(
-        throttle(() => {
-          this.collectGarbage();
-        }, 1000)
-      );
-    }
   }
 
   async ensureStorageIsMigrated() {
@@ -319,51 +317,48 @@ export class TripleStore<StoreKeys extends string = any>
     this.hooks.afterCommit.push(callback);
   }
 
-  findByCollection(
+  async *findByCollection(
     collection: string,
     direction?: 'ASC' | 'DESC' | undefined
-  ): Promise<TripleRow[]> {
-    return findByCollection(this.tupleStore, collection, direction);
+  ) {
+    yield* findByCollection(this.tupleStore, collection, direction);
   }
 
-  findByEAT(
+  async *findByEAT(
     [entityId, attribute]: [
       entityId?: string | undefined,
       attribute?: Attribute | undefined
     ],
     direction?: 'ASC' | 'DESC' | undefined
-  ): Promise<TripleRow[]> {
-    return findByEAT(this.tupleStore, [entityId, attribute], direction);
+  ) {
+    yield* findByEAT(this.tupleStore, [entityId, attribute], direction);
   }
-  findByAVE(
+  async *findByAVE(
     [attribute, value, entityId]: [
       attribute?: Attribute | undefined,
       value?: TupleValue | undefined,
       entityId?: string | undefined
     ],
     direction?: 'ASC' | 'DESC' | undefined
-  ): Promise<TripleRow[]> {
-    return findByAVE(this.tupleStore, [attribute, value, entityId], direction);
+  ) {
+    yield* findByAVE(this.tupleStore, [attribute, value, entityId], direction);
   }
 
-  findByEntity(id?: string | undefined): Promise<TripleRow[]> {
-    return findByEntity(this.tupleStore, id);
+  async *findByEntity(id?: string | undefined) {
+    yield* findByEntity(this.tupleStore, id);
   }
-  findByEntityAttribute(
-    id: string,
-    attribute: Attribute
-  ): Promise<TripleRow[]> {
-    return findByEntityAttribute(this.tupleStore, id, attribute);
+  async *findByEntityAttribute(id: string, attribute: Attribute) {
+    yield* findByEntityAttribute(this.tupleStore, id, attribute);
   }
-  findByAttribute(attribute: Attribute): Promise<TripleRow[]> {
-    return findByAttribute(this.tupleStore, attribute);
+  async *findByAttribute(attribute: Attribute) {
+    yield* findByAttribute(this.tupleStore, attribute);
   }
 
-  async findValuesInRange(
+  async *findValuesInRange(
     attribute: Attribute,
     constraints: RangeContraints | undefined
   ) {
-    return findValuesInRange(this.tupleStore, attribute, constraints);
+    yield* findValuesInRange(this.tupleStore, attribute, constraints);
   }
 
   findMaxClientTimestamp(clientId: string) {
@@ -374,12 +369,12 @@ export class TripleStore<StoreKeys extends string = any>
     return findAllClientIds(this.tupleStore);
   }
 
-  findByClientTimestamp(
+  async *findByClientTimestamp(
     clientId: string,
     scanDirection: 'lt' | 'lte' | 'gt' | 'gte' | 'eq',
     timestamp: Timestamp | undefined
   ) {
-    return findByClientTimestamp(
+    yield* findByClientTimestamp(
       this.tupleStore,
       clientId,
       scanDirection,
@@ -406,13 +401,11 @@ export class TripleStore<StoreKeys extends string = any>
           hooks: this.hooks,
         });
         let output: Output | undefined;
-        if (tx.isCancelled) return { tx, output };
+        if (tx.isCanceled) return { tx, output };
         try {
           output = await callback(tx);
         } catch (e) {
-          if (e instanceof WriteRuleError) {
-            await tx.cancel();
-          }
+          await tx.cancel();
           throw e;
         }
         return { tx, output };
@@ -424,7 +417,7 @@ export class TripleStore<StoreKeys extends string = any>
         ? JSON.stringify(tx.assignedTimestamp)
         : undefined,
       output,
-      isCancelled: tx.isCancelled,
+      isCanceled: tx.isCanceled,
     };
   }
 
@@ -569,9 +562,11 @@ export class TripleStore<StoreKeys extends string = any>
 
   async readMetadataTuples(entityId: string, attribute?: Attribute) {
     return (
-      await this.tupleStore.scan({
-        prefix: ['metadata', entityId, ...(attribute ?? [])],
-      })
+      await genToArr(
+        this.tupleStore.scan({
+          prefix: ['metadata', entityId, ...(attribute ?? [])],
+        })
+      )
     ).map(mapStaticTupleToEAV);
   }
 
@@ -589,29 +584,78 @@ export class TripleStore<StoreKeys extends string = any>
     });
   }
 
-  async clear() {
-    await this.tupleStore.clear();
+  async clear({ full }: ClearOptions = {}) {
+    if (full) {
+      await this.tupleStore.clear();
+    } else {
+      // Load metadata for restore
+      const restoreData: Record<
+        string,
+        {
+          synced: TripleRow[];
+          local: TupleIndex[];
+        }
+      > = {};
+
+      const writeKeys =
+        this.tupleStore.storageScope?.write ??
+        Object.keys(this.tupleStore.storage);
+
+      // For each write key, retrieve data to keep, clear, then write data back
+      for (const storageKey of writeKeys) {
+        const scopedTripleStore = this.setStorageScope([
+          storageKey as StoreKeys,
+        ]);
+        const syncedMetadata = await genToArr(
+          scopedTripleStore.findByCollection('_metadata')
+        );
+        const localMetadataScan = await genToArr(
+          scopedTripleStore.tupleStore.scan({
+            prefix: ['metadata'],
+          })
+        );
+        restoreData[storageKey] = {
+          synced: syncedMetadata,
+          local: localMetadataScan,
+        };
+      }
+      await this.tupleStore.clear();
+      // Restore metadata
+      await this.transact(async (tx) => {
+        for (const [
+          storageKey,
+          { synced: syncedMetadataScan, local: localMetadataScan },
+        ] of Object.entries(restoreData)) {
+          const scopedTx = tx.withScope({
+            read: [storageKey],
+            write: [storageKey],
+          });
+          for (const triple of syncedMetadataScan) {
+            await scopedTx.insertTriple(triple);
+          }
+          for (const kv of localMetadataScan) {
+            await scopedTx.tupleTx.set(kv.key, kv.value);
+          }
+        }
+      });
+    }
+
+    // Inform listeners
+    for (const callback of this.onClearCallbacks) {
+      await callback();
+    }
   }
 
-  async collectGarbage() {
-    const allTriples = await this.findByEAT([]);
-    const triplesToDelete = [];
-    let currentEntityId: string | null = null;
-    let currentAttribute: any = [];
-    for (let i = allTriples.length - 1; i >= 0; i--) {
-      const triple = allTriples[i];
-      if (
-        triple.id === currentEntityId &&
-        compareTuple(triple.attribute, currentAttribute) === 0
-      ) {
-        triplesToDelete.push(triple);
-        continue;
-      }
-      currentEntityId = triple.id;
-      currentAttribute = triple.attribute;
-    }
-    await this.deleteTriples(triplesToDelete);
+  onClear(callback: () => void | Promise<void>) {
+    this.onClearCallbacks.push(callback);
+    return () => {
+      this.onClearCallbacks = this.onClearCallbacks.filter(
+        (cb) => cb !== callback
+      );
+    };
   }
+
+  private onClearCallbacks: (() => void | Promise<void>)[] = [];
 }
 
 function throttle(callback: () => void, delay: number) {

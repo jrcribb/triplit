@@ -7,6 +7,8 @@ export type {
   FetchByIdQueryParams,
   Unalias,
   Roles,
+  FetchResult,
+  FetchResultEntity,
 } from '@triplit/db';
 export { Schema, or, and, exists } from '@triplit/db';
 export * from './client/triplit-client.js';
@@ -21,5 +23,6 @@ export type {
   ClientQueryDefault,
   ClientSchema,
   Entity,
+  QueryResult,
 } from './client/types';
 export type { ClientQueryBuilder } from './client/query-builder.js';

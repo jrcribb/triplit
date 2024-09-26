@@ -32,6 +32,7 @@ import {
 } from '@triplit/types/sync';
 import { Server as TriplitServer } from './triplit-server.js';
 import { ProjectJWT } from './token.js';
+import { genToArr } from '@triplit/db';
 
 export interface ConnectionOptions {
   clientId: string;
@@ -263,6 +264,7 @@ export class Connection {
           );
       }
     } catch (e) {
+      console.error(e);
       return this.sendErrorResponse(
         message.type,
         isTriplitError(e)
@@ -335,16 +337,8 @@ export class Session {
   constructor(public server: TriplitServer, public token: ProjectJWT) {
     if (!token) throw new TriplitError('Token is required');
     // TODO: figure out admin middleware
-    const variables: Record<string, any> = {};
 
-    // For backwards compatibility assign to SESSION_USER_ID
-    if ('x-triplit-user-id' in token)
-      variables['SESSION_USER_ID'] = token['x-triplit-user-id'];
-
-    // Assign token to session vars
-    Object.assign(variables, token);
-
-    this.db = server.db.withSessionVars(variables);
+    this.db = server.db.withSessionVars(token);
   }
 
   createConnection(connectionParams: ConnectionOptions) {
@@ -363,47 +357,6 @@ export class Session {
         fallbackMessage: 'An unknown error occurred clearing the database.',
       });
     }
-  }
-
-  async getMigrationStatus() {
-    if (!hasAdminAccess(this.token)) return NotAdminResponse();
-    const schema = await this.db.getSchema();
-    if (!schema) {
-      return ServerResponse(200, { type: 'schemaless' });
-    }
-
-    const migrations = Object.values(await this.db.getAppliedMigrations()).sort(
-      (a, b) => a.id - b.id
-    );
-    const hash = hashSchemaJSON(schemaToJSON(schema)?.collections);
-
-    return ServerResponse(200, {
-      type: 'schema',
-      migrations,
-      schemaHash: hash,
-      schema,
-    });
-  }
-
-  async applyMigration({
-    migration,
-    direction,
-  }: {
-    migration: any;
-    direction: 'up' | 'down';
-  }) {
-    if (!hasAdminAccess(this.token)) return NotAdminResponse();
-    try {
-      if (!migration || !direction)
-        return errorResponse(
-          new TriplitError('Missing migration or direction')
-        );
-      await this.db.migrate([migration], direction);
-    } catch (e) {
-      if (isTriplitError(e)) return errorResponse(e);
-      return errorResponse(new TriplitError('Error applying migration'));
-    }
-    return ServerResponse(200);
   }
 
   async getCollectionStats() {
@@ -446,7 +399,7 @@ export class Session {
     return ServerResponse(result.successful ? 200 : 409, result);
   }
 
-  async queryTriples({ query }: { query: CollectionQuery<any, any> }) {
+  async queryTriples({ query }: { query: CollectionQuery }) {
     if (!query)
       return errorResponse(
         new TriplitError('{ query: CollectionQuery } missing from request body')
@@ -463,24 +416,36 @@ export class Session {
     }
   }
 
-  async fetch(query: CollectionQuery<any, any>) {
+  async fetch(query: CollectionQuery) {
     try {
+      const hasSelectWithoutId = query.select && !query.select.includes('id');
+
+      if (hasSelectWithoutId) {
+        // @ts-expect-error
+        query.select.push('id');
+      }
+
       const result = await this.db.fetch(query, {
         skipRules: hasAdminAccess(this.token),
       });
+
       const schema = (await this.db.getSchema())?.collections;
       const { collectionName } = query;
+
       const collectionSchema = schema?.[collectionName]?.schema;
-      const data = new Map(
-        [...result.entries()].map(([id, entity]) => [
-          id,
-          collectionSchema
-            ? collectionSchema.convertJSToJSON(entity, schema)
-            : entity,
-        ])
-      );
+      const data = result.map((entity) => {
+        const jsonEntity = collectionSchema
+          ? collectionSchema.convertJSToJSON(entity, schema)
+          : entity;
+        const entityId = jsonEntity.id;
+        if (hasSelectWithoutId && jsonEntity.id) {
+          delete jsonEntity.id;
+        }
+        return [entityId, jsonEntity];
+      });
+
       return ServerResponse(200, {
-        result: [...data.entries()],
+        result: data,
       });
     } catch (e) {
       return errorResponse(e as Error);
@@ -570,7 +535,7 @@ export class Session {
       await this.db.tripleStore.transact(async (tx) => {
         for (const [entityId, attribute] of entityAttributes) {
           await tx.deleteTriples(
-            await tx.findByEntityAttribute(entityId, attribute)
+            await genToArr(tx.findByEntityAttribute(entityId, attribute))
           );
         }
       });

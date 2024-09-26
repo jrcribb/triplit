@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import dotenv from 'dotenv';
 import dotenvExpand from 'dotenv-expand';
-dotenvExpand.expand(dotenv.config());
+dotenvExpand.expand(dotenv.config({ path: ['.env.local', '.env'] }));
 import { bold, dim, red } from 'ansis/colors';
 import React from 'react';
 import { render } from 'ink';
@@ -203,15 +203,22 @@ export async function execute(args: string[], flags: {}) {
       args: parsedCommandArgs,
     },
   });
-  const result = await cmdDef.run({
-    flags: unaliasedFlags,
-    args: parsedCommandArgs,
-    ctx,
-  });
-  if (result && React.isValidElement(result)) {
-    render(result, { patchConsole: false });
+  try {
+    const result = await cmdDef.run({
+      flags: unaliasedFlags,
+      args: parsedCommandArgs,
+      ctx,
+    });
+    if (result && React.isValidElement(result)) {
+      render(result, { patchConsole: false });
+    }
+  } catch (e) {
+    console.error(red(e.message));
+    // TODO report error
+    process.exit(1);
+  } finally {
+    await posthog.shutdown();
   }
-  await posthog.shutdown();
 }
 
 async function printDirectoryHelp(name: string, commands: CommandTree) {

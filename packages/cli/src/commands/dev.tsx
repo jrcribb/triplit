@@ -49,6 +49,14 @@ export default Command({
       char: 'S',
       description: 'Seed the database with data',
     }),
+    upstreamUrl: Flag.String({
+      description: 'URL of the upstream server',
+      hidden: true,
+    }),
+    upstreamToken: Flag.String({
+      description: 'Token to be used with the upstream server',
+      hidden: true,
+    }),
   },
   async run({ flags, ctx }) {
     const dbPort = flags.dbPort || 6543;
@@ -107,6 +115,18 @@ export default Command({
       collections && flags.initWithSchema
         ? { collections, roles, version: 0 }
         : undefined;
+
+    let upstream = undefined;
+    if (!!flags.upstreamUrl) {
+      if (!flags.upstreamToken) {
+        throw new Error('Both upstreamUrl and upstreamToken must be provided');
+      }
+      upstream = {
+        url: flags.upstreamUrl,
+        token: flags.upstreamToken,
+      };
+    }
+
     const startDBServer = createDBServer({
       storage: flags.storage || 'memory',
       dbOptions: {
@@ -114,6 +134,7 @@ export default Command({
       },
       watchMode: !!flags.watch,
       verboseLogs: !!flags.verbose,
+      upstream,
     });
     let watcher: chokidar.FSWatcher | undefined = undefined;
     let remoteSchemaUnsubscribe = undefined;
@@ -132,7 +153,7 @@ export default Command({
         const schemaPath = path.join(getTriplitDir(), 'schema.ts');
         const schemaQuery = client
           .query('_metadata')
-          .entityId('_schema')
+          .id('_schema')
           // Avoid firing on optimistic changes
           .syncStatus('confirmed')
           .build();
@@ -151,7 +172,7 @@ export default Command({
           async (results, info) => {
             // Avoid firing on potentially stale results
             if (info.hasRemoteFulfilled) {
-              const schemaJSON = results.get('_schema');
+              const schemaJSON = results[0];
               const resultHash = hashSchemaJSON(schemaJSON.collections);
               const fileSchema = schemaToJSON({
                 collections: ctx.schema,

@@ -5,9 +5,10 @@ import {
   testSubscription,
   testSubscriptionTriples,
 } from '../utils/test-subscription.js';
+import { genToArr } from '../../src/utils/generator.js';
 
 describe('subscriptions', () => {
-  let db: DB<any>;
+  let db: DB;
   beforeEach(async () => {
     db = new DB({ source: new InMemoryTupleStorage() });
     const docs = [
@@ -23,18 +24,22 @@ describe('subscriptions', () => {
   it('handles selection updates', async (done) => {
     const query = db
       .query('students')
-      .select(['major'])
+      .select(['major', 'id'])
       .where([['name', '=', 'Alice']])
       .build();
     await testSubscription(db, query, [
-      { check: (data) => expect(data.get('1').major).toBe('Computer Science') },
+      {
+        check: (data) =>
+          expect(data.find((e) => e.id === '1').major).toBe('Computer Science'),
+      },
       {
         action: async () => {
-          await db.update('students', 1, async (entity) => {
+          await db.update('students', '1', async (entity) => {
             entity.major = 'Math';
           });
         },
-        check: (data) => expect(data.get('1').major).toBe('Math'),
+        check: (data) =>
+          expect(data.find((e) => e.id === '1').major).toBe('Math'),
       },
     ]);
   });
@@ -46,14 +51,14 @@ describe('subscriptions', () => {
       .where([['dorm', '=', 'Battell']])
       .build();
     await testSubscription(db, query, [
-      { check: (data) => expect(data.size).toBe(2) },
+      { check: (data) => expect(data.length).toBe(2) },
       {
         action: async () => {
           await db.update('students', '1', async (entity) => {
             entity.dorm = 'Battell';
           });
         },
-        check: (data) => expect(data.size).toBe(3),
+        check: (data) => expect(data.length).toBe(3),
       },
     ]);
   });
@@ -85,7 +90,7 @@ describe('subscriptions', () => {
       .build();
     await testSubscription(db, query, [
       {
-        check: (data) => expect(data.size).toBe(3),
+        check: (data) => expect(data.length).toBe(3),
       },
       {
         action: async () => {
@@ -93,7 +98,7 @@ describe('subscriptions', () => {
             entity.dorm = 'Battell';
           });
         },
-        check: (data) => expect(data.size).toBe(2),
+        check: (data) => expect(data.length).toBe(2),
       },
     ]);
   });
@@ -140,7 +145,7 @@ describe('subscriptions', () => {
 
     await testSubscription(db, query, [
       {
-        check: (data) => expect(data.size).toBe(2), // initial data
+        check: (data) => expect(data.length).toBe(2), // initial data
       },
       {
         action: async () => {
@@ -148,7 +153,7 @@ describe('subscriptions', () => {
             entity.dorm = 'Battell';
           });
         },
-        check: (data) => expect(data.size).toBe(2), // backfills after delete
+        check: (data) => expect(data.length).toBe(2), // backfills after delete
       },
       {
         action: async () => {
@@ -156,7 +161,7 @@ describe('subscriptions', () => {
             entity.dorm = 'Battell';
           });
         },
-        check: (data) => expect(data.size).toBe(1), // cant backfill, no more matching data
+        check: (data) => expect(data.length).toBe(1), // cant backfill, no more matching data
       },
       {
         action: async () => {
@@ -164,7 +169,7 @@ describe('subscriptions', () => {
             entity.dorm = 'Battell';
           });
         },
-        check: (data) => expect(data.size).toBe(0), // handles down to zero
+        check: (data) => expect(data.length).toBe(0), // handles down to zero
       },
     ]);
   });
@@ -180,7 +185,7 @@ describe('subscriptions', () => {
       [
         {
           check: (data) => {
-            expect(data.size).toBe(LIMIT);
+            expect(data.length).toBe(LIMIT);
             expect([...data.values()].map((r) => r.major)).toEqual([
               'Biology',
               'Biology',
@@ -197,7 +202,7 @@ describe('subscriptions', () => {
             });
           },
           check: (data) => {
-            expect(data.size).toBe(LIMIT);
+            expect(data.length).toBe(LIMIT);
             expect([...data.values()].map((r) => r.major)).toEqual([
               'Astronomy',
               'Biology',
@@ -228,7 +233,8 @@ describe('subscriptions', () => {
               deleted: false,
             });
           },
-          check: (data) => expect(Array.from(data.keys())).toEqual(['1']),
+          check: (data) =>
+            expect(Array.from(data.map((e) => e.id))).toEqual(['1']),
         },
         {
           action: async () => {
@@ -239,7 +245,8 @@ describe('subscriptions', () => {
               deleted: false,
             });
           },
-          check: (data) => expect(Array.from(data.keys())).toEqual(['2', '1']),
+          check: (data) =>
+            expect(Array.from(data.map((e) => e.id))).toEqual(['2', '1']),
         },
         {
           action: async () => {
@@ -251,7 +258,7 @@ describe('subscriptions', () => {
             });
           },
           check: (data) =>
-            expect(Array.from(data.keys())).toEqual(['2', '1', '3']),
+            expect(Array.from(data.map((e) => e.id))).toEqual(['2', '1', '3']),
         },
         {
           action: async () => {
@@ -263,7 +270,12 @@ describe('subscriptions', () => {
             });
           },
           check: (data) =>
-            expect(Array.from(data.keys())).toEqual(['2', '1', '4', '3']),
+            expect(Array.from(data.map((e) => e.id))).toEqual([
+              '2',
+              '1',
+              '4',
+              '3',
+            ]),
         },
         {
           action: async () => {
@@ -272,7 +284,12 @@ describe('subscriptions', () => {
             });
           },
           check: (data) =>
-            expect(Array.from(data.keys())).toEqual(['2', '4', '1', '3']),
+            expect(Array.from(data.map((e) => e.id))).toEqual([
+              '2',
+              '4',
+              '1',
+              '3',
+            ]),
         },
         {
           action: async () => {
@@ -281,7 +298,7 @@ describe('subscriptions', () => {
             });
           },
           check: (data) =>
-            expect(Array.from(data.keys())).toEqual(['2', '1', '3']),
+            expect(Array.from(data.map((e) => e.id))).toEqual(['2', '1', '3']),
         },
         {
           action: async () => {
@@ -289,7 +306,8 @@ describe('subscriptions', () => {
               entity.deleted = true;
             });
           },
-          check: (data) => expect(Array.from(data.keys())).toEqual(['2', '1']),
+          check: (data) =>
+            expect(Array.from(data.map((e) => e.id))).toEqual(['2', '1']),
         },
         {
           action: async () => {
@@ -297,7 +315,8 @@ describe('subscriptions', () => {
               entity.deleted = true;
             });
           },
-          check: (data) => expect(Array.from(data.keys())).toEqual(['1']),
+          check: (data) =>
+            expect(Array.from(data.map((e) => e.id))).toEqual(['1']),
         },
         {
           action: async () => {
@@ -305,7 +324,8 @@ describe('subscriptions', () => {
               entity.deleted = true;
             });
           },
-          check: (data) => expect(Array.from(data.keys())).toEqual([]),
+          check: (data) =>
+            expect(Array.from(data.map((e) => e.id))).toEqual([]),
         },
       ]
     );
@@ -349,17 +369,17 @@ describe('subscriptions', () => {
 
     let completedCalls = 0;
     let completedAssertions = [
-      (results: Map<string, any>) => {
-        expect(results.size).toBe(0);
+      (results: any[]) => {
+        expect(results.length).toBe(0);
       },
-      (results: Map<string, any>) => {
-        expect(results.size).toBe(1);
-        expect(results.get('1')).toBeTruthy();
+      (results: any[]) => {
+        expect(results.length).toBe(1);
+        expect(results.find((e) => e.id === '1')).toBeTruthy();
       },
-      (results: Map<string, any>) => {
-        expect(results.size).toBe(2);
-        expect(results.get('1')).toBeTruthy();
-        expect(results.get('3')).toBeTruthy();
+      (results: any[]) => {
+        expect(results.length).toBe(2);
+        expect(results.find((e) => e.id === '1')).toBeTruthy();
+        expect(results.find((e) => e.id === '3')).toBeTruthy();
       },
     ];
     db.subscribe(completedTodosQuery, (data) => {
@@ -369,17 +389,17 @@ describe('subscriptions', () => {
 
     let incompleteCalls = 0;
     let incompleteAssertions = [
-      (results: Map<string, any>) => {
-        expect(results.size).toBe(0);
+      (results: any[]) => {
+        expect(results.length).toBe(0);
       },
-      (results: Map<string, any>) => {
-        expect(results.size).toBe(1);
-        expect(results.get('2')).toBeTruthy();
+      (results: any[]) => {
+        expect(results.length).toBe(1);
+        expect(results.find((e) => e.id === '2')).toBeTruthy();
       },
-      (results: Map<string, any>) => {
-        expect(results.size).toBe(2);
-        expect(results.get('2')).toBeTruthy();
-        expect(results.get('4')).toBeTruthy();
+      (results: any[]) => {
+        expect(results.length).toBe(2);
+        expect(results.find((e) => e.id === '2')).toBeTruthy();
+        expect(results.find((e) => e.id === '4')).toBeTruthy();
       },
     ];
     db.subscribe(incompleteTodosQuery, (data) => {
@@ -466,12 +486,12 @@ describe('single entity subscriptions', async () => {
 
   it('can subscribe to an entity', async () => {
     await Promise.all(defaultData.map((doc) => db.insert('students', doc)));
-    await testSubscription(db, db.query('students').entityId('3').build(), [
+    await testSubscription(db, db.query('students').id('3').build(), [
       {
         check: (results) => {
-          const entity = results.get('3');
+          const entity = results.find((e) => e.id === '3');
           expect(entity).toBeDefined();
-          expect(results.size).toBe(1);
+          expect(results.length).toBe(1);
           expect(entity.id).toBe('3');
         },
       },
@@ -484,19 +504,19 @@ describe('single entity subscriptions', async () => {
           });
         },
         check: (results) => {
-          expect(results.get('3').major).toBe('sociology');
+          expect(results.find((e) => e.id === '3').major).toBe('sociology');
         },
       },
     ]);
   });
-  it("can should return nothing if the entity doesn't exist, and then update when it is inserted and deleted", async () => {
+  it("should return nothing if the entity doesn't exist, and then update when it is inserted and deleted", async () => {
     await Promise.all(defaultData.map((doc) => db.insert('students', doc)));
-    await testSubscription(db, db.query('students').entityId('6').build(), [
+    await testSubscription(db, db.query('students').id('6').build(), [
       {
         check: (results) => {
-          const entity = results.get('6');
+          const entity = results.find((e) => e.id === '6');
           expect(entity).not.toBeDefined();
-          expect(results.size).toBe(0);
+          expect(results.length).toBe(0);
         },
       },
       {
@@ -511,19 +531,19 @@ describe('single entity subscriptions', async () => {
           });
         },
         check: (results) => {
-          const entity = results.get('6');
+          const entity = results.find((e) => e.id === '6');
           expect(entity).toBeDefined();
-          expect(results.size).toBe(1);
+          expect(results.length).toBe(1);
           expect(entity.id).toBe('6');
         },
       },
       {
         action: async () => {
-          const allTriples = await db.tripleStore.findByEntity();
+          const allTriples = await genToArr(db.tripleStore.findByEntity());
           await db.tripleStore.deleteTriples(allTriples);
         },
         check: async (results) => {
-          const entity = results.get('6');
+          const entity = results.find((e) => e.id === '6');
           expect(entity).not.toBeDefined();
         },
       },
@@ -533,7 +553,7 @@ describe('single entity subscriptions', async () => {
     await Promise.all(defaultData.map((doc) => db.insert('students', doc)));
     await new Promise<void>(async (resolve) => {
       const spy = vi.fn();
-      db.subscribe(db.query('students').entityId('3').build(), spy);
+      db.subscribe(db.query('students').id('3').build(), spy);
       setTimeout(() => {
         expect(spy).toHaveBeenCalledOnce();
         resolve();
@@ -541,7 +561,7 @@ describe('single entity subscriptions', async () => {
     });
     await new Promise<void>(async (resolve) => {
       const spy = vi.fn();
-      db.subscribe(db.query('students').entityId('3').build(), spy);
+      db.subscribe(db.query('students').id('3').build(), spy);
       await db.transact(async (tx) => {
         await tx.update('students', '1', async (entity) => {
           entity.major = 'sociology';
@@ -559,7 +579,7 @@ describe('single entity subscriptions', async () => {
     });
     await new Promise<void>(async (resolve) => {
       const spy = vi.fn();
-      db.subscribe(db.query('students').entityId('3').build(), spy);
+      db.subscribe(db.query('students').id('3').build(), spy);
       await db.transact(async (tx) => {
         await tx.update('students', '1', async (entity) => {
           entity.major = 'sociology';

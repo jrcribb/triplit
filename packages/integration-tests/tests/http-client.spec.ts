@@ -19,7 +19,7 @@ beforeEach(async () => {
 it('fetch respects queries', async () => {
   await withServer({ port: PORT }, async () => {
     const client = new HttpClient({
-      server: `http://localhost:${PORT}`,
+      serverUrl: `http://localhost:${PORT}`,
       token: serviceToken,
     });
     await client.insert('test', { id: 'test1', name: 'a' });
@@ -31,17 +31,39 @@ it('fetch respects queries', async () => {
       where: [['name', '=', 'a']],
     });
 
-    expect(result.size).toEqual(2);
-    expect(result.get('test1')).toBeTruthy();
-    expect(result.get('test2')).toBeFalsy();
-    expect(result.get('test3')).toBeTruthy();
+    expect(result.length).toEqual(2);
+    expect(result.find((e) => e.id === 'test1')).toBeTruthy();
+    expect(result.find((e) => e.id === 'test2')).toBeFalsy();
+    expect(result.find((e) => e.id === 'test3')).toBeTruthy();
+  });
+});
+
+it('fetch can handle a select without ["id"]', async () => {
+  await withServer({ port: PORT }, async () => {
+    const client = new HttpClient({
+      serverUrl: `http://localhost:${PORT}`,
+      token: serviceToken,
+    });
+    await client.insert('test', { id: 'test1', name: 'a' });
+    await client.insert('test', { id: 'test2', name: 'b' });
+    await client.insert('test', { id: 'test3', name: 'a' });
+
+    const result = await client.fetch({
+      collectionName: 'test',
+      select: ['name'],
+      where: [['name', '=', 'a']],
+    });
+    expect(result.length).toEqual(2);
+    expect(result.every((e) => e.id === undefined)).toBeTruthy();
+    expect(result.find((e) => e.name === 'a')).toBeTruthy();
+    expect(result.find((e) => e.name === 'b')).toBeFalsy();
   });
 });
 
 it('fetchOne returns a single entity that matches filter', async () => {
   await withServer({ port: PORT }, async () => {
     const client = new HttpClient({
-      server: `http://localhost:${PORT}`,
+      serverUrl: `http://localhost:${PORT}`,
       token: serviceToken,
     });
     await client.insert('test', { id: 'test1', name: 'a' });
@@ -60,7 +82,7 @@ it('fetchOne returns a single entity that matches filter', async () => {
 it('fetchById returns a single entity by id', async () => {
   await withServer({ port: PORT }, async () => {
     const client = new HttpClient({
-      server: `http://localhost:${PORT}`,
+      serverUrl: `http://localhost:${PORT}`,
       token: serviceToken,
     });
     await client.insert('test', { id: 'test1', name: 'a' });
@@ -148,7 +170,7 @@ it('can handle inserting all of our supported types', async () => {
     },
     async () => {
       const client = new HttpClient<typeof schema>({
-        server: `http://localhost:${PORT}`,
+        serverUrl: `http://localhost:${PORT}`,
         token: serviceToken,
         schema,
       });
@@ -208,7 +230,7 @@ describe('set operations', () => {
       },
       async () => {
         const client = new HttpClient({
-          server: `http://localhost:${PORT}`,
+          serverUrl: `http://localhost:${PORT}`,
           token: serviceToken,
           schema: schema.collections,
         });
@@ -272,7 +294,7 @@ describe('set operations', () => {
       },
       async () => {
         const client = new HttpClient({
-          server: `http://localhost:${PORT}`,
+          serverUrl: `http://localhost:${PORT}`,
           token: serviceToken,
           schema: schema.collections,
         });
@@ -324,7 +346,7 @@ describe('set operations', () => {
       },
       async () => {
         const client = new HttpClient({
-          server: `http://localhost:${PORT}`,
+          serverUrl: `http://localhost:${PORT}`,
           token: serviceToken,
           schema: schema.collections,
         });
@@ -375,7 +397,7 @@ it('fetch properly deserializes data based on schema', async () => {
     },
     async () => {
       const client = new HttpClient<typeof schema.collections>({
-        server: `http://localhost:${PORT}`,
+        serverUrl: `http://localhost:${PORT}`,
         token: serviceToken,
         schema: schema.collections,
       });
@@ -394,7 +416,7 @@ it('fetch properly deserializes data based on schema', async () => {
       // fetch
       {
         const result = await client.fetch({ collectionName: 'test' });
-        expect(result.get('test1')).toEqual(expectedResult);
+        expect(result.find((e) => e.id === 'test1')).toEqual(expectedResult);
       }
 
       // fetchOne
@@ -448,7 +470,7 @@ it('fetch can properly deserialize subqueries with schema', async () => {
     },
     async () => {
       const client = new HttpClient({
-        server: `http://localhost:${PORT}`,
+        serverUrl: `http://localhost:${PORT}`,
         token: serviceToken,
         schema: schema.collections,
       });
@@ -481,14 +503,13 @@ it('fetch can properly deserialize subqueries with schema', async () => {
           collectionName: 'test',
           include: { relationshipOne: null, relationshipMany: null },
         });
-        const relOne = result.get('test1').relationshipOne;
+        const relOne = result.find((e) => e.id === 'test1')!.relationshipOne;
         expect(relOne).toEqual(expectedRel1);
-        const relMany = result.get('test1').relationshipMany;
-        expect(relMany.size).toEqual(2);
-        expect(relMany.get('rel1')).toEqual(expectedRel1);
-        expect(relMany.get('rel2')).toEqual(expectedRel2);
+        const relMany = result.find((e) => e.id === 'test1')!.relationshipMany;
+        expect(relMany.length).toEqual(2);
+        expect(relMany.find((e) => e.id === 'rel1')).toEqual(expectedRel1);
+        expect(relMany.find((e) => e.id === 'rel2')).toEqual(expectedRel2);
       }
-
       // fetchOne
       {
         const result = await client.fetchOne({
@@ -496,12 +517,12 @@ it('fetch can properly deserialize subqueries with schema', async () => {
           include: { relationshipOne: null, relationshipMany: null },
         });
 
-        const relOne = result.relationshipOne;
+        const relOne = result!.relationshipOne;
         expect(relOne).toEqual(expectedRel1);
-        const relMany = result.relationshipMany;
-        expect(relMany.size).toEqual(2);
-        expect(relMany.get('rel1')).toEqual(expectedRel1);
-        expect(relMany.get('rel2')).toEqual(expectedRel2);
+        const relMany = result!.relationshipMany;
+        expect(relMany.length).toEqual(2);
+        expect(relMany.find((e) => e.id === 'rel1')).toEqual(expectedRel1);
+        expect(relMany.find((e) => e.id === 'rel2')).toEqual(expectedRel2);
       }
     }
   );
@@ -517,7 +538,7 @@ it.todo(
       },
       async () => {
         const client = new HttpClient({
-          server: `http://localhost:${PORT}`,
+          serverUrl: `http://localhost:${PORT}`,
           token: serviceToken,
         });
         await client.insert('test', {
@@ -547,24 +568,28 @@ it.todo(
           collectionName: 'test',
           include: {
             relationshipOne: {
-              collectionName: 'relationship' as const,
-              where: [['testId', '=', '$id']],
+              subquery: {
+                collectionName: 'relationship',
+                where: [['testId', '=', '$id']],
+              },
               cardinality: 'one',
             },
             relationshipMany: {
-              collectionName: 'relationship' as const,
-              where: [['testId', '=', '$id']],
+              subquery: {
+                collectionName: 'relationship',
+                where: [['testId', '=', '$id']],
+              },
               cardinality: 'many',
             },
           },
         });
 
-        const relOne = result.get('test1').relationshipOne;
+        const relOne = result.find((e) => e.id === 'test1')!.relationshipOne;
         expect(relOne).toEqual(expectedRel1);
-        const relMany = result.get('test1').relationshipMany;
-        expect(relMany.size).toEqual(2);
-        expect(relMany.get('rel1')).toEqual(expectedRel1);
-        expect(relMany.get('rel2')).toEqual(expectedRel2);
+        const relMany = result.find((e) => e.id === 'test1')!.relationshipMany;
+        expect(relMany.length).toEqual(2);
+        expect(relMany.find((e) => e.id === 'rel1')).toEqual(expectedRel1);
+        expect(relMany.find((e) => e.id === 'rel2')).toEqual(expectedRel2);
       }
     );
   }
@@ -586,7 +611,7 @@ it('update properly updates an entity', async () => {
     { port: PORT, serverOptions: { dbOptions: { schema } } },
     async () => {
       const client = new HttpClient({
-        server: `http://localhost:${PORT}`,
+        serverUrl: `http://localhost:${PORT}`,
         token: serviceToken,
         schema: schema.collections,
       });
@@ -614,7 +639,7 @@ it('update properly updates an entity', async () => {
 it('delete properly deletes an entity', async () => {
   await withServer({ port: PORT }, async () => {
     const client = new HttpClient({
-      server: `http://localhost:${PORT}`,
+      serverUrl: `http://localhost:${PORT}`,
       token: serviceToken,
     });
     await client.insert('test', { id: 'test1', name: 'a' });

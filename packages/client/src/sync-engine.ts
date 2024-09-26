@@ -1,4 +1,4 @@
-import DB, {
+import {
   CollectionQuery,
   TripleRow,
   TriplitError,
@@ -9,6 +9,10 @@ import DB, {
   convertEntityToJS,
   Timestamp,
   TripleStoreApi,
+  FetchResult,
+  Models,
+  Unalias,
+  ToQuery,
 } from '@triplit/db';
 import { SyncOptions, TriplitClient } from './client/triplit-client.js';
 import { Subject } from 'rxjs';
@@ -29,8 +33,10 @@ import {
   RemoteSyncFailedError,
 } from './errors.js';
 import { Value } from '@sinclair/typebox/value';
-import { ClientFetchResult, ClientQuery } from './client/types';
+import { ClientQuery, SchemaClientQueries } from './client/types';
 import { Logger } from '@triplit/types/logger';
+import { genToArr } from '@triplit/db';
+import { hashQuery } from './utils/query.js';
 
 type OnMessageReceivedCallback = (message: ServerSyncMessage) => void;
 type OnMessageSentCallback = (message: ClientSyncMessage) => void;
@@ -43,30 +49,35 @@ const QUERY_STATE_KEY = 'query-state';
 export class SyncEngine {
   private transport: SyncTransport;
 
-  private queries: Map<
-    string,
-    { params: CollectionQuery<any, any>; fulfilled: boolean }
-  > = new Map();
-
-  private reconnectTimeoutDelay = 250;
-  private reconnectTimeout: any;
-
   private client: TriplitClient<any>;
   private syncOptions: SyncOptions;
 
-  private connectionChangeHandlers: Set<(status: ConnectionStatus) => void> =
-    new Set();
-
-  private queryFulfillmentCallbacks: Map<string, (response: any) => void>;
   private txCommits$ = new Subject<string>();
   private txFailures$ = new Subject<{ txId: string; error: unknown }>();
 
+  private connectionChangeHandlers: Set<(status: ConnectionStatus) => void> =
+    new Set();
   private messageReceivedSubscribers: Set<OnMessageReceivedCallback> =
     new Set();
   private messageSentSubscribers: Set<OnMessageSentCallback> = new Set();
 
-  private awaitingAck: Set<string> = new Set();
   logger: Logger;
+
+  // Connection state - these are used to track the state of the connection and should reset on dis/reconnect
+  private awaitingAck: Set<string> = new Set();
+  private reconnectTimeoutDelay = 250;
+  private reconnectTimeout: any;
+
+  // Session state - these are used to track the state of the session and should persist across reconnections, but reset on reset()
+  private queries: Map<
+    string,
+    {
+      params: CollectionQuery<any, any>;
+      fulfilled: boolean;
+      responseCallbacks: Set<(response: any) => void>;
+      subCount: number;
+    }
+  > = new Map();
 
   /**
    *
@@ -98,7 +109,6 @@ export class SyncEngine {
         }
       }
     });
-    this.queryFulfillmentCallbacks = new Map();
 
     // Signal the server when there are triples to send
     const throttledSignal = throttle(() => this.signalOutboxTriples(), 100);
@@ -168,7 +178,7 @@ export class SyncEngine {
 
   async isFirstTimeFetchingQuery(query: CollectionQuery<any, any>) {
     await this.db.ready;
-    const hash = this.getQueryHash(query);
+    const hash = hashQuery(query);
     const state = await this.getQueryState(hash);
     return state === undefined;
   }
@@ -178,52 +188,58 @@ export class SyncEngine {
       [QUERY_STATE_KEY, [queryId], JSON.stringify(stateVector)],
     ]);
   }
-  private getQueryHash(params: CollectionQuery<any, any>) {
-    // @ts-expect-error
-    const { id, ...queryParams } = params;
-    return Value.Hash(queryParams).toString();
-  }
 
   /**
    * @hidden
    */
   subscribe(params: CollectionQuery<any, any>, onQueryFulfilled?: () => void) {
-    const id = this.getQueryHash(params);
-    this.getQueryState(id).then((queryState: Timestamp[]) => {
-      this.sendMessage({
-        type: 'CONNECT_QUERY',
-        payload: {
-          id: id,
-          params,
-          state: queryState,
-        },
+    const id = hashQuery(params);
+    if (!this.queries.has(id)) {
+      this.queries.set(id, {
+        params,
+        fulfilled: false,
+        responseCallbacks: new Set(),
+        subCount: 0,
       });
-      this.queries.set(id, { params, fulfilled: false });
-      this.onQueryFulfilled(id, (resp) => {
-        const { triples } = resp;
-        if (triples.length > 0) {
-          const stateVector = this.triplesToStateVector(triples);
-          const nextQueryState = new Map(
-            (queryState ?? []).map(([t, c]) => [c, t])
-          );
-          stateVector.forEach(([t, c]) => {
-            const current = nextQueryState.get(c);
-            if (!current || t > current) {
-              nextQueryState.set(c, t);
-            }
-          });
-          this.setQueryState(
-            id,
-            [...nextQueryState.entries()].map(([c, t]) => [t, c])
-          );
-        }
-        this.queries.set(id, { params, fulfilled: true });
-        if (onQueryFulfilled) onQueryFulfilled();
+      this.getQueryState(id).then((queryState: Timestamp[]) => {
+        this.sendMessage({
+          type: 'CONNECT_QUERY',
+          payload: {
+            id: id,
+            params,
+            state: queryState,
+          },
+        });
       });
-    });
+    }
+    // Safely using query! here because we just set it
+    const query = this.queries.get(id)!;
+    query.subCount++;
+    if (onQueryFulfilled) {
+      query.fulfilled && onQueryFulfilled();
+      query.responseCallbacks.add(onQueryFulfilled);
+    }
 
     return () => {
-      this.disconnectQuery(id);
+      const query = this.queries.get(id);
+      // If we cannot find the query, we may have already disconnected or reset our state
+      // just in case send a disconnect signal to the server
+      if (!query) {
+        this.disconnectQuery(id);
+        return;
+      }
+
+      // Clear data related to subscription
+      query.subCount--;
+      if (onQueryFulfilled) {
+        query.responseCallbacks.delete(onQueryFulfilled);
+      }
+
+      // If there are no more subscriptions, disconnect the query
+      if (query.subCount === 0) {
+        this.disconnectQuery(id);
+        return;
+      }
     };
   }
 
@@ -241,10 +257,6 @@ export class SyncEngine {
       timestamp,
       clientId,
     ]);
-  }
-
-  onQueryFulfilled(queryId: string, callback: (response: any) => void) {
-    this.queryFulfillmentCallbacks.set(queryId, callback);
   }
 
   hasQueryBeenFulfilled(queryId: string) {
@@ -318,10 +330,15 @@ export class SyncEngine {
         const { payload } = message;
         const triples = payload.triples;
         const queryIds = payload.forQueries;
+
         for (const qId of queryIds) {
-          const callback = this.queryFulfillmentCallbacks.get(qId);
-          if (callback) {
-            callback(payload);
+          await this.updateQueryStateVector(qId, triples);
+          const query = this.queries.get(qId);
+          if (!query) continue;
+          query.fulfilled = true;
+          const callbackSet = query?.responseCallbacks;
+          if (callbackSet) {
+            for (const callback of callbackSet) callback(payload);
           }
           // this.queryFulfillmentCallbacks.delete(qId);
         }
@@ -355,10 +372,12 @@ export class SyncEngine {
             // move all commited outbox triples to cache
             for (const clientTxId of txIds) {
               const timestamp = JSON.parse(clientTxId);
-              const triplesToEvict = await outboxOperator.findByClientTimestamp(
-                await this.db.getClientId(),
-                'eq',
-                timestamp
+              const triplesToEvict = await genToArr(
+                outboxOperator.findByClientTimestamp(
+                  await this.db.getClientId(),
+                  'eq',
+                  timestamp
+                )
               );
               if (triplesToEvict.length > 0) {
                 await cacheOperator.insertTriples(triplesToEvict);
@@ -434,7 +453,7 @@ export class SyncEngine {
 
     this.transport.onClose((evt) => {
       // Clear any sync state
-      this.awaitingAck = new Set();
+      this.resetConnectionState();
 
       // If there is no reason, then default is to retry
       if (evt.reason) {
@@ -459,7 +478,9 @@ export class SyncEngine {
 
         if (!retry) {
           // early return to prevent reconnect
-          this.logger.warn('Connection will not automatically retry.');
+          this.logger.warn(
+            'The connection has closed. Based on the signal, the connection will not automatically retry. If you would like to reconnect, please call `connect()`.'
+          );
           return;
         }
       }
@@ -497,20 +518,39 @@ export class SyncEngine {
     return this.transport.connectionStatus;
   }
 
+  private async updateQueryStateVector(queryId: string, triples: any) {
+    const queryState: Timestamp[] = await this.getQueryState(queryId);
+    if (triples.length > 0) {
+      const stateVector = this.triplesToStateVector(triples);
+      const nextQueryState = new Map(
+        (queryState ?? []).map(([t, c]) => [c, t])
+      );
+      stateVector.forEach(([t, c]) => {
+        const current = nextQueryState.get(c);
+        if (!current || t > current) {
+          nextQueryState.set(c, t);
+        }
+      });
+      this.setQueryState(
+        queryId,
+        [...nextQueryState.entries()].map(([c, t]) => [t, c])
+      );
+    }
+  }
+
   /**
    * @hidden
-   * Update the sync engine's configuration options
+   * Updates the sync engine's configuration options. If the connection is currently open, it will be closed and you will need to call `connect()` again.
    * @param options
    */
   updateConnection(options: Partial<SyncOptions>) {
-    const areAnyOptionsNew = (
-      Object.keys(options) as Array<keyof SyncOptions>
-    ).some((option) => this.syncOptions[option] !== options[option]);
-    if (!areAnyOptionsNew) return;
-
-    this.disconnect();
+    if (this.connectionStatus === 'OPEN') {
+      console.warn(
+        'You are updating the connection options while the connection is open. To avoid unexpected behavior the connection will be closed and you should call `connect()` again after the update. To hide this warning, call `disconnect()` before updating the connection options.'
+      );
+      this.disconnect();
+    }
     this.syncOptions = { ...this.syncOptions, ...options };
-    this.connect();
   }
 
   /**
@@ -518,6 +558,41 @@ export class SyncEngine {
    */
   disconnect() {
     this.closeConnection({ type: 'MANUAL_DISCONNECT', retry: false });
+  }
+
+  /**
+   * Clear all state related to syncing. If the connection is currently open, it will be closed and you will need to call `connect()` again.
+   */
+  async reset() {
+    if (this.connectionStatus === 'OPEN') {
+      console.warn(
+        'You are resetting the sync engine while the connection is open. To avoid unexpected behavior the connection will be closed and you should call `connect()` again after resetting. To hide this warning, call `disconnect()` before resetting.'
+      );
+      this.disconnect();
+    }
+    this.resetConnectionState();
+    await this.resetConnectionSessionState();
+  }
+
+  /**
+   * Resets any state related to a single connection
+   */
+  private resetConnectionState() {
+    this.awaitingAck = new Set();
+  }
+
+  /**
+   * Resets any state related to a single connection session (should persist across disconnect/reconnects)
+   */
+  private async resetConnectionSessionState() {
+    // Disconnect all connected queries
+    // This should clear the queries map
+    for (const id of this.queries.keys()) {
+      this.disconnectQuery(id);
+    }
+    await this.db.tripleStore.transact(async (tx) => {
+      await tx.deleteMetadataTuples([[QUERY_STATE_KEY]]);
+    });
   }
 
   private async handleErrorMessage(message: any) {
@@ -571,9 +646,11 @@ export class SyncEngine {
    */
   async retry(txId: string) {
     const timestamp: Timestamp = JSON.parse(txId);
-    const triplesToSend = await this.db.tripleStore
-      .setStorageScope(['outbox'])
-      .findByClientTimestamp(await this.db.getClientId(), 'eq', timestamp);
+    const triplesToSend = await genToArr(
+      this.db.tripleStore
+        .setStorageScope(['outbox'])
+        .findByClientTimestamp(await this.db.getClientId(), 'eq', timestamp)
+    );
     if (triplesToSend.length > 0) this.sendTriples(triplesToSend);
   }
 
@@ -591,10 +668,12 @@ export class SyncEngine {
         });
         for (const txId of txIdList) {
           const timestamp = JSON.parse(txId);
-          const triples = await scopedTx.findByClientTimestamp(
-            await this.db.getClientId(),
-            'eq',
-            timestamp
+          const triples = await genToArr(
+            scopedTx.findByClientTimestamp(
+              await this.db.getClientId(),
+              'eq',
+              timestamp
+            )
           );
           await scopedTx.deleteTriples(triples);
         }
@@ -653,18 +732,17 @@ export class SyncEngine {
   /**
    * @hidden
    */
-  async fetchQuery<CQ extends ClientQuery<any, any>>(query: CQ) {
+  async fetchQuery<M extends Models, CQ extends SchemaClientQueries<M>>(
+    query: CQ
+  ) {
     try {
       // Simpler to serialize triples and reconstruct entities on the client
       const triples = await this.getRemoteTriples(query);
       const entities = constructEntities(triples);
       const schema = (await this.db.getSchema())?.collections;
-      return new Map(
-        [...entities].map(([id, entity]) => [
-          stripCollectionFromId(id),
-          convertEntityToJS(entity.data as any, schema),
-        ])
-      ) as ClientFetchResult<CQ>;
+      return [...entities].map(([, entity]) =>
+        convertEntityToJS(entity.data as any, schema)
+      ) as Unalias<FetchResult<M, ToQuery<M, CQ>>>;
     } catch (e) {
       if (e instanceof TriplitError) throw e;
       if (e instanceof Error)
@@ -714,7 +792,9 @@ export class SyncEngine {
   }
 
   private async getTriplesToSend(store: TripleStoreApi) {
-    return (await store.findByEntity()).filter((t) => this.shouldSendTriple(t));
+    return (await genToArr(store.findByEntity())).filter((t) =>
+      this.shouldSendTriple(t)
+    );
   }
 
   private shouldSendTriple(t: TripleRow) {

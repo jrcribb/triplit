@@ -11,14 +11,15 @@
   "cli": "CLI",
   "frameworks": "Frameworks",
   "triplit-cloud": "Triplit Cloud",
+  "auth": "Authentication",
   "-3": {
     "type": "separator"
   },
   "self-hosting": "Self-hosting",
+  "offline-mode": "Offline mode",
   "local-development": "Local development",
   "seeding": "Seeding a database",
-  "auth": "Auth",
-  "migrations": { "title": "Migrations", "display": "hidden" },
+  "ssr": "Server-side rendering",
   "v2": {
     "title": "V2",
     "display": "hidden"

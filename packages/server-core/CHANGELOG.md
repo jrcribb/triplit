@@ -1,5 +1,121 @@
 # @triplit/server-core
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [8966b0fe]
+- Updated dependencies [761648cf]
+  - @triplit/db@0.4.1
+
+## 0.4.0
+
+### Minor Changes
+
+- 0a09013b: Sunset migrations API
+- f894e435: update query return type to array
+
+### Patch Changes
+
+- Updated dependencies [0a09013b]
+- Updated dependencies [38746526]
+- Updated dependencies [f894e435]
+- Updated dependencies [abe8bea8]
+  - @triplit/db@0.4.0
+
+## 0.3.79
+
+### Patch Changes
+
+- Updated dependencies [5fed7f42]
+  - @triplit/db@0.3.75
+
+## 0.3.78
+
+### Patch Changes
+
+- Updated dependencies [5eae93dc]
+  - @triplit/db@0.3.74
+
+## 0.3.77
+
+### Patch Changes
+
+- Updated dependencies [99a5b854]
+  - @triplit/db@0.3.73
+
+## 0.3.76
+
+### Patch Changes
+
+- @triplit/db@0.3.72
+
+## 0.3.75
+
+### Patch Changes
+
+- a902f8b8: unify session variable transformation logic
+- Updated dependencies [4f99c558]
+- Updated dependencies [a902f8b8]
+  - @triplit/db@0.3.71
+
+## 0.3.74
+
+### Patch Changes
+
+- cb72c28c: better errors for failed token verifications
+- b1127b7b: Write scope claim to array on tokens
+
+## 0.3.73
+
+### Patch Changes
+
+- 39183482: Update server-core types
+- Updated dependencies [104027d8]
+- Updated dependencies [833b69c9]
+- Updated dependencies [ecc5a959]
+  - @triplit/db@0.3.70
+
+## 0.3.72
+
+### Patch Changes
+
+- a6caa166: simplify token scheme
+- d11d57e2: Use async generators for tuple scans rather than arrays for lazy pagination of indexes that will reduce memory and increase performance on large datasets
+- Updated dependencies [96d4d8ff]
+- Updated dependencies [d11d57e2]
+- Updated dependencies [ffb00f68]
+  - @triplit/db@0.3.69
+
+## 0.3.71
+
+### Patch Changes
+
+- Updated dependencies [79df5162]
+  - @triplit/db@0.3.68
+
+## 0.3.70
+
+### Patch Changes
+
+- Updated dependencies [38bdff77]
+  - @triplit/db@0.3.67
+
+## 0.3.69
+
+### Patch Changes
+
+- Updated dependencies [73d638ec]
+  - @triplit/db@0.3.66
+
+## 0.3.68
+
+### Patch Changes
+
+- Updated dependencies [28d32b51]
+- Updated dependencies [0139e1a4]
+  - @triplit/db@0.3.65
+
 ## 0.3.67
 
 ### Patch Changes

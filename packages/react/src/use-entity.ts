@@ -4,8 +4,8 @@ import {
   CollectionNameFromModels,
   SubscriptionOptions,
   Unalias,
-  ClientFetchResultEntity,
   ClientQueryDefault,
+  FetchResultEntity,
 } from '@triplit/client';
 import type { WorkerClient } from '@triplit/client/worker-client';
 import { useQueryOne } from './use-query-one.js';
@@ -20,7 +20,7 @@ import { useQueryOne } from './use-query-one.js';
  * @returns - An object containing the fetching state, the result of the query, and any error that occurred
  */
 export function useEntity<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 >(
   client: TriplitClient<M> | WorkerClient<M>,
@@ -31,17 +31,17 @@ export function useEntity<
   fetching: boolean;
   fetchingLocal: boolean;
   fetchingRemote: boolean;
-  result: Unalias<ClientFetchResultEntity<ClientQueryDefault<M, CN>>> | null;
-  results: Unalias<ClientFetchResultEntity<ClientQueryDefault<M, CN>>> | null;
+  result: Unalias<FetchResultEntity<M, ClientQueryDefault<M, CN>>> | null;
+  /**
+   * @deprecated use `result` instead
+   */
+  results: Unalias<FetchResultEntity<M, ClientQueryDefault<M, CN>>> | null;
   error: any;
 } {
   let builder = client.query(collectionName).id(id);
   const queryData = useQueryOne(client, builder, options);
   return {
     ...queryData,
-    /**
-     * @deprecated use `result` instead
-     */
     results: queryData.result,
   };
 }

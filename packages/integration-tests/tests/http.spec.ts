@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, describe } from 'vitest';
 import { withServer } from '../utils/server.js';
 import { HttpClient } from '@triplit/client';
-import { Schema as S } from '@triplit/db';
+import { Schema as S, TripleRow } from '@triplit/db';
 
 const PORT = 8888;
 
@@ -34,7 +34,7 @@ async function fetchServerSyncedMetadata() {
   if (!res.ok) {
     throw new Error(await res.text());
   }
-  return await res.json();
+  return (await res.json()) as TripleRow[];
 }
 
 describe('/clear', async () => {
@@ -76,7 +76,7 @@ describe('/clear', async () => {
 
   it('parameterelss only clears data triples', async () => {
     const client = new HttpClient({
-      server: `http://localhost:${PORT}`,
+      serverUrl: `http://localhost:${PORT}`,
       token: serviceToken,
     });
     await withServer(
@@ -86,7 +86,7 @@ describe('/clear', async () => {
         await client.insert('users', { id: '1', name: 'Alice' });
         {
           const dataResult = await client.fetch(client.query('users').build());
-          expect(dataResult.size).toBe(1);
+          expect(dataResult.length).toBe(1);
           const metadataTriples = await fetchServerSyncedMetadata();
           expect(metadataTriples.length).toBeGreaterThan(0);
         }
@@ -99,7 +99,7 @@ describe('/clear', async () => {
         });
         {
           const dataResult = await client.fetch(client.query('users').build());
-          expect(dataResult.size).toBe(0);
+          expect(dataResult.length).toBe(0);
           const metadataTriples = await fetchServerSyncedMetadata();
           expect(metadataTriples.length).toBeGreaterThan(0);
         }
@@ -109,7 +109,7 @@ describe('/clear', async () => {
 
   it('{full: false} only clears data triples', async () => {
     const client = new HttpClient({
-      server: `http://localhost:${PORT}`,
+      serverUrl: `http://localhost:${PORT}`,
       token: serviceToken,
     });
     await withServer(
@@ -118,7 +118,7 @@ describe('/clear', async () => {
         await client.insert('users', { id: '1', name: 'Alice' });
         {
           const dataResult = await client.fetch(client.query('users').build());
-          expect(dataResult.size).toBe(1);
+          expect(dataResult.length).toBe(1);
           const metadataTriples = await fetchServerSyncedMetadata();
           expect(metadataTriples.length).toBeGreaterThan(0);
         }
@@ -132,7 +132,7 @@ describe('/clear', async () => {
         });
         {
           const dataResult = await client.fetch(client.query('users').build());
-          expect(dataResult.size).toBe(0);
+          expect(dataResult.length).toBe(0);
           const metadataTriples = await fetchServerSyncedMetadata();
           expect(metadataTriples.length).toBeGreaterThan(0);
         }
@@ -142,7 +142,7 @@ describe('/clear', async () => {
 
   it('{full: true} clears all data', async () => {
     const client = new HttpClient({
-      server: `http://localhost:${PORT}`,
+      serverUrl: `http://localhost:${PORT}`,
       token: serviceToken,
     });
     await withServer(
@@ -151,7 +151,7 @@ describe('/clear', async () => {
         await client.insert('users', { id: '1', name: 'Alice' });
         {
           const dataResult = await client.fetch(client.query('users').build());
-          expect(dataResult.size).toBe(1);
+          expect(dataResult.length).toBe(1);
           const metadataTriples = await fetchServerSyncedMetadata();
           expect(metadataTriples.length).toBeGreaterThan(0);
         }
@@ -165,7 +165,7 @@ describe('/clear', async () => {
         });
         {
           const dataResult = await client.fetch(client.query('users').build());
-          expect(dataResult.size).toBe(0);
+          expect(dataResult.length).toBe(0);
           const metadataTriples = await fetchServerSyncedMetadata();
           expect(metadataTriples.length).toBe(0);
         }

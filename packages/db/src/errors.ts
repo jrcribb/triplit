@@ -1,9 +1,9 @@
 import {
   COLLECTION_TYPE_KEYS,
   VALUE_TYPE_KEYS,
-} from './data-types/serialization.js';
+} from './data-types/constants.js';
 import { SessionRole } from './schema/permissions.js';
-import { Models } from './schema/types';
+import { Models } from './schema/types/index.js';
 
 export const STATUS_CODES = {
   Success: 200,
@@ -196,11 +196,7 @@ export class NoSchemaRegisteredError extends TriplitError {
 }
 
 export class CollectionNotFoundError extends TriplitError {
-  constructor(
-    collectionName: string,
-    collections: Models<any, any>,
-    ...args: any[]
-  ) {
+  constructor(collectionName: string, collections: Models, ...args: any[]) {
     super(...args);
     this.name = 'CollectionNotFoundError';
     this.baseMessage = `Could not find a collection with name ${collectionName} in your schema. Valid collections are: [${Object.keys(
@@ -260,19 +256,29 @@ export class InvalidSchemaPathError extends TriplitError {
 }
 
 export class RelationDoesNotExistError extends TriplitError {
-  constructor(attribute: string, collectionName: string, ...args: any[]) {
+  constructor(
+    relationName: string,
+    alias: string,
+    collectionName: string,
+    ...args: any[]
+  ) {
     super(...args);
     this.name = 'RelationDoesNotExistError';
-    this.baseMessage = `The attribute \'${attribute}\' does not exist in the schema for the \'${collectionName}\' collection.`;
+    this.baseMessage = `Your attempt to load \'${relationName}\' at alias \'${alias}\' failed because \'${relationName}\' does not exist in the schema for the collection \'${collectionName}\'.`;
     this.status = STATUS_CODES['Bad Request'];
   }
 }
 
 export class IncludedNonRelationError extends TriplitError {
-  constructor(attribute: string, collectionName: string, ...args: any[]) {
+  constructor(
+    relationName: string,
+    alias: string,
+    collectionName: string,
+    ...args: any[]
+  ) {
     super(...args);
     this.name = 'IncludedNonRelationError';
-    this.baseMessage = `The attribute \'${attribute}\' in the \'${collectionName}\' can not be used in the \'include\' clause as it is not a relation.`;
+    this.baseMessage = `Your attempt to load \'${relationName}\' at alias \'${alias}\' failed because \'${relationName}\' in the collection \'${collectionName}\' in not a query type.`;
     this.status = STATUS_CODES['Bad Request'];
   }
 }
@@ -287,16 +293,7 @@ export class InvalidTypeOptionsError extends TriplitError {
   }
 }
 
-// Migration Errors
-export class InvalidMigrationOperationError extends TriplitError {
-  constructor(...args: any[]) {
-    super(...args);
-    this.name = 'InvalidMigrationOperationError';
-    this.baseMessage = `Invalid migration operation.`;
-    this.status = STATUS_CODES['Bad Request'];
-  }
-}
-
+// Permission Errors
 export class WriteRuleError extends TriplitError {
   constructor(...args: any[]) {
     super(...args);
@@ -316,7 +313,13 @@ export class WritePermissionError extends TriplitError {
   ) {
     super(...args);
     this.name = 'WritePermissionError';
-    this.baseMessage = `Write to collection '${collection}' with id '${entityId}' is not permitted. Failed operation: ${operation}. Session roles: [${sessionRoles
+    this.baseMessage = `'${operation}' permission for the collection '${collection}' prevented the ${
+      operation === 'insert'
+        ? 'insertion'
+        : operation === 'delete'
+        ? 'deletion'
+        : 'update'
+    } of the entity with id '${entityId}'. The provided session roles were [${sessionRoles
       .map((m) => m.key)
       .join(', ')}].`;
     this.status = STATUS_CODES.Unauthorized;
@@ -546,6 +549,33 @@ export class QueryNotPreparedError extends TriplitError {
     super(...args);
     this.name = 'QueryNotPreparedError';
     this.baseMessage = `The query has not been prepared yet. This indicates a bug. Please inform the Triplit team.`;
+    this.status = STATUS_CODES['Internal Server Error'];
+  }
+}
+
+export class TransactionAlreadyCommittedError extends TriplitError {
+  constructor(...args: any[]) {
+    super(...args);
+    this.name = 'TransactionAlreadyCommittedError';
+    this.baseMessage = `This transaction has already been committed.`;
+    this.status = STATUS_CODES['Bad Request'];
+  }
+}
+
+export class TransactionAlreadyCanceledError extends TriplitError {
+  constructor(...args: any[]) {
+    super(...args);
+    this.name = 'TransactionAlreadyCanceledError';
+    this.baseMessage = `This transaction has already been canceled.`;
+    this.status = STATUS_CODES['Bad Request'];
+  }
+}
+
+export class InvalidTransactionStateError extends TriplitError {
+  constructor(...args: any[]) {
+    super(...args);
+    this.name = 'InvalidTransactionStateError';
+    this.baseMessage = `This transaction is in an invalid state. This indicates a bug. Please inform the Triplit team.`;
     this.status = STATUS_CODES['Internal Server Error'];
   }
 }

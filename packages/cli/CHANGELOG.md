@@ -1,5 +1,131 @@
 # @triplit/cli
 
+## 0.6.1
+
+### Patch Changes
+
+- 8966b0fe: Manual version bump for CLI dependencies
+
+## 0.6.0
+
+### Minor Changes
+
+- f894e435: update query return type to array
+
+### Patch Changes
+
+- 38746526: Manual version bump for CLI dependencies
+
+## 0.5.14
+
+### Patch Changes
+
+- 5fed7f42: Manual version bump for CLI dependencies
+
+## 0.5.13
+
+### Patch Changes
+
+- 5eae93dc: Manual version bump for CLI dependencies
+
+## 0.5.12
+
+### Patch Changes
+
+- 99a5b854: Manual version bump for CLI dependencies
+
+## 0.5.11
+
+### Patch Changes
+
+- 7a48f517: Manual version bump for CLI dependencies
+
+## 0.5.10
+
+### Patch Changes
+
+- 4f99c558: Manual version bump for CLI dependencies
+- a902f8b8: unify session variable transformation logic
+
+## 0.5.9
+
+### Patch Changes
+
+- 7ea2a0a9: Manual version bump for CLI dependencies
+- e81a0619: Support multi-file schemas
+
+## 0.5.8
+
+### Patch Changes
+
+- e7ff3fed: Update CLI types
+- 22b3e245: improve error messaging for nonexistent seeds
+- 104027d8: Manual version bump for CLI dependencies
+
+## 0.5.7
+
+### Patch Changes
+
+- c28904d5: Manual version bump for CLI dependencies
+
+## 0.5.6
+
+### Patch Changes
+
+- 96d4d8ff: Manual version bump for CLI dependencies
+
+## 0.5.5
+
+### Patch Changes
+
+- 51cde34e: Manual version bump for CLI dependencies
+
+## 0.5.4
+
+### Patch Changes
+
+- e6e07458: Manual version bump for CLI dependencies
+
+## 0.5.3
+
+### Patch Changes
+
+- 38bdff77: Manual version bump for CLI dependencies
+
+## 0.5.2
+
+### Patch Changes
+
+- 73d638ec: Manual version bump for CLI dependencies
+
+## 0.5.1
+
+### Patch Changes
+
+- f2e5cc21: Manual version bump for CLI dependencies
+
+## 0.5.0
+
+### Minor Changes
+
+- f9470ad1: Add basic support for syncing server with an upstream server
+
+### Patch Changes
+
+- 6d249ce2: Manual version bump for CLI dependencies
+
+## 0.4.24
+
+### Patch Changes
+
+- 9857d9de: Manual version bump for CLI dependencies
+
+## 0.4.23
+
+### Patch Changes
+
+- d3f0ea94: Manual version bump for CLI dependencies
+
 ## 0.4.22
 
 ### Patch Changes

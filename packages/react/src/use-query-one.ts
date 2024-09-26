@@ -1,11 +1,12 @@
 import {
-  ClientFetchResultEntity,
   ClientQuery,
   Models,
   ClientQueryBuilder,
   SubscriptionOptions,
   TriplitClient,
   Unalias,
+  FetchResultEntity,
+  CollectionNameFromModels,
 } from '@triplit/client';
 import { WorkerClient } from '@triplit/client/worker-client';
 import { useMemo } from 'react';
@@ -19,27 +20,28 @@ import { useQuery } from './use-query.js';
  * @returns An object containing the fetching state, the result of the query, and any error that occurred
  */
 export function useQueryOne<
-  M extends Models<any, any> | undefined,
-  Q extends ClientQuery<M, any, any, any>
+  M extends Models,
+  CN extends CollectionNameFromModels<M>,
+  Q extends ClientQuery<M, CN>
 >(
   client: TriplitClient<M> | WorkerClient<M>,
-  query: ClientQueryBuilder<Q>,
+  query: ClientQueryBuilder<M, CN, Q> | Q,
   options?: Partial<SubscriptionOptions>
 ): {
   fetching: boolean;
   fetchingLocal: boolean;
   fetchingRemote: boolean;
-  result: Unalias<ClientFetchResultEntity<Q>> | null;
+  result: Unalias<FetchResultEntity<M, Q>> | null;
   error: any;
 } {
-  const fetchOneQuery = query.limit(1);
+  const builtQuery = 'build' in query ? query.build() : query;
   const { fetching, fetchingLocal, fetchingRemote, results, error } = useQuery(
     client,
-    fetchOneQuery,
+    { ...builtQuery, limit: 1 },
     options
   );
-  const result = useMemo<ClientFetchResultEntity<Q> | null>(() => {
-    return Array.from(results?.values() ?? [])[0] ?? null;
+  const result = useMemo(() => {
+    return results?.[0] ?? null;
   }, [results]);
   return { fetching, fetchingLocal, fetchingRemote, result, error };
 }

@@ -1,13 +1,12 @@
-import { DataType, Optional } from '../../data-types/base.js';
-import { QueryType } from '../../data-types/query.js';
-import { RecordType } from '../../data-types/record.js';
-import { ExtractDBType, ExtractJSType } from '../../data-types/type.js';
+import { QueryType } from '../../data-types/definitions/query.js';
 import {
-  CollectionNameFromModels,
-  CollectionRules,
-  ModelFromModels,
-} from '../../db.js';
-import { Intersection } from '../../utility-types.js';
+  RecordProps,
+  RecordType,
+} from '../../data-types/definitions/record.js';
+import { TypeInterface } from '../../data-types/definitions/type.js';
+import { ExtractDBType, ExtractJSType } from '../../data-types/types/index.js';
+import { CollectionNameFromModels, ModelFromModels } from '../../db.js';
+import { Intersection, StringKey } from '../../utility-types.js';
 import { Schema } from '../builder.js';
 import { ExtractBasePaths, ModelPaths, ShiftPath } from './paths.js';
 import {
@@ -17,22 +16,25 @@ import {
   IsPropertyRequired,
 } from './properties.js';
 import {
-  CollectionQuery,
+  MergeQueryInclusion,
+  QueryInclusion,
+  QueryInclusions,
   QueryResult,
-  QuerySelectionValue,
+  QuerySelection,
   QueryWhere,
+  Ref,
+  RefQuery,
+  RefSubquery,
   RelationSubquery,
-} from '../../query/types';
+  ToQuery,
+} from '../../query/types/index.js';
 
-export type SchemaConfig = { id: ReturnType<typeof Schema.Id> } & Record<
-  string,
-  DataType | Optional<DataType>
->;
+export type SchemaConfig = { id: ReturnType<typeof Schema.Id> } & RecordProps;
 
 /**
  * An individual model schema
  */
-export type Model<T extends SchemaConfig> = RecordType<T>;
+export type Model<T extends SchemaConfig = SchemaConfig> = RecordType<T>;
 
 /**
  * A definition of a collection
@@ -47,13 +49,29 @@ export type Collection<T extends SchemaConfig = SchemaConfig> = {
   permissions?: RolePermissions<any, any>;
 };
 
+export interface Rule<
+  M extends Models,
+  CN extends CollectionNameFromModels<M>
+> {
+  filter: QueryWhere<M, CN>;
+  description?: string;
+}
+
+export interface CollectionRules<
+  M extends Models,
+  CN extends CollectionNameFromModels<M>
+> {
+  read?: Record<string, Rule<M, CN>>;
+  write?: Record<string, Rule<M, CN>>;
+}
+
 export type RolePermissions<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > = Record<string, CollectionPermissions<M, CN>>;
 
 export type CollectionPermissions<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > = {
   read?: CollectionPermission<M, CN>;
@@ -67,7 +85,7 @@ export type PermissionOperations = keyof CollectionPermissions<any, any>;
 export type PermissionWriteOperations = Exclude<PermissionOperations, 'read'>;
 
 type CollectionPermission<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > = {
   filter?: QueryWhere<M, CN>;
@@ -92,114 +110,127 @@ export type Role = {
  */
 export type Roles = Record<string, Role>;
 
-export type StoreSchema<M extends Models<any, any> | undefined> =
-  M extends Models<any, any>
-    ? {
-        version: number;
-        collections: M;
-        roles?: Roles;
-      }
-    : M extends undefined
-    ? undefined
-    : never;
+export type StoreSchema<M extends Models> = {
+  version: number;
+  collections: M;
+  roles?: Roles;
+};
+// export type StoreSchema<M extends Models<any, any> | undefined> =
+//   M extends Models<any, any>
+//     ? {
+//         version: number;
+//         collections: M;
+//         roles?: Roles;
+//       }
+//     : M extends undefined
+//     ? undefined
+//     : never;
 
 /**
  * The set of collections that define a schema
  */
-export type Models<CollectionName extends string, T extends SchemaConfig> = {
+export type Models<
+  CollectionName extends string = string,
+  T extends SchemaConfig = SchemaConfig
+> = {
   [K in CollectionName]: Collection<T>;
 };
 
 /**
  * A subset of a model with properties that are available for selection
  */
-export type SelectModelFromModel<M extends Model<any> | undefined> =
-  M extends Model<infer Config>
-    ? Config extends SchemaConfig
-      ? Model<//@ts-expect-error
-        {
-          [k in keyof Config as Config[k] extends QueryType<any, any>
-            ? never
-            : k]: Config[k];
-        }>
-      : never
-    : any;
+export type SelectModelFromModel<M extends Model> = M extends Model<
+  infer Config
+>
+  ? Model<//@ts-expect-error
+    {
+      [k in keyof Config as Config[k] extends QueryType<any, any, any>
+        ? never
+        : k]: Config[k];
+    }>
+  : never;
+
+/**
+ * The basic type of a model
+ */
+export type TypeFromModel<M extends Model> = {
+  [k in keyof SelectModelFromModel<M>['properties'] as IsPropertyRequired<
+    SelectModelFromModel<M>['properties'][k]
+  > extends true
+    ? StringKey<k>
+    : never]: ExtractJSType<M['properties'][k]>;
+} & {
+  [k in keyof SelectModelFromModel<M>['properties'] as IsPropertyOptional<
+    SelectModelFromModel<M>['properties'][k]
+  > extends true
+    ? StringKey<k>
+    : never]?: ExtractJSType<M['properties'][k]>;
+};
 
 /**
  * The type of an insert operation for a model
  */
-export type InsertTypeFromModel<M extends Model<any> | undefined> =
-  M extends Model<any>
-    ? {
-        [k in keyof SelectModelFromModel<M>['properties'] as IsPropertyInsertRequired<
-          M['properties'][k]
-        > extends true
-          ? k
-          : never]: ExtractJSType<M['properties'][k]>;
-      } & {
-        [k in keyof SelectModelFromModel<M>['properties'] as IsPropertyInsertOptional<
-          M['properties'][k]
-        > extends true
-          ? k
-          : never]?: ExtractJSType<M['properties'][k]>;
-      }
-    : any;
+export type InsertTypeFromModel<M extends Model> = {
+  [k in keyof SelectModelFromModel<M>['properties'] as IsPropertyInsertRequired<
+    M['properties'][k]
+  > extends true
+    ? StringKey<k>
+    : never]: ExtractJSType<M['properties'][k]>;
+} & {
+  [k in keyof SelectModelFromModel<M>['properties'] as IsPropertyInsertOptional<
+    M['properties'][k]
+  > extends true
+    ? StringKey<k>
+    : never]?: ExtractJSType<M['properties'][k]>;
+};
 
 /**
  * The type of an update operation for a model
  */
-export type UpdateTypeFromModel<M extends Model<any> | undefined> =
-  M extends Model<any>
-    ? // If properties are required by the schema, they are required in the update type
-      {
-        [k in keyof Omit<
-          SelectModelFromModel<M>['properties'],
-          'id'
-        > as IsPropertyRequired<
-          SelectModelFromModel<M>['properties'][k]
-        > extends true
-          ? k
-          : never]: ExtractJSType<M['properties'][k]>;
-      } & {
-        // If properties are optional by the schema, they are optional in the update type
-        [k in keyof Omit<
-          SelectModelFromModel<M>['properties'],
-          'id'
-        > as IsPropertyOptional<
-          SelectModelFromModel<M>['properties'][k]
-        > extends true
-          ? k
-          : never]?: ExtractJSType<M['properties'][k]>;
-      } & { readonly id: string } // The id should be readonly
-    : any;
+export type UpdateTypeFromModel<M extends Model> =
+  // If properties are required by the schema, they are required in the update type
+  {
+    [k in keyof Omit<
+      SelectModelFromModel<M>['properties'],
+      'id'
+    > as IsPropertyRequired<
+      SelectModelFromModel<M>['properties'][k]
+    > extends true
+      ? StringKey<k>
+      : never]: ExtractJSType<M['properties'][k]>;
+  } & {
+    // If properties are optional by the schema, they are optional in the update type
+    [k in keyof Omit<
+      SelectModelFromModel<M>['properties'],
+      'id'
+    > as IsPropertyOptional<
+      SelectModelFromModel<M>['properties'][k]
+    > extends true
+      ? StringKey<k>
+      : never]?: ExtractJSType<M['properties'][k]>;
+  } & { readonly id: string }; // The id should be readonly
 
 /**
  * The full type of a model as seen by a client
  */
-export type JSTypeFromModel<M extends Model<any> | undefined> =
-  M extends Model<any>
-    ? {
-        [k in keyof M['properties']]: M['properties'][k] extends DataType
-          ? ExtractJSType<M['properties'][k]>
-          : never;
-      }
-    : any;
+export type JSTypeFromModel<M extends Model> = {
+  [k in keyof M['properties']]: M['properties'][k] extends TypeInterface
+    ? ExtractJSType<M['properties'][k]>
+    : never;
+};
 
 /**
  * The full type of a model as seen by the database
  */
-export type DBTypeFromModel<M extends Model<any> | undefined> =
-  M extends Model<any>
-    ? {
-        [k in keyof M['properties']]: ExtractDBType<M['properties'][k]>;
-      }
-    : any;
+export type DBTypeFromModel<M extends Model> = {
+  [k in keyof M['properties']]: ExtractDBType<M['properties'][k]>;
+};
 
 /**
  * A JS type from a model filtered by a union of paths
  */
 export type PathFilteredTypeFromModel<
-  Record extends RecordType<any>,
+  Record extends RecordType,
   Paths extends string
 > = {
   [K in keyof Record['properties'] & ExtractBasePaths<Paths>]: K extends Paths
@@ -207,17 +238,19 @@ export type PathFilteredTypeFromModel<
       IsPropertyOptional<Record['properties'][K]> extends true
       ? ExtractJSType<Record['properties'][K]> | undefined
       : ExtractJSType<Record['properties'][K]>
-    : PathFilteredTypeFromModel<Record['properties'][K], ShiftPath<Paths>>; // Otherwise, recurse into sub-properties
+    : Record['properties'][K] extends RecordType
+    ? PathFilteredTypeFromModel<Record['properties'][K], ShiftPath<Paths>> // Otherwise, recurse into sub-properties
+    : never;
 };
 
 /**
  * A JS type from a model filtered by a QuerySelection type
  */
 export type QuerySelectionFilteredTypeFromModel<
-  M extends Models<any, any>,
+  M extends Models,
   CN extends CollectionNameFromModels<M>,
-  Selection extends QuerySelectionValue<M, CN>,
-  Inclusion extends Record<string, RelationSubquery<M, any>>
+  Selection extends QuerySelection<M, CN>,
+  Inclusion extends QueryInclusions<M, CN>
 > =
   // Path selections
   PathFilteredTypeFromModel<
@@ -225,40 +258,59 @@ export type QuerySelectionFilteredTypeFromModel<
     Intersection<ModelPaths<M, CN>, Selection>
   > & {
     // Subquery selections
-    [I in keyof Inclusion]: ExtractRelationSubqueryType<M, Inclusion[I]>;
+    [I in keyof Inclusion]: I extends string
+      ? ExtractRelationSubqueryType<M, CN, I, Inclusion[I]>
+      : never;
   };
 
 /**
  * Extract the type from a RelationSubquery
  */
 type ExtractRelationSubqueryType<
-  M extends Models<any, any>,
-  Subquery extends RelationSubquery<M, any>
-> = QueryResult<
-  CollectionQuery<
-    M,
-    Subquery['subquery']['collectionName'],
-    // TODO: Typing for select and inclusion within subquery is not supported
-    QuerySelectionValue<M, Subquery['subquery']['collectionName']>,
-    {}
-  >,
-  Subquery['cardinality']
->;
+  M extends Models,
+  CN extends CollectionNameFromModels<M>,
+  Alias extends string,
+  Inclusion extends QueryInclusion<M, CN>
+> = Inclusion extends RelationSubquery<any, any, any>
+  ? QueryResult<M, ToQuery<M, Inclusion['subquery']>, Inclusion['cardinality']>
+  : Inclusion extends RefSubquery<M, CN>
+  ? QueryResult<
+      M,
+      MergeQueryInclusion<
+        M,
+        RefQuery<M, CN, Inclusion['_rel']>['collectionName'],
+        RefQuery<M, CN, Inclusion['_rel']>,
+        Inclusion
+      >,
+      Ref<M, CN, Inclusion['_rel']>['cardinality']
+    >
+  : Alias extends RelationAttributes<M, CN>
+  ? Inclusion extends true
+    ? QueryResult<
+        M,
+        ToQuery<M, RefQuery<M, CN, Alias>>,
+        Ref<M, CN, Alias>['cardinality']
+      >
+    : Inclusion extends null
+    ? QueryResult<
+        M,
+        ToQuery<M, RefQuery<M, CN, Alias>>,
+        Ref<M, CN, Alias>['cardinality']
+      >
+    : never
+  : never;
 
 /**
  * A type matching the properties of a model that are relations
  */
-// TODO: use <M, CN> pattern
-// TODO: move to paths.ts?
-// TODO: possibly make recursive / add depth
-export type RelationAttributes<M extends Model<any> | undefined> =
-  M extends Model<any>
-    ? {
-        [K in keyof M['properties']]: M['properties'][K] extends QueryType<
-          any,
-          any
-        >
-          ? K
-          : never;
-      }[keyof M['properties']]
+export type RelationAttributes<
+  M extends Models,
+  CN extends CollectionNameFromModels<M>
+> = {
+  [K in keyof ModelFromModels<M, CN>['properties']]: ModelFromModels<
+    M,
+    CN
+  >['properties'][K] extends QueryType<any, any, any>
+    ? StringKey<K>
     : never;
+}[keyof ModelFromModels<M, CN>['properties']];

@@ -13,6 +13,7 @@ export class DurableClock implements Clock {
   private clockReady: Promise<void>;
   private readyCallbacks?: [() => void, (reason?: any) => void];
   private assigned?: boolean;
+  private onClearUnsubscribe?: () => void;
 
   // THIS IS ONLY USED FOR INITIALIZING THE CLOCK
   // MANUAL ASSIGNMENTS ONLY HAVE USE CASES IN TESTING
@@ -73,6 +74,17 @@ export class DurableClock implements Clock {
           ['clock', ['clientId'], this.clock![1]],
         ]);
       }
+    });
+    this.onClearUnsubscribe?.();
+    this.onClearUnsubscribe = store.onClear(async () => {
+      this.assigned = false;
+      this.clientId = nanoid();
+      this.clockReady = new Promise(async (res, rej) => {
+        // Await for clock.start to be called
+        // This is admitedly a bit of an odd pattern
+        this.readyCallbacks = [res, rej];
+      });
+      await this.assignToStore(store);
     });
   }
 

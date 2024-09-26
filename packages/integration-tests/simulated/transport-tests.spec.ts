@@ -13,9 +13,10 @@ import {
   ClientSchema,
 } from '@triplit/client';
 import { describe, vi, it, expect } from 'vitest';
-import DB, { Models, Schema as S, or } from '@triplit/db';
+import DB, { Models, Schema as S, genToArr, or } from '@triplit/db';
 import { MemoryBTreeStorage as MemoryStorage } from '@triplit/db/storage/memory-btree';
 import { CloseReason } from '@triplit/types/sync';
+import { hashQuery } from '../../client/src/utils/query.js';
 
 function parseJWT(token: string | undefined) {
   if (!token) throw new Error('No token provided');
@@ -39,13 +40,13 @@ function parseJWT(token: string | undefined) {
 const pause = async (ms: number = 100) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-function createTestClient<M extends Models<any, any> | undefined>(
+function createTestClient<M extends Models>(
   server: TriplitServer,
   apiKey: string,
   options: ClientOptions<M> = {}
 ) {
   return new TriplitClient({
-    storage: { cache: new MemoryStorage(), outbox: new MemoryStorage() },
+    storage: 'memory',
     transport: new TestTransport(server),
     token: apiKey,
     logLevel: 'error',
@@ -74,7 +75,7 @@ describe('TestTransport', () => {
   });
 });
 
-async function clientSchemaAttributes<M extends Models<any, any> | undefined>(
+async function clientSchemaAttributes<M extends Models>(
   client: TriplitClient<M>
 ) {
   return (await client.db.getSchema())?.collections.students.schema.properties;
@@ -103,29 +104,41 @@ describe('schema syncing', () => {
     });
     const bobCallback = vi.fn();
     alice.subscribe(
-      alice.query('_metadata').entityId('_schema').build(),
+      alice
+        .query(
+          // @ts-expect-error - metadata not in schema
+          '_metadata'
+        )
+        .id('_schema')
+        .build(),
       () => {}
     );
     bob.subscribe(
-      bob.query('_metadata').entityId('_schema').build(),
+      bob
+        .query(
+          // @ts-expect-error - metadata not in schema
+          '_metadata'
+        )
+        .id('_schema')
+        .build(),
       bobCallback
     );
     await pause();
-    expect((await clientSchemaAttributes(alice)).name).toBeDefined();
-    expect((await clientSchemaAttributes(bob)).name).toBeDefined();
+    expect((await clientSchemaAttributes(alice))?.name).toBeDefined();
+    expect((await clientSchemaAttributes(bob))?.name).toBeDefined();
     await alice.db.addAttribute({
       collection: 'students',
       path: ['age'],
       attribute: { type: 'number', options: {} },
     });
 
-    expect((await clientSchemaAttributes(alice)).name).toBeDefined();
-    expect((await clientSchemaAttributes(alice)).age).toBeDefined();
+    expect((await clientSchemaAttributes(alice))?.name).toBeDefined();
+    expect((await clientSchemaAttributes(alice))?.age).toBeDefined();
 
     await pause(); // idk why this needs to be this long
     expect(bobCallback).toHaveBeenCalled();
     const bobSchema = await clientSchemaAttributes(bob);
-    expect(bobSchema.age).toBeDefined();
+    expect(bobSchema?.age).toBeDefined();
   });
   it('should not sync the schema if the client sending updates has a service token but the option disabled', async () => {
     const schema = {
@@ -148,20 +161,29 @@ describe('schema syncing', () => {
     });
     const callback = vi.fn();
 
-    bob.subscribe(bob.query('_metadata').entityId('_schema').build(), callback);
-    expect((await clientSchemaAttributes(alice)).name).toBeDefined();
-    expect((await clientSchemaAttributes(bob)).name).toBeDefined();
+    bob.subscribe(
+      bob
+        .query(
+          // @ts-expect-error - metadata not in schema
+          '_metadata'
+        )
+        .id('_schema')
+        .build(),
+      callback
+    );
+    expect((await clientSchemaAttributes(alice))?.name).toBeDefined();
+    expect((await clientSchemaAttributes(bob))?.name).toBeDefined();
     await alice.db.addAttribute({
       collection: 'students',
       path: ['age'],
       attribute: { type: 'number', options: {} },
     });
 
-    expect((await clientSchemaAttributes(alice)).name).toBeDefined();
-    expect((await clientSchemaAttributes(alice)).age).toBeDefined();
+    expect((await clientSchemaAttributes(alice))?.name).toBeDefined();
+    expect((await clientSchemaAttributes(alice))?.age).toBeDefined();
     await pause();
 
-    expect((await clientSchemaAttributes(bob)).age).toBeUndefined();
+    expect((await clientSchemaAttributes(bob))?.age).toBeUndefined();
   });
   it('should not sync the schema if the client sneding updates does not have a service token', async () => {
     const schema = {
@@ -184,20 +206,29 @@ describe('schema syncing', () => {
     });
     const callback = vi.fn();
 
-    bob.subscribe(bob.query('_metadata').entityId('_schema').build(), callback);
-    expect((await clientSchemaAttributes(alice)).name).toBeDefined();
-    expect((await clientSchemaAttributes(bob)).name).toBeDefined();
+    bob.subscribe(
+      bob
+        .query(
+          // @ts-expect-error - metadata not in schema
+          '_metadata'
+        )
+        .id('_schema')
+        .build(),
+      callback
+    );
+    expect((await clientSchemaAttributes(alice))?.name).toBeDefined();
+    expect((await clientSchemaAttributes(bob))?.name).toBeDefined();
     await alice.db.addAttribute({
       collection: 'students',
       path: ['age'],
       attribute: { type: 'number', options: {} },
     });
 
-    expect((await clientSchemaAttributes(alice)).name).toBeDefined();
-    expect((await clientSchemaAttributes(alice)).age).toBeDefined();
+    expect((await clientSchemaAttributes(alice))?.name).toBeDefined();
+    expect((await clientSchemaAttributes(alice))?.age).toBeDefined();
     await pause();
 
-    expect((await clientSchemaAttributes(bob)).age).toBeUndefined();
+    expect((await clientSchemaAttributes(bob))?.age).toBeUndefined();
   });
 });
 
@@ -258,7 +289,7 @@ describe('Relational Query Syncing', () => {
         building: 'Voter',
         department_id: 'math',
       });
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
     }
     expect(await alice.fetch(query)).toHaveLength(1);
@@ -310,9 +341,11 @@ describe('Conflicts', () => {
     expect(bobRappers).toHaveLength(1);
     expect(charlieRappers).toHaveLength(1);
 
-    let aliceBestRapper = aliceRappers.get('best-rapper');
-    let bobBestRapper = bobRappers.get('best-rapper');
-    let charlieBestRapper = charlieRappers.get('best-rapper');
+    let aliceBestRapper = aliceRappers.find((e: any) => e.id === 'best-rapper');
+    let bobBestRapper = bobRappers.find((e: any) => e.id === 'best-rapper');
+    let charlieBestRapper = charlieRappers.find(
+      (e: any) => e.id === 'best-rapper'
+    );
 
     expect(aliceBestRapper).toEqual(bobBestRapper);
     expect(aliceBestRapper).toEqual(charlieBestRapper);
@@ -331,13 +364,13 @@ describe('Conflicts', () => {
     expect(bobRappers).toHaveLength(1);
     expect(charlieRappers).toHaveLength(1);
 
-    aliceBestRapper = aliceRappers.get('best-rapper');
-    bobBestRapper = bobRappers.get('best-rapper');
-    charlieBestRapper = charlieRappers.get('best-rapper');
+    aliceBestRapper = aliceRappers.find((e: any) => e.id === 'best-rapper');
+    bobBestRapper = bobRappers.find((e: any) => e.id === 'best-rapper');
+    charlieBestRapper = charlieRappers.find((e: any) => e.id === 'best-rapper');
 
-    expect(aliceBestRapper.name).toEqual('Eminem');
-    expect(bobBestRapper.name).toEqual('Eminem');
-    expect(charlieBestRapper.name).toEqual('Eminem');
+    expect(aliceBestRapper?.name).toEqual('Eminem');
+    expect(bobBestRapper?.name).toEqual('Eminem');
+    expect(charlieBestRapper?.name).toEqual('Eminem');
   });
 });
 
@@ -390,7 +423,7 @@ describe('Connection Status', () => {
         building: 'Voter',
         department_id: 'math',
       });
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
     }
     // expect(await alice.fetch(query)).toHaveLength(1);
@@ -471,13 +504,13 @@ describe('deletes', () => {
     await pause();
 
     expect(aliceSub).toHaveBeenCalledTimes(4);
-    expect(aliceSub.mock.calls[1][0].size).toBe(4);
-    expect(aliceSub.mock.calls[2][0].size).toBe(3);
-    expect(aliceSub.mock.calls[3][0].size).toBe(2);
+    expect(aliceSub.mock.calls[1][0].length).toBe(4);
+    expect(aliceSub.mock.calls[2][0].length).toBe(3);
+    expect(aliceSub.mock.calls[3][0].length).toBe(2);
     expect(bobSub).toHaveBeenCalledTimes(4);
-    expect(bobSub.mock.calls[1][0].size).toBe(4);
-    expect(bobSub.mock.calls[2][0].size).toBe(3);
-    expect(bobSub.mock.calls[3][0].size).toBe(2);
+    expect(bobSub.mock.calls[1][0].length).toBe(4);
+    expect(bobSub.mock.calls[2][0].length).toBe(3);
+    expect(bobSub.mock.calls[3][0].length).toBe(2);
   });
 });
 
@@ -498,32 +531,36 @@ describe('array syncing', () => {
     bob.subscribe(bob.query('test').build(), bobSub);
     await pause();
 
-    expect(aliceSub.mock.calls.at(-1)[0].get('alice1').data).toStrictEqual([
-      1, 2, 3,
-    ]);
-    expect(bobSub.mock.calls.at(-1)[0].get('alice1').data).toStrictEqual([
-      1, 2, 3,
-    ]);
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'alice1').data
+    ).toStrictEqual([1, 2, 3]);
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'alice1').data
+    ).toStrictEqual([1, 2, 3]);
 
     // update data
     await alice.update('test', 'alice1', (entity) => {
       entity.data = [4, 5, 6];
     });
     await pause();
-    expect(aliceSub.mock.calls.at(-1)[0].get('alice1').data).toStrictEqual([
-      4, 5, 6,
-    ]);
-    expect(bobSub.mock.calls.at(-1)[0].get('alice1').data).toStrictEqual([
-      4, 5, 6,
-    ]);
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'alice1').data
+    ).toStrictEqual([4, 5, 6]);
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'alice1').data
+    ).toStrictEqual([4, 5, 6]);
 
     // delete data
     await alice.update('test', 'alice1', (entity) => {
       delete entity.data;
     });
     await pause();
-    expect(aliceSub.mock.calls.at(-1)[0].get('alice1').data).toBeUndefined();
-    expect(bobSub.mock.calls.at(-1)[0].get('alice1').data).toBeUndefined();
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'alice1').data
+    ).toBeUndefined();
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'alice1').data
+    ).toBeUndefined();
   });
 });
 
@@ -557,10 +594,14 @@ describe('record syncing', () => {
       delete entity.data;
     });
     await pause();
-    expect(aliceSub.mock.calls.at(-1)[0].get('alice1')).toEqual({
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'alice1')
+    ).toEqual({
       id: 'alice1',
     });
-    expect(bobSub.mock.calls.at(-1)[0].get('alice1')).toEqual({
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'alice1')
+    ).toEqual({
       id: 'alice1',
     });
   });
@@ -602,13 +643,17 @@ describe('record syncing', () => {
       entity.assignToNull = null;
     });
     await pause();
-    expect(aliceSub.mock.calls.at(-1)[0].get('alice1')).toEqual({
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'alice1')
+    ).toEqual({
       id: 'alice1',
       data: { record: 'reassignment' },
       assignToValue: 10,
       assignToNull: null,
     });
-    expect(bobSub.mock.calls.at(-1)[0].get('alice1')).toEqual({
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'alice1')
+    ).toEqual({
       id: 'alice1',
       data: { record: 'reassignment' },
       assignToValue: 10,
@@ -621,8 +666,7 @@ describe('Server API', () => {
   it('can sync an insert on one client to another client', async () => {
     const server = new TriplitServer(new DB({ source: new MemoryStorage() }));
     const sesh = server.createSession({
-      type: 'secret',
-      projectId: 'todos',
+      'x-triplit-token-type': 'secret',
     });
     const bob = createTestClient(server, NOT_SERVICE_KEY, { clientId: 'bob' });
     const callback = vi.fn();
@@ -634,7 +678,9 @@ describe('Server API', () => {
     expect(callback).toHaveBeenCalledTimes(2);
     expect(callback.mock.calls[0][0]).toHaveLength(0);
     expect(callback.mock.calls[1][0]).toHaveLength(1);
-    expect(callback.mock.calls[1][0].get('test-user')).toMatchObject(entity);
+    expect(
+      callback.mock.calls[1][0].find((e: any) => e.id === 'test-user')
+    ).toMatchObject(entity);
   });
 });
 
@@ -665,10 +711,14 @@ describe('Sync situations', () => {
       });
       await pause();
 
-      expect(aliceSub.mock.calls.at(-1)[0].get('test1').name).toStrictEqual({
+      expect(
+        aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1').name
+      ).toStrictEqual({
         foo: 'bar',
       });
-      expect(bobSub.mock.calls.at(-1)[0].get('test1').name).toStrictEqual({
+      expect(
+        bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1').name
+      ).toStrictEqual({
         foo: 'bar',
       });
     });
@@ -698,8 +748,12 @@ describe('Sync situations', () => {
         });
       });
       await pause();
-      expect(aliceSub.mock.calls.at(-1)[0].get('test1').name).toBeUndefined();
-      expect(bobSub.mock.calls.at(-1)[0].get('test1').name).toBeUndefined();
+      expect(
+        aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1').name
+      ).toBeUndefined();
+      expect(
+        bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1').name
+      ).toBeUndefined();
     });
   });
 
@@ -784,9 +838,9 @@ describe('Sync situations', () => {
 
     // bob properly removes sf after reconnecting
     const bobLatest = bobSub.mock.calls.at(-1)[0];
-    expect(bobLatest.size).toBe(1);
-    expect(bobLatest.get('la')).toBeDefined();
-    expect(bobLatest.get('sf')).toBeUndefined();
+    expect(bobLatest.length).toBe(1);
+    expect(bobLatest.find((e: any) => e.id === 'la')).toBeDefined();
+    expect(bobLatest.find((e: any) => e.id === 'sf')).toBeUndefined();
   });
 
   it('syncs optional records and sets', async () => {
@@ -827,22 +881,30 @@ describe('Sync situations', () => {
     alice.subscribe(alice.query('test').build(), aliceSub);
     bob.subscribe(bob.query('test').build(), bobSub);
     await pause(300);
-    expect(aliceSub.mock.calls.at(-1)[0].get('test1')).toEqual({
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toEqual({
       id: 'test1',
       name: 'test1',
     });
-    expect(aliceSub.mock.calls.at(-1)[0].get('test2')).toEqual({
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test2')
+    ).toEqual({
       id: 'test2',
       name: 'test2',
       optional: 'optional',
       set: new Set(['test']),
       record: { foo: 'bar' },
     });
-    expect(bobSub.mock.calls.at(-1)[0].get('test1')).toEqual({
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toEqual({
       id: 'test1',
       name: 'test1',
     });
-    expect(bobSub.mock.calls.at(-1)[0].get('test2')).toEqual({
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test2')
+    ).toEqual({
       id: 'test2',
       name: 'test2',
       optional: 'optional',
@@ -862,25 +924,33 @@ describe('Sync situations', () => {
       });
     });
     await pause(300);
-    expect(aliceSub.mock.calls.at(-1)[0].get('test1')).toEqual({
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toEqual({
       id: 'test1',
       name: 'test1',
       optional: 'updated',
       record: { foo: 'updated' },
       set: new Set(['updated']),
     });
-    expect(aliceSub.mock.calls.at(-1)[0].get('test2')).toEqual({
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test2')
+    ).toEqual({
       id: 'test2',
       name: 'test2',
     });
-    expect(bobSub.mock.calls.at(-1)[0].get('test1')).toEqual({
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toEqual({
       id: 'test1',
       name: 'test1',
       optional: 'updated',
       set: new Set(['updated']),
       record: { foo: 'updated' },
     });
-    expect(bobSub.mock.calls.at(-1)[0].get('test2')).toEqual({
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test2')
+    ).toEqual({
       id: 'test2',
       name: 'test2',
     });
@@ -938,9 +1008,13 @@ describe('Sync situations', () => {
     await pause(300);
 
     {
-      const aliceResults = Array.from(aliceSub.mock.calls.at(-1)[0].keys());
+      const aliceResults = Array.from(
+        aliceSub.mock.calls.at(-1)[0].map((e: any) => e.id)
+      );
       expect(aliceResults).toEqual(['4', '2', '1', '3']);
-      const bobResults = Array.from(aliceSub.mock.calls.at(-1)[0].keys());
+      const bobResults = Array.from(
+        aliceSub.mock.calls.at(-1)[0].map((e: any) => e.id)
+      );
       expect(bobResults).toEqual(['4', '2', '1', '3']);
     }
 
@@ -951,9 +1025,13 @@ describe('Sync situations', () => {
     await pause(300);
 
     {
-      const aliceResults = Array.from(aliceSub.mock.calls.at(-1)[0].keys());
+      const aliceResults = Array.from(
+        aliceSub.mock.calls.at(-1)[0].map((e: any) => e.id)
+      );
       expect(aliceResults).toEqual(['4', '2', '3', '1']);
-      const bobResults = Array.from(aliceSub.mock.calls.at(-1)[0].keys());
+      const bobResults = Array.from(
+        aliceSub.mock.calls.at(-1)[0].map((e: any) => e.id)
+      );
       expect(bobResults).toEqual(['4', '2', '3', '1']);
     }
   });
@@ -1017,14 +1095,18 @@ describe('sync status', () => {
     await alice.insert('test', originalEntity);
     await new Promise((resolve) => setTimeout(resolve, 25));
     expect(
-      aliceSubPending.mock.calls.at(1)[0].get('best-rapper')
+      aliceSubPending.mock.calls
+        .at(1)[0]
+        .find((e: any) => e.id === 'best-rapper')
     ).toStrictEqual(originalEntity);
     expect(
-      aliceSubConfirmed.mock.calls.at(-1)[0].get('best-rapper')
+      aliceSubConfirmed.mock.calls
+        .at(-1)[0]
+        .find((e: any) => e.id === 'best-rapper')
     ).toStrictEqual(originalEntity);
-    expect(aliceSubAll.mock.calls.at(-1)[0].get('best-rapper')).toStrictEqual(
-      originalEntity
-    );
+    expect(
+      aliceSubAll.mock.calls.at(-1)[0].find((e: any) => e.id === 'best-rapper')
+    ).toStrictEqual(originalEntity);
     await alice.update('test', 'best-rapper', (entity) => {
       entity.lastName = 'Lion';
     });
@@ -1048,8 +1130,12 @@ describe('offline capabilities', () => {
     alice.subscribe(alice.query('test').build(), aliceSub);
     bob.subscribe(bob.query('test').build(), bobSub);
     await pause();
-    expect(aliceSub.mock.calls.at(-1)[0].get('test1')).toBeDefined();
-    expect(bobSub.mock.calls.at(-1)[0].get('test1')).toBeDefined();
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toBeDefined();
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toBeDefined();
 
     // go offline
     bob.syncEngine.disconnect();
@@ -1058,15 +1144,23 @@ describe('offline capabilities', () => {
     // delete while offline
     await alice.delete('test', 'test1');
     await pause();
-    expect(aliceSub.mock.calls.at(-1)[0].get('test1')).toBeUndefined();
-    expect(bobSub.mock.calls.at(-1)[0].get('test1')).toBeDefined();
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toBeUndefined();
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toBeDefined();
 
     // go back online
     bob.syncEngine.connect();
     await pause();
 
-    expect(aliceSub.mock.calls.at(-1)[0].get('test1')).toBeUndefined();
-    expect(bobSub.mock.calls.at(-1)[0].get('test1')).toBeUndefined();
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toBeUndefined();
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toBeUndefined();
   });
 });
 
@@ -1128,10 +1222,16 @@ describe('subquery syncing', () => {
     bob.subscribe(classesQuery, bobSub);
     await pause(200);
     expect(
-      aliceSub.mock.calls.at(-1)[0].get('math').classes.get('math1')
+      aliceSub.mock.calls
+        .at(-1)[0]
+        .find((e: any) => e.id === 'math')
+        .classes.find((e: any) => e.id === 'math1')
     ).toBeDefined();
     expect(
-      bobSub.mock.calls.at(-1)[0].get('math').classes.get('math1')
+      bobSub.mock.calls
+        .at(-1)[0]
+        .find((e: any) => e.id === 'math')
+        .classes.find((e: any) => e.id === 'math1')
     ).toBeDefined();
     await bob.insert('classes', {
       name: 'Math 103',
@@ -1142,10 +1242,16 @@ describe('subquery syncing', () => {
     });
     await pause(200);
     expect(
-      aliceSub.mock.calls.at(-1)[0].get('math').classes.get('math3')
+      aliceSub.mock.calls
+        .at(-1)[0]
+        .find((e: any) => e.id === 'math')
+        .classes.find((e: any) => e.id === 'math3')
     ).toBeDefined();
     expect(
-      bobSub.mock.calls.at(-1)[0].get('math').classes.get('math3')
+      bobSub.mock.calls
+        .at(-1)[0]
+        .find((e: any) => e.id === 'math')
+        .classes.find((e: any) => e.id === 'math3')
     ).toBeDefined();
   });
   it('can sync the entities in a subquery after deletes', async () => {
@@ -1182,18 +1288,30 @@ describe('subquery syncing', () => {
     bob.subscribe(classesQuery, bobSub);
     await pause(200);
     expect(
-      aliceSub.mock.calls.at(-1)[0].get('math').classes.get('math1')
+      aliceSub.mock.calls
+        .at(-1)[0]
+        .find((e: any) => e.id === 'math')
+        .classes.find((e: any) => e.id === 'math1')
     ).toBeDefined();
     expect(
-      bobSub.mock.calls.at(-1)[0].get('math').classes.get('math1')
+      bobSub.mock.calls
+        .at(-1)[0]
+        .find((e: any) => e.id === 'math')
+        .classes.find((e: any) => e.id === 'math1')
     ).toBeDefined();
     await alice.delete('classes', 'math1');
     await pause(200);
     expect(
-      aliceSub.mock.calls.at(-1)[0].get('math').classes.get('math1')
+      aliceSub.mock.calls
+        .at(-1)[0]
+        .find((e: any) => e.id === 'math')
+        .classes.find((e: any) => e.id === 'math1')
     ).toBeUndefined();
     expect(
-      bobSub.mock.calls.at(-1)[0].get('math').classes.get('math1')
+      bobSub.mock.calls
+        .at(-1)[0]
+        .find((e: any) => e.id === 'math')
+        .classes.find((e: any) => e.id === 'math1')
     ).toBeUndefined();
   });
   it('can sync updates to an entity in a subquery', async () => {
@@ -1230,20 +1348,32 @@ describe('subquery syncing', () => {
     bob.subscribe(classesQuery, bobSub);
     await pause(200);
     expect(
-      aliceSub.mock.calls.at(-1)[0].get('math').classes.get('math1')
+      aliceSub.mock.calls
+        .at(-1)[0]
+        .find((e: any) => e.id === 'math')
+        .classes.find((e: any) => e.id === 'math1')
     ).toBeDefined();
     expect(
-      bobSub.mock.calls.at(-1)[0].get('math').classes.get('math1')
+      bobSub.mock.calls
+        .at(-1)[0]
+        .find((e: any) => e.id === 'math')
+        .classes.find((e: any) => e.id === 'math1')
     ).toBeDefined();
     await alice.update('classes', 'math1', (entity) => {
       entity.name = 'Math 103';
     });
     await pause(200);
     expect(
-      aliceSub.mock.calls.at(-1)[0].get('math').classes.get('math1').name
+      aliceSub.mock.calls
+        .at(-1)[0]
+        .find((e: any) => e.id === 'math')
+        .classes.find((e: any) => e.id === 'math1').name
     ).toBe('Math 103');
     expect(
-      bobSub.mock.calls.at(-1)[0].get('math').classes.get('math1').name
+      bobSub.mock.calls
+        .at(-1)[0]
+        .find((e: any) => e.id === 'math')
+        .classes.find((e: any) => e.id === 'math1').name
     ).toBe('Math 103');
   });
   it('can sync entities in a subquery that returns a singleton', async () => {
@@ -1279,28 +1409,42 @@ describe('subquery syncing', () => {
     alice.subscribe(classesQuery, aliceSub);
     bob.subscribe(classesQuery, bobSub);
     await pause(200);
-    expect(aliceSub.mock.calls.at(-1)[0].get('math1').department).toBeDefined();
-    expect(aliceSub.mock.calls.at(-1)[0].get('math1').department.name).toBe(
-      'Mathematics'
-    );
-    expect(bobSub.mock.calls.at(-1)[0].get('math1').department).toBeDefined();
-    expect(bobSub.mock.calls.at(-1)[0].get('math1').department.name).toBe(
-      'Mathematics'
-    );
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'math1')
+        .department
+    ).toBeDefined();
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'math1')
+        .department.name
+    ).toBe('Mathematics');
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'math1').department
+    ).toBeDefined();
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'math1').department
+        .name
+    ).toBe('Mathematics');
     bob.update('departments', 'math', (entity) => {
       entity.name = 'Math';
     });
     await pause(200);
-    expect(aliceSub.mock.calls.at(-1)[0].get('math1').department.name).toBe(
-      'Math'
-    );
-    expect(bobSub.mock.calls.at(-1)[0].get('math1').department.name).toBe(
-      'Math'
-    );
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'math1')
+        .department.name
+    ).toBe('Math');
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'math1').department
+        .name
+    ).toBe('Math');
     alice.delete('departments', 'math');
     await pause(200);
-    expect(aliceSub.mock.calls.at(-1)[0].get('math1').department).toBe(null);
-    expect(bobSub.mock.calls.at(-1)[0].get('math1').department).toBe(null);
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'math1')
+        .department
+    ).toBe(null);
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'math1').department
+    ).toBe(null);
   });
 
   it.todo('Can reconnect to a query with a filter', async () => {
@@ -1329,20 +1473,32 @@ describe('subquery syncing', () => {
     alice.subscribe(query, aliceSub);
     bob.subscribe(query, bobSub);
     await pause();
-    expect(aliceSub.mock.calls.at(-1)[0].get('test1')).toBeDefined();
-    expect(bobSub.mock.calls.at(-1)[0].get('test1')).toBeDefined();
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toBeDefined();
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toBeDefined();
     bob.syncEngine.disconnect();
     await pause();
     await alice.update('test', 'test1', (entity) => {
       entity.data.delete('c');
     });
     await pause();
-    expect(aliceSub.mock.calls.at(-1)[0].get('test1')).toBeUndefined();
-    expect(bobSub.mock.calls.at(-1)[0].get('test1')).toBeDefined();
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toBeUndefined();
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toBeDefined();
     bob.syncEngine.connect();
     await pause();
-    expect(aliceSub.mock.calls.at(-1)[0].get('test1')).toBeUndefined();
-    expect(bobSub.mock.calls.at(-1)[0].get('test1')).toBeUndefined();
+    expect(
+      aliceSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toBeUndefined();
+    expect(
+      bobSub.mock.calls.at(-1)[0].find((e: any) => e.id === 'test1')
+    ).toBeUndefined();
   });
 
   it('Can evict multiple items from windowed subscription', async () => {
@@ -1375,7 +1531,7 @@ describe('subquery syncing', () => {
     {
       const lastCall = sub.mock.calls.at(-1)[0];
       expect(lastCall).toHaveLength(2);
-      expect([...lastCall.values()].map((e) => e.id)).toEqual(['1', '2']);
+      expect([...lastCall.values()].map((e: any) => e.id)).toEqual(['1', '2']);
     }
 
     // Insert new data on the server that evicts the current data (multiple matches in limit window)
@@ -1391,7 +1547,7 @@ describe('subquery syncing', () => {
     {
       const lastCall = sub.mock.calls.at(-1)[0];
       expect(lastCall).toHaveLength(2);
-      expect([...lastCall.values()].map((e) => e.id)).toEqual(['4', '5']);
+      expect([...lastCall.values()].map((e: any) => e.id)).toEqual(['4', '5']);
     }
   });
 });
@@ -1431,12 +1587,12 @@ describe('pagination syncing', () => {
       '2021-01-08T00:00:00.000Z',
       '2021-01-09T00:00:00.000Z',
       '2021-01-10T00:00:00.000Z',
-    ];
-    for (const date of datesInASCOrder) {
+    ].map((date, i) => [`${i}`, new Date(date)] as const);
+    for (const [id, created_at] of datesInASCOrder) {
       await alice.insert('todos', {
         text: 'todo',
-        created_at: new Date(date),
-        id: date,
+        created_at,
+        id,
       });
     }
     const bobSub = vi.fn();
@@ -1445,34 +1601,47 @@ describe('pagination syncing', () => {
         .query('todos')
         .order(['created_at', 'DESC'])
         .limit(5)
-        .after([datesInASCOrder[5], datesInASCOrder[5]])
+        .after([datesInASCOrder[5][1], datesInASCOrder[5][0]])
         .build(),
       bobSub
     );
     await pause();
     expect(bobSub.mock.calls.at(-1)[0]).toHaveLength(5);
-    expect([...bobSub.mock.calls.at(-1)[0].keys()]).toEqual(
-      datesInASCOrder.slice().reverse().slice(5, 10)
+    expect([...bobSub.mock.calls.at(-1)[0].map((e: any) => e.id)]).toEqual(
+      datesInASCOrder
+        .slice()
+        .reverse()
+        .slice(5, 10)
+        .map(([id]) => id)
     );
     // insert new todo
+    const new_id = 'inserted';
     const date = '2021-01-05T00:00:00.001Z';
     await alice.insert('todos', {
       text: 'todo',
       created_at: new Date(date),
-      id: date,
+      id: new_id,
     });
     await pause();
     expect(bobSub.mock.calls.at(-1)[0]).toHaveLength(5);
-    expect([...bobSub.mock.calls.at(-1)[0].keys()]).toEqual([
-      date,
-      ...datesInASCOrder.slice().reverse().slice(5, 9),
+    expect([...bobSub.mock.calls.at(-1)[0].map((e: any) => e.id)]).toEqual([
+      new_id,
+      ...datesInASCOrder
+        .slice()
+        .reverse()
+        .slice(5, 9)
+        .map(([id]) => id),
     ]);
     // delete a todo
-    await alice.delete('todos', date);
+    await alice.delete('todos', new_id);
     await pause();
     expect(bobSub.mock.calls.at(-1)[0]).toHaveLength(5);
-    expect([...bobSub.mock.calls.at(-1)[0].keys()]).toEqual(
-      datesInASCOrder.slice().reverse().slice(5, 10)
+    expect([...bobSub.mock.calls.at(-1)[0].map((e: any) => e.id)]).toEqual(
+      datesInASCOrder
+        .slice()
+        .reverse()
+        .slice(5, 10)
+        .map(([id]) => id)
     );
   });
 });
@@ -1600,30 +1769,30 @@ describe('outbox', () => {
 
     // Alice before sync
     {
-      const outboxTriples = await aliceOutbox.findByEntity();
-      const cacheTriples = await aliceCache.findByEntity();
+      const outboxTriples = await genToArr(aliceOutbox.findByEntity());
+      const cacheTriples = await genToArr(aliceCache.findByEntity());
       expect(outboxTriples).toHaveLength(3);
       expect(cacheTriples).toHaveLength(0);
     }
     // Bob before sync
     {
-      const outboxTriples = await bobOutbox.findByEntity();
-      const cacheTriples = await bobCache.findByEntity();
+      const outboxTriples = await genToArr(bobOutbox.findByEntity());
+      const cacheTriples = await genToArr(bobCache.findByEntity());
       expect(outboxTriples).toHaveLength(0);
       expect(cacheTriples).toHaveLength(0);
     }
     await pause();
     // Alice after sync
     {
-      const outboxTriples = await aliceOutbox.findByEntity();
-      const cacheTriples = await aliceCache.findByEntity();
+      const outboxTriples = await genToArr(aliceOutbox.findByEntity());
+      const cacheTriples = await genToArr(aliceCache.findByEntity());
       expect(outboxTriples).toHaveLength(0);
       expect(cacheTriples).toHaveLength(3);
     }
     // Bob after sync
     {
-      const outboxTriples = await aliceOutbox.findByEntity();
-      const cacheTriples = await aliceCache.findByEntity();
+      const outboxTriples = await genToArr(bobOutbox.findByEntity());
+      const cacheTriples = await genToArr(bobCache.findByEntity());
       expect(outboxTriples).toHaveLength(0);
       expect(cacheTriples).toHaveLength(3);
     }
@@ -1673,9 +1842,11 @@ describe('outbox', () => {
                       )
                     ).toBe(true);
                     // Hard to nail down exactly when the outbox will be between TRIPLES and ACK messages
-                    const outboxTriples = await alice.db.tripleStore
-                      .setStorageScope(['outbox'])
-                      .findByEntity();
+                    const outboxTriples = await genToArr(
+                      alice.db.tripleStore
+                        .setStorageScope(['outbox'])
+                        .findByEntity()
+                    );
                     expect(
                       outboxTriples.filter(
                         (t) => JSON.stringify(t.timestamp) === txId1
@@ -1899,18 +2070,17 @@ describe('rules', () => {
       collaborators: new Set(),
     });
     // insert a post with Bob as a collaborator
-    const {
-      output: { id: secondPostId },
-    } = await alice.insert('posts', {
+    const { output } = await alice.insert('posts', {
       text: 'Hello, Bob!',
       author_id: 'alice',
       collaborators: new Set(['bob']),
     });
+    const secondPostId = output?.id;
     await pause(200);
     expect(bobCallback).toHaveBeenCalledTimes(2);
     const lastCallVal = bobCallback.mock.calls.at(-1)[0];
     expect(lastCallVal).toHaveLength(1);
-    expect(lastCallVal.has(secondPostId)).toBe(true);
+    expect(lastCallVal.find((e: any) => e.id === secondPostId)).toBeTruthy();
   });
 
   it('can write when matching rules', async () => {
@@ -1979,8 +2149,153 @@ describe('rules', () => {
     expect(bobCallback).toHaveBeenCalled();
     const lastCallVal = bobCallback.mock.calls.at(-1)[0];
     expect(lastCallVal).toHaveLength(1);
-    expect(lastCallVal.has('good-post')).toBe(true);
+    expect(lastCallVal.find((e: any) => e.id === 'good-post')).toBeTruthy();
   });
+});
+
+describe('deduping subscriptions', () => {
+  it('sends only one CONNECT_QUERY message for multiple subscriptions to the same query', async () => {
+    const server = new TriplitServer(new DB());
+    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
+    const query = alice.query('test').build();
+    const sub1Callback = vi.fn();
+    const sub2Callback = vi.fn();
+    const syncMessageCallback = vi.fn();
+    alice.syncEngine.onSyncMessageSent(syncMessageCallback);
+    const unsub1 = alice.subscribe(query, sub1Callback);
+
+    await pause();
+    expect(syncMessageCallback).toHaveBeenCalledTimes(2);
+    // console.dir(syncMessageCallback.mock.calls, { depth: 10 });
+    const unsub2 = alice.subscribe(query, sub2Callback);
+    await pause();
+
+    expect(syncMessageCallback).toHaveBeenCalledTimes(2);
+    unsub1();
+    await pause();
+    expect(syncMessageCallback).toHaveBeenCalledTimes(2);
+    expect(syncMessageCallback.mock.lastCall[0].type).toBe('CONNECT_QUERY');
+    unsub2();
+    await pause();
+    expect(syncMessageCallback).toHaveBeenCalledTimes(3);
+    expect(syncMessageCallback.mock.lastCall[0].type).toBe('DISCONNECT_QUERY');
+  });
+  it("will send updates to all subscribers that haven't been unsubscribed", async () => {
+    const server = new TriplitServer(new DB());
+    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
+    const query = alice.query('test').build();
+    const sub1 = vi.fn();
+    const sub2 = vi.fn();
+    const unsub1 = alice.subscribe(query, sub1);
+    const unsub2 = alice.subscribe(query, sub2);
+    await pause();
+    await alice.insert('test', { id: 'test1', name: 'test1' });
+    await pause();
+    expect(sub1).toHaveBeenCalled();
+    expect(sub2).toHaveBeenCalled();
+    sub1.mockClear();
+    sub2.mockClear();
+    unsub1();
+    alice.update('test', 'test1', (entity) => {
+      entity.name = 'test2';
+    });
+    await pause();
+    expect(sub1).not.toHaveBeenCalled();
+    expect(sub2).toHaveBeenCalled();
+    sub2.mockClear();
+
+    unsub2();
+    alice.delete('test', 'test1');
+    await pause();
+    expect(sub1).not.toHaveBeenCalled();
+    expect(sub2).not.toHaveBeenCalled();
+  });
+  it('subsequent subscriptions initiated after the first resolves should be immediately fulfilled', async () => {
+    const server = new TriplitServer(new DB());
+    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
+    const query = alice.query('test').build();
+    const sub1 = vi.fn();
+    const sub2 = vi.fn();
+    const unsub1 = alice.subscribe(query, sub1);
+    await pause();
+    await alice.insert('test', { id: 'test1', name: 'test1' });
+    await pause();
+    const unsub2 = alice.subscribe(query, sub2);
+    await pause();
+    expect(sub2).toHaveBeenCalledOnce();
+    expect(sub2.mock.lastCall[1].hasRemoteFulfilled).toBe(true);
+  });
+});
+
+it('running reset will disconnect and reset the client sync state and clear all data', async () => {
+  const db = new DB();
+  const server = new TriplitServer(db);
+  await db.insert('collection_a', { id: 'a1' });
+  await db.insert('collection_b', { id: 'b1' });
+  const alice = createTestClient(server, SERVICE_KEY, {
+    clientId: 'alice',
+  });
+  const query1 = alice.query('collection_a').build();
+  const query2 = alice.query('collection_b').build();
+  const qh1 = hashQuery(query1);
+  const qh2 = hashQuery(query2);
+  alice.subscribe(query1, () => {});
+  alice.subscribe(query2, () => {});
+  await pause(300);
+
+  {
+    // check state
+    expect(alice.syncEngine.connectionStatus).toBe('OPEN');
+    // awaiting ack state is difficult to test
+    expect(
+      // @ts-expect-error (not exposed)
+      alice.syncEngine.queries.size
+    ).toBe(2);
+    await expect(
+      alice.syncEngine
+        // @ts-expect-error (not exposed)
+        .getQueryState(qh1)
+    ).resolves.toBeDefined();
+    await expect(
+      alice.syncEngine
+        // @ts-expect-error (not exposed)
+        .getQueryState(qh2)
+    ).resolves.toBeDefined();
+
+    const results = await alice.fetch(query1);
+    expect(results.length).toBe(1);
+  }
+
+  // reset
+  alice.disconnect();
+  await alice.reset();
+  await pause(300);
+  {
+    // check state
+    // disconnected
+    expect(alice.syncEngine.connectionStatus).toBe('CLOSED');
+
+    expect(
+      // @ts-expect-error (not exposed)
+      alice.syncEngine.awaitingAck.size
+    ).toBe(0);
+    expect(
+      // @ts-expect-error (not exposed)
+      alice.syncEngine.queries.size
+    ).toBe(0);
+    await expect(
+      alice.syncEngine
+        // @ts-expect-error (not exposed)
+        .getQueryState(qh1)
+    ).resolves.toBeUndefined();
+    await expect(
+      alice.syncEngine
+        // @ts-expect-error (not exposed)
+        .getQueryState(qh2)
+    ).resolves.toBeUndefined();
+    const results = await alice.fetch(query1);
+    expect(results.length).toBe(0);
+  }
 });
 
 class TestTransport implements SyncTransport {

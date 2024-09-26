@@ -1,0 +1,83 @@
+---
+description: Learn how to add authentication and authorization to your Triplit project.
+---
+
+# Authentication and Authorization
+
+Authentication is the process of verifying the identity of a user. This usually involves a user providing some form of credentials (like a username and password) to a service, which then validates those credentials and provides a way to identify the user in future requests. This identity can be used to determine what data the user has access to ([authorization](/schemas/permissions)).
+
+## Authentication
+
+Triplit uses [JWTs](https://en.wikipedia.org/wiki/JSON_Web_Token) to communicate user identity. Authentication (that is the validation that a user is who they say they are, and the generation of a JWT identifying the user) itself should be handled by an authentication service outside of Triplit. This could be a third-party service like [Clerk](https://clerk.com/), [Auth0](https://auth0.com/), [Firebase Auth](https://firebase.google.com/products/auth), [AWS Cognito](https://aws.amazon.com/cognito/), [Supabase Auth](https://supabase.com/docs/auth), etc or a custom service built by your team.
+
+The JWT will need to be signed with a proper signature. Triplit supports both symmetric (HS256) and asymmetric (RS256) encryption algorithms for JWTs. If you are using Triplit's hosted offering [Triplit Cloud](/triplit-cloud), then you will need to provide the JWT's signing secret or public key to Triplit in the `External JWT secret` field in your project's settings. If you are self-hosting Triplit, you will need to provide the signing secret or public key when you start the server with the `EXTERNAL_JWT_SECRET` environmental variable.
+
+The JWT should usually have some user-identifying information (e.g. the [`sub` claim](https://datatracker.ietf.org/doc/html/rfc7519#section-4.1.2)), which can be accessed by Triplit to handle [access control](/schemas/permissions) that user. For backwards compatibility, Triplit reads the following claims:
+
+- `x-triplit-user-id`: The user's unique identifier. This is assigned to the variable `$session.SESSION_USER_ID` in queries.
+
+### Tokens
+
+Triplit provides two basic tokens that are available in your project [dashboard](https://www.triplit.dev/dashboard):
+
+- `anon` token: A token that represents an anonymous user. This token is safe to use on a client side device and should be used when no user is logged in.
+- `service` token: This token is used for administrative purposes and should only be used in trusted environments like a server you control. This token will bypass all access control checks.
+
+When getting started with Triplit these are fine to use, but they don't specify which application user is accessing the database, or if they have a distinct access role. This information can be configured by providing a JWT with the proper claims and signature (see previous section). Triplit's flexible design allows you to define any JWT claims you would like.
+
+### Using your tokens
+
+When you instantiate a `TriplitClient`, you can provide an initial token to authenticate with the server. This token is used to determine what data the client has access to.
+
+```typescript
+import { TriplitClient } from '@triplit/client';
+const client = new TriplitClient({
+  token: '<your-token>',
+  serverUrl: 'https://<project-id>.triplit.io',
+});
+```
+
+This will automically connect the client to the server and authenticate with the provided token. If you would like to connect manually, you can set `autoConnect` to `false` and call `client.connect()` when ready.
+
+```typescript {5, 10}
+import { TriplitClient } from '@triplit/client';
+const client = new TriplitClient({
+  token: '<your-token>',
+  serverUrl: 'https://<project-id>.triplit.io',
+  autoConnect: false,
+});
+
+// Do other things
+
+client.connect();
+```
+
+### Changing users
+
+It is common for an app to need to change the user that is currently authenticated. This could be because a user is signing out, or because a user is signing in. You generally want to follow these steps when changing users:
+
+1. Disconnect the client
+1. Update the token
+1. Perform any necessary cleanup
+1. Reconnect the client
+
+When signing out a user, it is recommeded to call the `reset` method on your client. This will ensure any data that is stored from another user's session is cleared and any state related to syncing is reset.
+
+```typescript
+async function onSignOut() {
+  client.disconnect();
+  client.updateToken(undefined);
+  await client.reset();
+}
+
+function onSignIn(newToken: string) {
+  client.updateToken(newToken);
+  client.connect();
+}
+```
+
+More information on updating client options can be found in the [client documentation](client/options#auth-options).
+
+## Authorization
+
+Triplit allows you to define rules on your collections that determine who can read and write data. This is usually based on the tokens you provide. See [permissions](/schemas/permissions) for more information on reading your tokens in queries and access control definitions.

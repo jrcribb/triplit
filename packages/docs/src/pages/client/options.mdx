@@ -2,6 +2,8 @@
 description: Learn the options available to configure your TriplitClient.
 ---
 
+import { Callout } from 'nextra/components';
+
 # Client configuration
 
 ## DB options
@@ -10,13 +12,24 @@ These options define your local cache.
 
 - `schema` is a hard coded schema for your local cache
 - `storage` determines the storage engines for your local cache (see [Storage](/client/storage))
-  {/* - `migrations` is a list of migrations to run on the local cache (which will define a schema, see [Schema](/schemas)) */}
 
 ## Sync options
 
 These options define how you want to sync with the server.
 
 - `serverUrl` is the url of the server where your project lives e.g. `https://<project-id>.triplit.io`
+- `autoConnect` determines whether the client should connect to the server immediately upon instantiation. If set to `false`, you can manually connect with the `client.connect()` method.
+
+<Callout type="warning" emoji="⚠️">
+  The client connects over
+  [WebSockets](https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API),
+  so you if you are instantiating a client in code that may run in an
+  environment where WebSockets are not available (e.g. the server during
+  server-side rendering), you should set `autoConnect` to `false` or preferably
+  to an [environmental
+  variable](https://kit.svelte.dev/docs/modules#$app-environment-browser) that
+  indicates whether the client should connect.
+</Callout>
 
 The `serverUrl` can be updated with the `client.updateServerUrl` method.
 
@@ -31,4 +44,6 @@ The `token` can be updated with the `client.updateToken` method.
 
 Use the `client.updateOptions` method if you need to update the `serverUrl` and `token` atomically.
 
-Using `client.updateOptions`, `client.updateServerUrl` or `client.updateOptions` will result in the client closing its existing Websocket connection and attempting to open a new one with the provided URL/token.
+It is recommended that your client is disconnected before calling `client.updateOptions`, `client.updateServerUrl` or `client.updateOptions`. If the connection is open, the client will disconnect automatically and you will need to call `client.connect()` again to reconnect.
+
+For best practices on using these APIs and updating user sessions, see the [Auth guide](/auth#changing-users).

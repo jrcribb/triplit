@@ -7,6 +7,7 @@ import { ChevronDown, Loader2, LogOut, PenBox } from "lucide-react"
 import { signOut, useSession } from "next-auth/react"
 
 import { addConversation } from "@/lib/triplit-mutations.js"
+import { client } from "@/lib/triplit.js"
 import { cn } from "@/lib/utils.js"
 import {
   useConversationSnippet,
@@ -129,22 +130,18 @@ export function ChatList() {
               <ConvoSkeleton />
             </>
           )}
-          {conversations &&
-            conversations.size > 0 &&
-            Array.from(conversations).map(([id, conversation]) => (
-              <ConvoListItem
-                key={id}
-                convo={conversation}
-                isSelected={id === selectedChat}
-              />
-            ))}
-          {!(fetching && fetchingRemote) &&
-            conversations &&
-            conversations.size === 0 && (
-              <div className="text-muted-foreground text-sm mx-auto">
-                {chatFilter ? "No results" : "No chats"}
-              </div>
-            )}
+          {conversations?.map((conversation) => (
+            <ConvoListItem
+              key={conversation.id}
+              convo={conversation}
+              isSelected={conversation.id === selectedChat}
+            />
+          ))}
+          {!(fetching && fetchingRemote) && conversations?.length === 0 && (
+            <div className="text-muted-foreground text-sm mx-auto">
+              {chatFilter ? "No results" : "No chats"}
+            </div>
+          )}
         </div>
       </div>
     </>
@@ -188,6 +185,7 @@ function ConvoSkeleton() {
 }
 
 function UserDropdownMenu() {
+  const router = useRouter()
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -198,7 +196,13 @@ function UserDropdownMenu() {
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-20">
         <DropdownMenuItem
-          onSelect={() => signOut()}
+          onSelect={async () => {
+            const data = await signOut({
+              redirect: false,
+              callbackUrl: "/auth/sign-in",
+            })
+            router.push(data.url)
+          }}
           className="text-sm flex flex-row gap-3 px-2 py-1 items-center"
         >
           <LogOut className="w-4 h-4" /> <span>Sign out</span>

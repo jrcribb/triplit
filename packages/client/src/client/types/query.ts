@@ -1,9 +1,11 @@
 import type {
   CollectionNameFromModels,
   CollectionQuery,
+  CollectionQueryDefault,
   Models,
-  QuerySelectionValue,
-  RelationSubquery,
+  QueryInclusions,
+  QuerySelection,
+  SchemaQueries,
 } from '@triplit/db';
 
 /**
@@ -14,30 +16,36 @@ import type {
  */
 export type SyncStatus = 'pending' | 'confirmed' | 'all';
 
+type ClientQueryExtensions = {
+  syncStatus?: SyncStatus;
+};
+
 /**
  * Query that can be passed to a Triplit Client.
  */
 export type ClientQuery<
-  M extends ClientSchema | undefined,
-  CN extends CollectionNameFromModels<M>,
-  Selection extends QuerySelectionValue<M, CN> = QuerySelectionValue<M, CN>,
-  Inclusions extends Record<string, RelationSubquery<M, any>> = Record<
-    string,
-    RelationSubquery<M, any>
-  >
-> = {
-  syncStatus?: SyncStatus;
-} & CollectionQuery<M, CN, Selection, Inclusions>;
+  M extends ClientSchema,
+  CN extends CollectionNameFromModels<M> = CollectionNameFromModels<M>,
+  Selection extends QuerySelection<M, CN> = QuerySelection<M, CN>,
+  Inclusions extends QueryInclusions<M, CN> = QueryInclusions<M, CN>
+> = CollectionQuery<M, CN, Selection, Inclusions> & ClientQueryExtensions;
+
+export type ClientQueryFromCollectionQuery<
+  Q extends CollectionQuery<any, any, any, any>
+> = Q & ClientQueryExtensions;
+
+export type SchemaClientQueries<M extends ClientSchema> =
+  ClientQueryFromCollectionQuery<SchemaQueries<M>>;
 
 /**
  * A client query with default selection and inclusion.
  */
 export type ClientQueryDefault<
-  M extends ClientSchema | undefined,
+  M extends ClientSchema,
   CN extends CollectionNameFromModels<M>
-> = ClientQuery<M, CN, QuerySelectionValue<M, CN>, {}>;
+> = ClientQueryFromCollectionQuery<CollectionQueryDefault<M, CN>>;
 
 /**
  * Friendly alias for Models type.
  */
-export type ClientSchema = Models<any, any>;
+export type ClientSchema = Models;

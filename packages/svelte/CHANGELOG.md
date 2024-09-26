@@ -1,5 +1,142 @@
 # @triplit/svelte
 
+## 0.2.1
+
+### Patch Changes
+
+- Updated dependencies [761648cf]
+  - @triplit/client@0.5.1
+
+## 0.2.0
+
+### Minor Changes
+
+- f894e435: update query return type to array
+
+### Patch Changes
+
+- Updated dependencies [0a09013b]
+- Updated dependencies [f894e435]
+- Updated dependencies [abe8bea8]
+- Updated dependencies [38746526]
+- Updated dependencies [abe8bea8]
+  - @triplit/client@0.5.0
+
+## 0.1.70
+
+### Patch Changes
+
+- Updated dependencies [3c7fd004]
+  - @triplit/client@0.4.13
+
+## 0.1.69
+
+### Patch Changes
+
+- @triplit/client@0.4.12
+
+## 0.1.68
+
+### Patch Changes
+
+- @triplit/client@0.4.11
+
+## 0.1.67
+
+### Patch Changes
+
+- @triplit/client@0.4.10
+
+## 0.1.66
+
+### Patch Changes
+
+- Updated dependencies [a902f8b8]
+  - @triplit/client@0.4.9
+
+## 0.1.65
+
+### Patch Changes
+
+- Updated dependencies [7ea2a0a9]
+  - @triplit/client@0.4.8
+
+## 0.1.64
+
+### Patch Changes
+
+- 3809e4aa: Update svelte types
+- Updated dependencies [b5374280]
+- Updated dependencies [22b3e245]
+  - @triplit/client@0.4.7
+
+## 0.1.63
+
+### Patch Changes
+
+- Updated dependencies [d11d57e2]
+  - @triplit/client@0.4.6
+
+## 0.1.62
+
+### Patch Changes
+
+- Updated dependencies [51cde34e]
+  - @triplit/client@0.4.5
+
+## 0.1.61
+
+### Patch Changes
+
+- Updated dependencies [e6e07458]
+  - @triplit/client@0.4.4
+
+## 0.1.60
+
+### Patch Changes
+
+- @triplit/client@0.4.3
+
+## 0.1.59
+
+### Patch Changes
+
+- Updated dependencies [bbc64ede]
+- Updated dependencies [12650423]
+- Updated dependencies [bbc64ede]
+  - @triplit/client@0.4.2
+
+## 0.1.58
+
+### Patch Changes
+
+- Updated dependencies [0139e1a4]
+  - @triplit/client@0.4.1
+
+## 0.1.57
+
+### Patch Changes
+
+- Updated dependencies [ba9f0d6c]
+- Updated dependencies [6d249ce2]
+- Updated dependencies [f9470ad1]
+  - @triplit/client@0.4.0
+
+## 0.1.56
+
+### Patch Changes
+
+- Updated dependencies [9857d9de]
+  - @triplit/client@0.3.84
+
+## 0.1.55
+
+### Patch Changes
+
+- Updated dependencies [bb7c67ab]
+- Updated dependencies [d3f0ea94]
+  - @triplit/client@0.3.83
+
 ## 0.1.54
 
 ### Patch Changes

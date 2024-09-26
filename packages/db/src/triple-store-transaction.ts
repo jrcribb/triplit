@@ -35,6 +35,8 @@ import {
 } from './triple-store-utils.js';
 import { copyHooks } from './utils.js';
 import { MirroredArray } from './utils/mirrored-array.js';
+import { genToArr } from './utils/generator.js';
+import * as tv from '@triplit/tuple-database/helpers/sortedTupleValuePairs';
 
 function extractTriplesFromTx(tx: MultiTupleTransaction<TupleIndex>) {
   return Object.fromEntries(
@@ -118,63 +120,61 @@ export class TripleStoreTransaction implements TripleStoreApi {
     return this.assignedTimestamp;
   }
 
-  async findByCollection(
+  async *findByCollection(
     collection: string,
     direction?: 'ASC' | 'DESC' | undefined
-  ): Promise<TripleRow[]> {
-    return findByCollection(this.tupleTx, collection, direction);
+  ) {
+    yield* findByCollection(this.tupleTx, collection, direction);
   }
 
-  async findValuesInRange(
+  async *findValuesInRange(
     attribute: Attribute,
     constraints: RangeContraints | undefined
   ) {
-    return findValuesInRange(this.tupleTx, attribute, constraints);
+    yield* findValuesInRange(this.tupleTx, attribute, constraints);
   }
 
-  async findByEAT(
+  async *findByEAT(
     tupleArgs: [
       entityId?: string | undefined,
       attribute?: Attribute | undefined
     ],
     direction?: 'ASC' | 'DESC' | undefined
-  ): Promise<TripleRow[]> {
-    return findByEAT(this.tupleTx, tupleArgs, direction);
+  ) {
+    yield* findByEAT(this.tupleTx, tupleArgs, direction);
   }
-  findByAVE(
+  async *findByAVE(
     tupleArgs: [
       attribute?: Attribute | undefined,
       value?: TupleValue | undefined,
       entityId?: string | undefined
     ],
     direction?: 'ASC' | 'DESC' | undefined
-  ): Promise<TripleRow[]> {
-    return findByAVE(this.tupleTx, tupleArgs, direction);
+  ) {
+    yield* findByAVE(this.tupleTx, tupleArgs, direction);
   }
 
-  async findByEntity(id?: string | undefined): Promise<TripleRow[]> {
-    return findByEntity(this.tupleTx, id);
+  async *findByEntity(id?: string | undefined) {
+    yield* findByEntity(this.tupleTx, id);
   }
-  async findByEntityAttribute(
-    id: string,
-    attribute: Attribute
-  ): Promise<TripleRow[]> {
-    return findByEntityAttribute(this.tupleTx, id, attribute);
+
+  async *findByEntityAttribute(id: string, attribute: Attribute) {
+    yield* findByEntityAttribute(this.tupleTx, id, attribute);
   }
-  async findByAttribute(attribute: Attribute): Promise<TripleRow[]> {
-    return findByAttribute(this.tupleTx, attribute);
+  async *findByAttribute(attribute: Attribute) {
+    yield* findByAttribute(this.tupleTx, attribute);
   }
 
   findMaxClientTimestamp(clientId: string) {
     return findMaxClientTimestamp(this.tupleTx, clientId);
   }
 
-  findByClientTimestamp(
+  async *findByClientTimestamp(
     clientId: string,
     scanDirection: 'lt' | 'lte' | 'gt' | 'gte' | 'eq',
     timestamp: Timestamp | undefined
   ) {
-    return findByClientTimestamp(
+    yield* findByClientTimestamp(
       this.tupleTx,
       clientId,
       scanDirection,
@@ -195,12 +195,9 @@ export class TripleStoreTransaction implements TripleStoreApi {
     for (const hook of this.hooks.beforeInsert) {
       await hook(triplesInput, this);
     }
-    for (const triple of triplesInput) {
-      if (triple.value === undefined) {
-        throw new InvalidTripleStoreValueError(undefined);
-      }
-      await this.addTripleToIndex(this.tupleTx, triple);
-    }
+    await Promise.all(
+      triplesInput.map((t) => this.addTripleToIndex(this.tupleTx, t))
+    );
   }
 
   private async addTripleToIndex(
@@ -208,6 +205,10 @@ export class TripleStoreTransaction implements TripleStoreApi {
     tripleInput: TripleRow
   ) {
     const { id: id, attribute, value, timestamp, expired } = tripleInput;
+
+    if (value === undefined) {
+      throw new InvalidTripleStoreValueError(undefined);
+    }
 
     // If we already have this triple, skip it (performance optimization)
     // const existingTriples = await tx.scan({
@@ -226,7 +227,37 @@ export class TripleStoreTransaction implements TripleStoreApi {
     //   }
     // }
 
-    tx.set(['EAT', id, attribute, timestamp], [value, expired]);
+    await tx.set(['EAT', id, attribute, timestamp], [value, expired]);
+  }
+
+  async insertTxTriples(
+    triplesInput: TripleRow[],
+    txId: string
+  ): Promise<void> {
+    const defaultTx = this.tupleTx.txs['default'];
+    const existingTxWrites = tv.scan(defaultTx.writes.set, {
+      prefix: ['client', 'inbox', txId],
+      limit: 1,
+    });
+
+    if (existingTxWrites.length > 0) {
+      const write = existingTxWrites[0]!;
+      await this.tupleTx.set(
+        ['inbox', txId],
+        [...write.value, ...triplesInput]
+      );
+    } else {
+      await this.tupleTx.set(['inbox', txId], triplesInput);
+    }
+
+    // if(this.tupleTx.exists)
+    // if (!triplesInput.length) return;
+    // for (const hook of this.hooks.beforeInsert) {
+    //   await hook(triplesInput, this);
+    // }
+    // await Promise.all(
+    //   triplesInput.map((t) => this.addTripleToIndex(this.tupleTx, t))
+    // );
   }
 
   async deleteTriple(trip: TripleRow) {
@@ -251,16 +282,18 @@ export class TripleStoreTransaction implements TripleStoreApi {
   }
 
   async readMetadataTuples(entityId: string, attribute?: Attribute) {
-    const tuples = await this.tupleTx.scan({
-      prefix: ['metadata', entityId, ...(attribute ?? [])],
-    });
+    const tuples = await genToArr(
+      this.tupleTx.scan({
+        prefix: ['metadata', entityId, ...(attribute ?? [])],
+      })
+    );
 
     return tuples.map(mapStaticTupleToEAV);
   }
 
   async updateMetadataTuples(updates: EAV[]) {
     for (const [entityId, attribute, value] of updates) {
-      this.tupleTx.set(['metadata', entityId, ...attribute], value);
+      await this.tupleTx.set(['metadata', entityId, ...attribute], value);
     }
     await Promise.all(
       [...this.txMetadataListeners].map((cb) => cb({ updates, deletes: [] }))
@@ -272,9 +305,11 @@ export class TripleStoreTransaction implements TripleStoreApi {
   ) {
     for (const [entityId, attribute] of deletes) {
       (
-        await this.tupleTx.scan({
-          prefix: ['metadata', entityId, ...(attribute ?? [])],
-        })
+        await genToArr(
+          this.tupleTx.scan({
+            prefix: ['metadata', entityId, ...(attribute ?? [])],
+          })
+        )
       ).forEach((tuple) => this.tupleTx.remove(tuple.key));
     }
     await Promise.all(
@@ -302,7 +337,9 @@ export class TripleStoreTransaction implements TripleStoreApi {
       if (value === undefined) {
         throw new InvalidTripleStoreValueError(undefined);
       }
-      const existingTriples = await this.findByEntityAttribute(id, attribute);
+      const existingTriples = await genToArr(
+        this.findByEntityAttribute(id, attribute)
+      );
       const newerTriples = existingTriples.filter(
         ({ timestamp }) => timestampCompare(timestamp, txTimestamp) === 1
       );
@@ -320,7 +357,7 @@ export class TripleStoreTransaction implements TripleStoreApi {
   }
 
   async expireEntity(id: EntityId) {
-    const existingTriples = await this.findByEntity(id);
+    const existingTriples = await genToArr(this.findByEntity(id));
     // reduce triples to just the highest timestamp for each attribute
     const attributeTimestamps = new Map<string, TripleRow>();
     for (const triple of existingTriples) {
@@ -350,7 +387,9 @@ export class TripleStoreTransaction implements TripleStoreApi {
   ) {
     const allExistingTriples: TripleRow[] = [];
     for (const { id, attribute } of values) {
-      const existingTriples = await this.findByEntityAttribute(id, attribute);
+      const existingTriples = await genToArr(
+        this.findByEntityAttribute(id, attribute)
+      );
       for (const triple of existingTriples) {
         allExistingTriples.push(triple);
       }
@@ -384,8 +423,8 @@ export class TripleStoreTransaction implements TripleStoreApi {
     await this.tupleTx.cancel();
   }
 
-  get isCancelled() {
-    return this.tupleTx.isCancelled;
+  get isCanceled() {
+    return this.tupleTx.isCanceled;
   }
 
   withScope(scope: StorageScope) {

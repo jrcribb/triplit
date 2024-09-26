@@ -99,6 +99,9 @@ const messagingSchema = {
             // non-sense rule just to test that it runs
             filter: [['text', '!=', 'disallowed']],
           },
+          delete: {
+            filter: [['author.user_id', '=', '$role.user_id']],
+          },
         },
         admin: {
           read: {
@@ -121,7 +124,7 @@ const messagingSchema = {
     },
   },
   version: 0,
-} satisfies StoreSchema<Models<any, any>>;
+} satisfies StoreSchema<Models>;
 
 async function seedMessagingData(db: DB<typeof messagingSchema.collections>) {
   await db.transact(
@@ -265,7 +268,7 @@ describe('Read', () => {
     const db = new DB({ schema: messagingSchema });
     await seedMessagingData(db);
     const messages = await db.fetch(db.query('messages').build());
-    expect(messages.size).toEqual(0);
+    expect(messages.length).toEqual(0);
   });
 
   it('skipping rules will allow you to read data', async () => {
@@ -274,7 +277,7 @@ describe('Read', () => {
     const messages = await db.fetch(db.query('messages').build(), {
       skipRules: true,
     });
-    expect(messages.size).toEqual(9);
+    expect(messages.length).toEqual(9);
   });
 
   it('authenticated users can read data based on rules', async () => {
@@ -305,8 +308,8 @@ describe('Read', () => {
     {
       // TODO: need to figure out of the matcher makes more sense as a merge, or first match...basically how do you deal with group
       const messages = await user1DB.fetch(user1DB.query('messages').build());
-      expect(messages.size).toEqual(6);
-      expect(Array.from(messages.keys()).sort()).toEqual([
+      expect(messages.length).toEqual(6);
+      expect(messages.map((m) => m.id).sort()).toEqual([
         'message-1',
         'message-2',
         'message-3',
@@ -319,8 +322,8 @@ describe('Read', () => {
     // User 2
     {
       const messages = await user2DB.fetch(user2DB.query('messages').build());
-      expect(messages.size).toEqual(5);
-      expect(Array.from(messages.keys()).sort()).toEqual([
+      expect(messages.length).toEqual(5);
+      expect(messages.map((m) => m.id).sort()).toEqual([
         'message-1',
         'message-2',
         'message-7',
@@ -332,8 +335,8 @@ describe('Read', () => {
     // User 3
     {
       const messages = await user3DB.fetch(user3DB.query('messages').build());
-      expect(messages.size).toEqual(4);
-      expect(Array.from(messages.keys()).sort()).toEqual([
+      expect(messages.length).toEqual(4);
+      expect(messages.map((m) => m.id).sort()).toEqual([
         'message-4',
         'message-5',
         'message-7',
@@ -344,7 +347,7 @@ describe('Read', () => {
     // Admin
     {
       const messages = await adminDB.fetch(adminDB.query('messages').build());
-      expect(messages.size).toEqual(9);
+      expect(messages.length).toEqual(9);
     }
   });
 
@@ -370,7 +373,7 @@ describe('Read', () => {
         },
       },
       version: 0,
-    } satisfies StoreSchema<Models<any, any>>;
+    } satisfies StoreSchema<Models>;
     const db = new DB({ schema });
     await db.insert('permissioned', { id: '1' }, { skipRules: true });
     await db.insert('permissionless', { id: '1' }, { skipRules: true });
@@ -378,13 +381,13 @@ describe('Read', () => {
     {
       const query = db.query('permissioned').build();
       const results = await db.fetch(query);
-      expect(results.size).toEqual(0);
+      expect(results.length).toEqual(0);
     }
 
     {
       const query = db.query('permissionless').build();
       const results = await db.fetch(query);
-      expect(results.size).toEqual(1);
+      expect(results.length).toEqual(1);
     }
   });
 });
@@ -493,7 +496,7 @@ describe('Insert', () => {
         },
       },
       version: 0,
-    } satisfies StoreSchema<Models<any, any>>;
+    } satisfies StoreSchema<Models>;
 
     const db = new DB({ schema });
     await expect(db.insert('permissioned', { id: '1' })).rejects.toThrow(
@@ -595,7 +598,7 @@ describe('Update', () => {
         },
       },
       version: 0,
-    } satisfies StoreSchema<Models<any, any>>;
+    } satisfies StoreSchema<Models>;
 
     const db = new DB({ schema });
     await db.insert(
@@ -668,7 +671,7 @@ describe('Update', () => {
         },
       },
       version: 0,
-    } satisfies StoreSchema<Models<any, any>>;
+    } satisfies StoreSchema<Models>;
 
     const db = new DB({ schema });
     await db.insert(
@@ -740,11 +743,15 @@ describe('Delete', () => {
     const adminToken = {
       role: 'admin',
     };
+    const user1Token = {
+      role: 'user',
+      user_id: 'user-1',
+    };
     const user3Token = {
       role: 'user',
       user_id: 'user-3',
     };
-
+    const user1DB = db.withSessionVars(user1Token);
     const user3DB = db.withSessionVars(user3Token);
     const adminDB = db.withSessionVars(adminToken);
 
@@ -752,9 +759,15 @@ describe('Delete', () => {
     await expect(user3DB.delete('messages', 'message-1')).rejects.toThrow(
       WritePermissionError
     );
+
+    // Permitted user can delete messages
+    await expect(
+      user1DB.delete('messages', 'message-1')
+    ).resolves.not.toThrow();
+
     // Admin can delete any message
     await expect(
-      adminDB.delete('messages', 'message-1')
+      adminDB.delete('messages', 'message-2')
     ).resolves.not.toThrow();
   });
 
@@ -780,7 +793,7 @@ describe('Delete', () => {
         },
       },
       version: 0,
-    } satisfies StoreSchema<Models<any, any>>;
+    } satisfies StoreSchema<Models>;
 
     const db = new DB({ schema });
     await db.insert('permissioned', { id: '1' }, { skipRules: true });
@@ -825,7 +838,7 @@ it('can migrate from a schema with rules to a schema with permissions', async ()
           },
         },
       },
-    } satisfies Models<any, any>,
+    } satisfies Models,
   };
   const storage = new InMemoryTupleStorage();
   const db1 = new DB({ schema: rulesSchema, source: storage });

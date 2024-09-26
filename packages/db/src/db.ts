@@ -5,7 +5,9 @@ import {
   Models,
   InsertTypeFromModel,
   StoreSchema,
-} from './schema/types';
+  CollectionRules,
+  Rule,
+} from './schema/types/index.js';
 import { AsyncTupleStorageApi, TupleStorageApi } from '@triplit/tuple-database';
 import CollectionQueryBuilder, {
   fetch,
@@ -15,64 +17,51 @@ import CollectionQueryBuilder, {
 } from './collection-query.js';
 import { Entity, constructEntity, updateEntity } from './query.js';
 import { MemoryBTreeStorage } from './storage/memory-btree.js';
-import {
-  DBOptionsError,
-  InvalidMigrationOperationError,
-  TriplitError,
-} from './errors.js';
+import { DBOptionsError, TriplitError } from './errors.js';
 import { Clock } from './clocks/clock.js';
 
 import { DBTransaction } from './db-transaction.js';
 import {
   appendCollectionToId,
-  readSchemaFromTripleStore,
   overrideStoredSchema,
   getSchemaTriples,
   fetchResultToJS,
   logSchemaChangeViolations,
 } from './db-helpers.js';
 import { VariableAwareCache } from './variable-aware-cache.js';
-
-import {
-  AttributeDefinition,
-  UserTypeOptions,
-} from './data-types/serialization.js';
-import { copyHooks, prefixVariables, triplesToObject } from './utils.js';
+import { copyHooks } from './utils.js';
 import { EAV, indexToTriple, TripleRow } from './triple-store-utils.js';
-import { TripleStore } from './triple-store.js';
+import { ClearOptions, TripleStore } from './triple-store.js';
 import { Logger } from '@triplit/types/logger';
-import { isAnyOrUndefined } from './utility-types.js';
 import {
   Unalias,
   FetchResult,
   FetchResultEntity,
   CollectionQuery,
-  Query,
-  QueryWhere,
-} from './query/types';
+  SchemaQueries,
+  ToQuery,
+  CollectionQueryDefault,
+} from './query/types/index.js';
 import { prepareQuery } from './query/prepare.js';
-import { getRolesFromSession } from './schema/permissions.js';
+import {
+  getRolesFromSession,
+  normalizeSessionVars,
+} from './schema/permissions.js';
+import { diffSchemas } from './schema/diff.js';
+import { genToArr } from './utils/generator.js';
+import {
+  AddAttributePayload,
+  AddRulePayload,
+  AlterAttributeOptionPayload,
+  CreateCollectionPayload,
+  DropAttributeOptionPayload,
+  DropAttributePayload,
+  DropCollectionPayload,
+  DropRulePayload,
+  SetAttributeOptionalPayload,
+} from './db/types/operations.js';
 
 const DEFAULT_CACHE_DISABLED = true;
-
-export interface Rule<
-  M extends Models<any, any>,
-  CN extends CollectionNameFromModels<M>
-> {
-  filter: QueryWhere<M, CN>;
-  description?: string;
-}
-
-export interface CollectionRules<
-  M extends Models<any, any>,
-  CN extends CollectionNameFromModels<M>
-> {
-  read?: Record<string, Rule<M, CN>>;
-  write?: Record<string, Rule<M, CN>>;
-  // insert?: Rule<M>[];
-  // update?: Rule<M>[];
-}
-
 export interface TransactOptions {
   storeScope?: { read: string[]; write: string[] };
   skipRules?: boolean;
@@ -80,79 +69,10 @@ export interface TransactOptions {
   manualSchemaRefresh?: boolean;
 }
 
-export type CreateCollectionOperation = [
-  'create_collection',
-  {
-    name: string;
-    schema: { [path: string]: AttributeDefinition };
-    rules?: CollectionRules<any, any>;
-    optional?: string[];
-  }
-];
-export type DropCollectionOperation = ['drop_collection', { name: string }];
-export type AddAttributeOperation = [
-  'add_attribute',
-  {
-    collection: string;
-    path: string[];
-    attribute: AttributeDefinition;
-    optional?: boolean;
-  }
-];
-export type DropAttributeOperation = [
-  'drop_attribute',
-  { collection: string; path: string[] }
-];
-export type AlterAttributeOptionOperation = [
-  'alter_attribute_option',
-  { collection: string; path: string[]; options: UserTypeOptions }
-];
-export type DropAttributeOptionOperation = [
-  'drop_attribute_option',
-  { collection: string; path: string[]; option: string }
-];
-export type AddRuleOperation = [
-  'add_rule',
-  { collection: string; scope: string; id: string; rule: Rule<any, any> }
-];
-export type DropRuleOperation = [
-  'drop_rule',
-  { collection: string; scope: string; id: string }
-];
-export type SetAttributeOptionalOperation = [
-  'set_attribute_optional',
-  { collection: string; path: string[]; optional: boolean }
-];
-
-type DBOperation =
-  | CreateCollectionOperation
-  | DropCollectionOperation
-  | AddAttributeOperation
-  | DropAttributeOperation
-  | AlterAttributeOptionOperation
-  | DropAttributeOptionOperation
-  | AddRuleOperation
-  | DropRuleOperation
-  | SetAttributeOptionalOperation;
-
-export type Migration = {
-  up: DBOperation[];
-  down: DBOperation[];
-  version: number;
-  parent: number;
-  name: string;
-};
-
 type StorageSource = AsyncTupleStorageApi | TupleStorageApi;
 
-export interface DBConfig<M extends Models<any, any> | undefined> {
+export interface DBConfig<M extends Models = Models> {
   schema?: { collections: M; version?: number; roles?: Record<string, any> };
-  migrations?:
-    | Migration[]
-    | {
-        definitions: Migration[];
-        scopes?: string[];
-      };
   source?: StorageSource;
   sources?: Record<string, StorageSource>;
   tenantId?: string;
@@ -164,35 +84,24 @@ export interface DBConfig<M extends Models<any, any> | undefined> {
 export const DEFAULT_STORE_KEY = 'default';
 
 export type CollectionFromModels<
-  M extends Models<any, any> | undefined,
-  CN extends CollectionNameFromModels<M> = any
-> = M extends Models<any, any>
-  ? M[CN]
-  : M extends undefined
-  ? undefined
-  : never;
+  M extends Models,
+  CN extends CollectionNameFromModels<M> = CollectionNameFromModels<M>
+> = M[CN];
 
 export type ModelFromModels<
-  M extends Models<any, any> | undefined,
-  CN extends CollectionNameFromModels<M> = any
-> = M extends Models<any, any>
-  ? M[CN]['schema']
-  : M extends undefined
-  ? undefined
-  : never;
+  M extends Models,
+  CN extends CollectionNameFromModels<M>
+> = M[CN]['schema'];
 
-export type CollectionNameFromModels<M extends Models<any, any> | undefined> =
-  isAnyOrUndefined<M> extends true
-    ? string
-    : M extends Models<any, any>
-    ? keyof M
-    : never;
+export type CollectionNameFromModels<M extends Models = Models> = keyof M &
+  string;
 
 export interface DBFetchOptions {
   skipRules?: boolean;
   scope?: string[];
   stateVector?: Map<string, number>;
   noCache?: boolean;
+  skipIndex?: boolean;
 }
 
 export function ruleToTuple(
@@ -208,21 +117,12 @@ export function ruleToTuple(
   ]);
 }
 
-// export type FetchByIdQueryParams<
-//   M extends Models<any, any> | undefined,
-//   CN extends CollectionNameFromModels<M>
-// > = {
-//   include?: Parameters<
-//     ReturnType<typeof CollectionQueryBuilder<M, CN>>['include']
-//   >[0][];
-// };
-
 export type FetchByIdQueryParams<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
-> = Pick<Query<M, CN>, 'include'>;
+> = Pick<CollectionQuery<M, CN>, 'include'>;
 
-type SchemaChangeCallback<M extends Models<any, any> | undefined> = (
+type SchemaChangeCallback<M extends Models> = (
   schema: StoreSchema<M> | undefined
 ) => void;
 
@@ -250,109 +150,109 @@ export type OpSet<T> = {
   deletes: [string, T][];
 };
 
-interface AfterCommitOptions<M extends Models<any, any> | undefined> {
+interface AfterCommitOptions<M extends Models> {
   when: 'afterCommit';
 }
-type AfterCommitCallback<M extends Models<any, any> | undefined> = (args: {
+type AfterCommitCallback<M extends Models> = (args: {
   opSet: EntityOpSet;
   tx: DBTransaction<M>;
   db: DB<M>;
 }) => void | Promise<void>;
 interface AfterInsertOptions<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > {
   when: 'afterInsert';
   collectionName: CN;
 }
 type AfterInsertCallback<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > = (args: {
-  entity: FetchResultEntity<CollectionQuery<M, CN>>;
+  entity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   tx: DBTransaction<M>;
   db: DB<M>;
 }) => void | Promise<void>;
 interface AfterUpdateOptions<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > {
   when: 'afterUpdate';
   collectionName: CN;
 }
 type AfterUpdateCallback<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > = (args: {
-  entity: FetchResultEntity<CollectionQuery<M, CN>>;
+  entity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   tx: DBTransaction<M>;
   db: DB<M>;
 }) => void | Promise<void>;
 interface AfterDeleteOptions<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > {
   when: 'afterDelete';
   collectionName: CN;
 }
 type AfterDeleteCallback<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > = (args: {
-  entity: FetchResultEntity<CollectionQuery<M, CN>>;
+  entity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   tx: DBTransaction<M>;
   db: DB<M>;
 }) => void | Promise<void>;
-interface BeforeCommitOptions<M extends Models<any, any> | undefined> {
+interface BeforeCommitOptions<M extends Models> {
   when: 'beforeCommit';
 }
-type BeforeCommitCallback<M extends Models<any, any> | undefined> = (args: {
+type BeforeCommitCallback<M extends Models> = (args: {
   opSet: EntityOpSet;
   tx: DBTransaction<M>;
   db: DB<M>;
 }) => void | Promise<void>;
 interface BeforeInsertOptions<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > {
   when: 'beforeInsert';
   collectionName: CN;
 }
 type BeforeInsertCallback<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > = (args: {
-  entity: FetchResultEntity<CollectionQuery<M, CN>>;
+  entity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   tx: DBTransaction<M>;
   db: DB<M>;
 }) => void | Promise<void>;
 interface BeforeUpdateOptions<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > {
   when: 'beforeUpdate';
   collectionName: CN;
 }
 type BeforeUpdateCallback<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > = (args: {
-  entity: FetchResultEntity<CollectionQuery<M, CN>>;
+  entity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   tx: DBTransaction<M>;
   db: DB<M>;
 }) => void | Promise<void>;
 interface BeforeDeleteOptions<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > {
   when: 'beforeDelete';
   collectionName: CN;
 }
 type BeforeDeleteCallback<
-  M extends Models<any, any> | undefined,
+  M extends Models,
   CN extends CollectionNameFromModels<M>
 > = (args: {
-  entity: FetchResultEntity<CollectionQuery<M, CN>>;
+  entity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   tx: DBTransaction<M>;
   db: DB<M>;
 }) => void | Promise<void>;
@@ -377,7 +277,7 @@ type TriggerCallback =
   | BeforeUpdateCallback<any, any>
   | BeforeDeleteCallback<any, any>;
 
-export type DBHooks<M extends Models<any, any> | undefined> = {
+export type DBHooks<M extends Models> = {
   afterCommit: [AfterCommitCallback<M>, AfterCommitOptions<M>][];
   afterInsert: [
     AfterInsertCallback<M, CollectionNameFromModels<M>>,
@@ -411,7 +311,7 @@ export type SystemVariables = {
   session: Record<string, any>;
 };
 
-export default class DB<M extends Models<any, any> | undefined = undefined> {
+export default class DB<M extends Models = Models> {
   tripleStore: TripleStore;
   systemVars: SystemVariables;
   cache: VariableAwareCache<M>;
@@ -444,7 +344,6 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     source,
     sources,
     tenantId,
-    migrations,
     clock,
     variables,
     logger,
@@ -467,10 +366,8 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     if (Object.keys(sourcesMap).length === 0)
       throw new DBOptionsError('No triple stores provided.');
 
-    if (schema && migrations)
-      throw new DBOptionsError('Cannot provide both schema and migrations');
-
     // If a schema is provided, assume using schema but no migrations (keep at version 0)
+    // TODO: drop `version` from schema
     const tripleStoreSchema = schema
       ? {
           ...schema,
@@ -485,6 +382,10 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
       tenantId,
       clock,
     });
+    this.tripleStore.onClear(() => {
+      this.schema = undefined;
+      this._schema = undefined;
+    });
 
     this.cache = new VariableAwareCache(this);
 
@@ -496,7 +397,6 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     this.logger.debug('Initializing', {
       //@ts-expect-error
       schema: schema && schemaToJSON(schema),
-      // @ts-expect-error
       tripleStoreSchema: tripleStoreSchema && schemaToJSON(tripleStoreSchema),
     });
 
@@ -507,19 +407,7 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
           .then(() => {
             this.setupSchemaListener();
           })
-          .then(() =>
-            this.initializeDBWithSchema(
-              // @ts-expect-error
-              tripleStoreSchema
-            )
-          )
-      : !!migrations
-      ? this.storageReady
-          // TODO: look into why test fails if we setup listener first for migrations
-          .then(() => this.initializeDBWithMigrations(migrations))
-          .then(() => {
-            this.setupSchemaListener();
-          })
+          .then(() => this.initializeDBWithSchema(tripleStoreSchema))
       : this.storageReady.then(() => {
           this.setupSchemaListener();
         });
@@ -544,26 +432,13 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     return this.schema;
   }
 
-  private initializeDBWithMigrations(
-    migrations:
-      | Migration[]
-      | {
-          definitions: Migration[];
-          scopes?: string[] | undefined;
-        }
-      | undefined
-  ): Promise<void> {
-    return migrations
-      ? Array.isArray(migrations)
-        ? this.migrate(migrations, 'up')
-        : this.migrate(migrations.definitions, 'up', migrations.scopes)
-      : Promise.resolve();
-  }
-
-  private initializeDBWithSchema(schema: StoreSchema<M> | undefined) {
-    return schema
-      ? this.overrideSchema(schema).then(() => {})
-      : Promise.resolve();
+  private async initializeDBWithSchema(schema: StoreSchema<M> | undefined) {
+    if (!schema) return;
+    const existingSchema = await this.getSchema(true);
+    // exit of exiting schema matches provided schema
+    if (existingSchema && diffSchemas(existingSchema, schema).length === 0)
+      return;
+    await this.overrideSchema(schema);
   }
 
   /**
@@ -682,7 +557,7 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
   }
 
   withSessionVars(variables: Record<string, any>): DB<M> {
-    return Session(this, variables);
+    return Session(this, normalizeSessionVars(variables));
   }
 
   async getClientId() {
@@ -758,17 +633,20 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     this.systemVars.global = { ...this.systemVars.global, ...variables };
   }
 
-  async overrideSchema(schema: StoreSchema<M>) {
-    // @ts-expect-error
+  async overrideSchema(schema: StoreSchema<M> | undefined) {
     const { successful, issues } = await overrideStoredSchema(this, schema);
     logSchemaChangeViolations(successful, issues, this.logger);
     return { successful, issues };
   }
 
-  async fetch<Q extends CollectionQuery<M, any>>(
+  async echoQuery<Q extends SchemaQueries<M>>(query: Q) {
+    return query;
+  }
+
+  async fetch<Q extends SchemaQueries<M>>(
     query: Q,
     options: DBFetchOptions = {}
-  ): Promise<Unalias<FetchResult<Q>>> {
+  ): Promise<Unalias<FetchResult<M, ToQuery<M, Q>>>> {
     this.logger.debug('fetch START', { query });
     await this.storageReady;
     const schema = (await this.getSchema())?.collections as M;
@@ -785,7 +663,6 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
       options.noCache === undefined ? DEFAULT_CACHE_DISABLED : options.noCache;
 
     const { results } = await fetch<M, Q>(
-      this,
       options.scope
         ? this.tripleStore.setStorageScope(options.scope)
         : this.tripleStore,
@@ -795,13 +672,22 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
         schema,
         cache: noCache ? undefined : this.cache,
         skipRules: options.skipRules,
+        skipIndex: options.skipIndex,
+        session: {
+          systemVars: this.systemVars,
+          roles: this.sessionRoles,
+        },
       }
     );
     this.logger.debug('fetch END', { query, result: results });
-    return fetchResultToJS(results, schema, fetchQuery.collectionName);
+    return fetchResultToJS(
+      results,
+      schema,
+      fetchQuery.collectionName
+    ) as Unalias<FetchResult<M, ToQuery<M, Q>>>;
   }
 
-  async fetchTriples<Q extends CollectionQuery<M, any>>(
+  async fetchTriples<Q extends SchemaQueries<M>>(
     query: Q,
     options: DBFetchOptions = {}
   ) {
@@ -818,7 +704,6 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     return [
       ...(
         await fetch<M, Q>(
-          this,
           options.scope
             ? this.tripleStore.setStorageScope(options.scope)
             : this.tripleStore,
@@ -827,28 +712,37 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
           {
             schema: schema,
             stateVector: options.stateVector,
+            skipRules: options.skipRules,
+            session: {
+              systemVars: this.systemVars,
+              roles: this.sessionRoles,
+            },
           }
         )
-      ).triples.values(),
-    ].flat();
+      ).triples,
+    ];
   }
 
   async fetchById<CN extends CollectionNameFromModels<M>>(
     collectionName: CN,
     id: string,
     options: DBFetchOptions = {}
-  ) {
-    const query = this.query(collectionName).id(id).build();
-    return this.fetchOne(query, options);
+  ): Promise<Unalias<
+    FetchResultEntity<M, ToQuery<M, CollectionQueryDefault<M, CN>>>
+  > | null> {
+    const query = this.query(collectionName).id(id).build() as SchemaQueries<M>;
+    return this.fetchOne(query, options) as Promise<Unalias<
+      FetchResultEntity<M, ToQuery<M, CollectionQueryDefault<M, CN>>>
+    > | null>;
   }
 
-  async fetchOne<Q extends CollectionQuery<M, any>>(
+  async fetchOne<Q extends SchemaQueries<M>>(
     query: Q,
     options: DBFetchOptions = {}
-  ): Promise<Unalias<FetchResultEntity<Q> | null>> {
+  ): Promise<Unalias<FetchResultEntity<M, ToQuery<M, Q>>> | null> {
     query = { ...query, limit: 1 };
     const result = await this.fetch(query, options);
-    const entity = [...result.values()][0];
+    const entity = [...result][0];
     if (!entity) return null;
     return entity;
   }
@@ -873,9 +767,11 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     }, options);
   }
 
-  subscribe<Q extends CollectionQuery<M, any>>(
+  subscribe<Q extends SchemaQueries<M>>(
     query: Q,
-    onResults: (results: Unalias<FetchResult<Q>>) => void | Promise<void>,
+    onResults: (
+      results: Unalias<FetchResult<M, ToQuery<M, Q>>>
+    ) => void | Promise<void>,
     onError?: (error: any) => void | Promise<void>,
     options: DBFetchOptions = {}
   ) {
@@ -897,25 +793,31 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
           ? DEFAULT_CACHE_DISABLED
           : options.noCache;
       const unsub = subscribe<M, Q>(
-        this,
         options.scope
           ? this.tripleStore.setStorageScope(options.scope)
           : this.tripleStore,
         subscriptionQuery,
-        (...args) => {
-          if (unsubscribed) return;
-          this.logger.debug('subscribe RESULTS', { query, results: args });
-          onResults(...args);
-        },
-        (...args) => {
-          if (unsubscribed) return;
-          onError?.(...args);
-        },
         {
           schema,
           cache: noCache ? undefined : this.cache,
           skipRules: options.skipRules,
           stateVector: options.stateVector,
+          skipIndex: options.skipIndex,
+          session: {
+            systemVars: this.systemVars,
+            roles: this.sessionRoles,
+          },
+        },
+        (...args) => {
+          if (unsubscribed) return;
+          this.logger.debug('subscribe RESULTS', { query, results: args });
+          onResults(
+            ...(args as [results: Unalias<FetchResult<M, ToQuery<M, Q>>>])
+          );
+        },
+        (...args) => {
+          if (unsubscribed) return;
+          onError?.(...args);
         }
       );
       return unsub;
@@ -955,19 +857,23 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
           : options.noCache;
 
       const unsub = subscribeTriples<M, Q>(
-        this,
         options.scope
           ? this.tripleStore.setStorageScope(options.scope)
           : this.tripleStore,
         subscriptionQuery,
-        (tripMap) => onResults([...tripMap.values()].flat()),
-        onError,
         {
           schema,
           skipRules: options.skipRules,
           stateVector: options.stateVector,
           cache: noCache ? undefined : this.cache,
-        }
+          skipIndex: options.skipIndex,
+          session: {
+            systemVars: this.systemVars,
+            roles: this.sessionRoles,
+          },
+        },
+        onResults,
+        onError
       );
       return unsub;
     };
@@ -995,212 +901,72 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
 
   query<CN extends CollectionNameFromModels<M>>(
     collectionName: CN,
-    params?: Query<M, CN>
+    params?: Omit<CollectionQuery<M, CN>, 'collectionName'>
   ) {
-    // TODO: Properly type with 'params'
-    return CollectionQueryBuilder(collectionName, params);
+    return CollectionQueryBuilder<M, CN>(collectionName, params);
   }
 
-  async createCollection(params: CreateCollectionOperation[1]) {
+  async createCollection(params: CreateCollectionPayload) {
     await this.transact(async (tx) => {
       await tx.createCollection(params);
     });
   }
 
-  async dropCollection(params: DropCollectionOperation[1]) {
+  async dropCollection(params: DropCollectionPayload) {
     await this.transact(async (tx) => {
       await tx.dropCollection(params);
     });
   }
 
-  async addAttribute(params: AddAttributeOperation[1]) {
+  async addAttribute(params: AddAttributePayload) {
     await this.transact(async (tx) => {
       await tx.addAttribute(params);
     });
   }
 
-  async dropAttribute(params: DropAttributeOperation[1]) {
+  async dropAttribute(params: DropAttributePayload) {
     await this.transact(async (tx) => {
       await tx.dropAttribute(params);
     });
   }
 
-  async alterAttributeOption(params: AlterAttributeOptionOperation[1]) {
+  async alterAttributeOption(params: AlterAttributeOptionPayload) {
     await this.transact(async (tx) => {
       await tx.alterAttributeOption(params);
     });
   }
 
-  async dropAttributeOption(params: DropAttributeOptionOperation[1]) {
+  async dropAttributeOption(params: DropAttributeOptionPayload) {
     await this.transact(async (tx) => {
       await tx.dropAttributeOption(params);
     });
   }
 
-  async addRule(params: AddRuleOperation[1]) {
+  async addRule(params: AddRulePayload) {
     await this.transact(async (tx) => {
       await tx.addRule(params);
     });
   }
 
-  async dropRule(params: DropRuleOperation[1]) {
+  async dropRule(params: DropRulePayload) {
     await this.transact(async (tx) => {
       await tx.dropRule(params);
     });
   }
 
-  async setAttributeOptional(params: SetAttributeOptionalOperation[1]) {
+  async setAttributeOptional(params: SetAttributeOptionalPayload) {
     await this.transact(async (tx) => {
       await tx.setAttributeOptional(params);
     });
-  }
-
-  private async applySchemaMigration(
-    migration: Migration,
-    direction: 'up' | 'down',
-    scopes?: string[]
-  ) {
-    const operations = migration[direction];
-    // Need to read from triple store manually because we block db.transaction() api and schema access
-    const { schema } = await readSchemaFromTripleStore(this.tripleStore);
-    await this.tripleStore.transact(
-      async (tripTx) => {
-        const tx = new DBTransaction(this, tripTx, copyHooks(this.hooks), {
-          // @ts-expect-error storeSchema issue
-          schema,
-        });
-        for (const operation of operations) {
-          switch (operation[0]) {
-            case 'create_collection':
-              await tx.createCollection(operation[1]);
-              break;
-            case 'drop_collection':
-              await tx.dropCollection(operation[1]);
-              break;
-            case 'add_attribute':
-              await tx.addAttribute(operation[1]);
-              break;
-            case 'drop_attribute':
-              await tx.dropAttribute(operation[1]);
-              break;
-            case 'alter_attribute_option':
-              await tx.alterAttributeOption(operation[1]);
-              break;
-            case 'drop_attribute_option':
-              await tx.dropAttributeOption(operation[1]);
-              break;
-            case 'add_rule':
-              await tx.addRule(operation[1]);
-              break;
-            case 'drop_rule':
-              await tx.dropRule(operation[1]);
-              break;
-            case 'set_attribute_optional':
-              await tx.setAttributeOptional(operation[1]);
-              break;
-            default:
-              throw new InvalidMigrationOperationError(
-                `The operation ${operation[0]} is not recognized.`
-              );
-          }
-        }
-        // Keeping for backwards compatability, but it doesnt really need to be in the schema
-        await tripTx.insertTriples([
-          {
-            id: appendCollectionToId('_metadata', '_schema'),
-            attribute: ['_metadata', 'version'],
-            value: direction === 'up' ? migration.version : migration.parent,
-            timestamp: await tripTx.clock.getNextTimestamp(),
-            expired: false,
-          },
-        ]);
-        if (direction === 'up') {
-          // Add migration marker
-          await tripTx.updateMetadataTuples([
-            ['migrations', [`${migration.version}`, 'id'], migration.version],
-            [
-              'migrations',
-              [`${migration.version}`, 'parent'],
-              migration.parent,
-            ],
-            ['migrations', [`${migration.version}`, 'name'], migration.name],
-            [
-              'migrations',
-              [`${migration.version}`, 'applied'],
-              new Date().toISOString(),
-            ],
-          ]);
-        } else if (direction === 'down') {
-          // remove migration marker
-          await tripTx.deleteMetadataTuples([
-            ['migrations', [`${migration.version}`]],
-          ]);
-        }
-      },
-      scopes ? { read: scopes, write: scopes } : undefined
-    );
-  }
-
-  async migrate(
-    migrations: Migration[],
-    direction: 'up' | 'down',
-    scopes?: string[]
-  ) {
-    const sortedMigrations = migrations.sort(
-      (a, b) => (a.version - b.version) * (direction === 'up' ? 1 : -1)
-    );
-    for (const migration of sortedMigrations) {
-      const { schema: storedSchema } = await readSchemaFromTripleStore(
-        this.tripleStore
-      );
-
-      const dbVersion = storedSchema?.version ?? 0;
-      if (canMigrate(migration, direction, dbVersion)) {
-        try {
-          await this.applySchemaMigration(migration, direction, scopes);
-        } catch (e) {
-          console.error(
-            `Error applying ${direction} migration with verison`,
-            migration.version,
-            e
-          );
-          throw e;
-        }
-      } else {
-        console.info('skipping migration', migration);
-      }
-    }
-  }
-
-  async getAppliedMigrations() {
-    const migrationTuples = await this.tripleStore.readMetadataTuples(
-      'migrations'
-    );
-    const res = triplesToObject<{
-      migrations?: Record<
-        string,
-        { applied: string; id: number; parent: number; name: string }
-      >;
-    }>(migrationTuples);
-    return res.migrations || {};
-  }
-
-  async getLatestMigrationId() {
-    const migrations = await this.getAppliedMigrations();
-    const maxVersion = Object.values(migrations).reduce<number | undefined>(
-      (max, m) => Math.max(max || 0, m.id),
-      undefined
-    );
-    return maxVersion;
   }
 
   async getCollectionStats(): Promise<Map<string, number>> {
     // Each entity has a hidden _collection attribute which the value
     // is just the name of the collection it belongs to
     // e.g. { id: '123', name: 'alice', _collection: 'users'}
-    const collectionMetaTriples = await this.tripleStore.findByAttribute([
-      '_collection',
-    ]);
+    const collectionMetaTriples = await genToArr(
+      this.tripleStore.findByAttribute(['_collection'])
+    );
 
     const stats = new Map();
     for (let trip of collectionMetaTriples) {
@@ -1214,38 +980,13 @@ export default class DB<M extends Models<any, any> | undefined = undefined> {
     return stats;
   }
 
-  async clear({ full }: { full?: boolean } = {}) {
-    if (full) {
-      // Delete all data associated with this tenant
-      await this.tripleStore.clear();
-    } else {
-      // Just delete triples
-      await this.tripleStore.transact(async (tx) => {
-        const allTriples = await tx.findByEntity();
-        // Filter out synced metadata
-        const dataTriples = allTriples.filter(
-          ({ id }) => !id.includes('_metadata')
-        );
-        await tx.deleteTriples(dataTriples);
-      });
-    }
+  async clear(options: ClearOptions = {}) {
+    return this.tripleStore.clear(options);
   }
 
   onSchemaChange(cb: SchemaChangeCallback<M>) {
     this.onSchemaChangeCallbacks.add(cb);
     return () => this.onSchemaChangeCallbacks.delete(cb);
-  }
-}
-
-function canMigrate(
-  migration: Migration,
-  direction: 'up' | 'down',
-  dbVersion: number
-) {
-  if (direction === 'up') {
-    return migration.parent === dbVersion;
-  } else {
-    return migration.version === dbVersion;
   }
 }
 

@@ -1,0 +1,43 @@
+{
+  "name": "@triplit/tanstack",
+  "version": "1.0.1",
+  "packageManager": "yarn@4.2.2",
+  "type": "module",
+  "source": "./src/index.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc && yarn validate:types",
+    "build:watch": "tsc -w",
+    "lint:build": "npx publint",
+    "lint": "tsc --noEmit",
+    "publish-pkg": "node ../../scripts/npm-check-version-and-publish.js",
+    "validate:types": "node ../../scripts/check-for-local-references-in-declarations.js dist"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "/dist"
+  ],
+  "peerDependencies": {
+    "@tanstack/react-router": "*",
+    "@triplit/client": "workspace:^",
+    "@triplit/react": "workspace:^",
+    "react": "*"
+  },
+  "devDependencies": {
+    "@tanstack/react-router": "^1.57.9",
+    "@triplit/client": "workspace:^",
+    "@triplit/react": "workspace:^",
+    "@types/react": "^18",
+    "react": "^18.3.1",
+    "typescript": "^5.6.2"
+  }
+}

@@ -2,8 +2,8 @@ import { InMemoryTupleStorage } from '@triplit/tuple-database';
 import { describe, expect, it, beforeEach, beforeAll } from 'vitest';
 import { DB, Schema as S, WriteRuleError } from '../../src';
 import { classes } from '../sample_data/school.js';
-import { testDBAndTransaction } from '../db.spec';
 import { Models } from '../../src/schema/types';
+import { testDBAndTransaction } from '../utils/db-helpers.js';
 
 describe('Rules', () => {
   describe('Read', () => {
@@ -112,18 +112,18 @@ describe('Rules', () => {
 
       let calls = 0;
       let assertions = [
-        (results: Map<string, any>) => {
-          expect(results.size).toBe(0);
+        (results: any[]) => {
+          expect(results.length).toBe(0);
         },
-        (results: Map<string, any>) => {
-          expect(results.size).toBe(1);
-          expect(results.get('1')).toBeTruthy();
+        (results: any[]) => {
+          expect(results.length).toBe(1);
+          expect(results.find((e) => e.id === '1')).toBeTruthy();
         },
-        (results: Map<string, any>) => {
-          expect(results.size).toBe(2);
-          expect(results.get('1')).toBeTruthy();
-          expect(results.get('2')).toBeFalsy();
-          expect(results.get('3')).toBeTruthy();
+        (results: any[]) => {
+          expect(results.length).toBe(2);
+          expect(results.find((e) => e.id === '1')).toBeTruthy();
+          expect(results.find((e) => e.id === '2')).toBeFalsy();
+          expect(results.find((e) => e.id === '3')).toBeTruthy();
         },
       ];
       db.subscribe(completedTodosQuery, (data) => {
@@ -168,7 +168,7 @@ describe('Rules', () => {
   });
 
   describe('Insert', () => {
-    let db: DB<undefined>;
+    let db: DB;
     const USER_ID = 'the-user-id';
     beforeAll(async () => {
       db = new DB({
@@ -274,7 +274,7 @@ describe('Rules', () => {
             admin: S.Boolean(),
           }),
         },
-      } satisfies Models<any, any>;
+      } satisfies Models;
       const schema = { collections };
       it('insert with relationship in rule', async () => {
         const db = new DB({ schema });
@@ -362,7 +362,7 @@ describe('Rules', () => {
   });
 
   describe('Update', () => {
-    let db: DB<any>;
+    let db: DB;
     const USER_ID = 'the-user-id';
     const POST_ID = 'post-1';
     const POST = { id: POST_ID, author_id: USER_ID, content: 'before' };
@@ -468,7 +468,7 @@ describe('Rules', () => {
           },
         },
       },
-    } satisfies Models<any, any>;
+    } satisfies Models;
     const schema = { collections };
 
     const user_id = 'user-1';

@@ -1,5 +1,99 @@
 # @triplit/db
 
+## 0.4.1
+
+### Patch Changes
+
+- 8966b0fe: Fixup deduplication bug in candidate selection
+- 761648cf: Add TypeFromModel type
+
+## 0.4.0
+
+### Minor Changes
+
+- 0a09013b: Sunset migrations API
+- f894e435: update query return type to array
+- abe8bea8: Sunset entityId() in builder
+
+### Patch Changes
+
+- 38746526: Update clear to rewrite data to keep back to original stores only
+
+## 0.3.75
+
+### Patch Changes
+
+- 5fed7f42: export schema builder types
+
+## 0.3.74
+
+### Patch Changes
+
+- 5eae93dc: update exports
+
+## 0.3.73
+
+### Patch Changes
+
+- 99a5b854: Properly cleanup onClear listener data in clock
+
+## 0.3.72
+
+### Patch Changes
+
+- Updated dependencies [7a48f517]
+  - @triplit/tuple-database@2.2.27
+
+## 0.3.71
+
+### Patch Changes
+
+- 4f99c558: Use iterators when clearing data, use underlying storage.clear(), reset state on clear
+- a902f8b8: unify session variable transformation logic
+- Updated dependencies [6e426627]
+  - @triplit/tuple-database@2.2.26
+
+## 0.3.70
+
+### Patch Changes
+
+- 104027d8: update types to use less conditionals, fix typecheck
+- 833b69c9: export more helpers
+- ecc5a959: Store query componenets and intermediate results during execution
+
+## 0.3.69
+
+### Patch Changes
+
+- 96d4d8ff: Fix filter bugs
+- d11d57e2: Use async generators for tuple scans rather than arrays for lazy pagination of indexes that will reduce memory and increase performance on large datasets
+- ffb00f68: Add exists operator for filtering optional / undefined values
+
+## 0.3.68
+
+### Patch Changes
+
+- 79df5162: Fix bug with referential var prefixes in delta triples query
+
+## 0.3.67
+
+### Patch Changes
+
+- 38bdff77: temporarily loosen restrictions on filter inputs
+
+## 0.3.66
+
+### Patch Changes
+
+- 73d638ec: Fixup async bugs
+
+## 0.3.65
+
+### Patch Changes
+
+- 28d32b51: Improved initialization speed especially with durable storage
+- 0139e1a4: Improve support for nested queries and results, add subquery to query builder"
+
 ## 0.3.64
 
 ### Patch Changes

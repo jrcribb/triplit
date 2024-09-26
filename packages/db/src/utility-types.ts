@@ -29,6 +29,16 @@ export type isAnyOrUndefined<T> = IsAny<T> extends true
   : false;
 
 /**
+ * Check if a type is unknown, if so return the fallback type
+ */
+export type Coalesce<T, U> = IsUnknown<T> extends true ? U : T;
+
+/**
+ * Check if a type is unknown
+ */
+export type IsUnknown<T> = unknown extends T ? true : false;
+
+/**
  * Check if a type is unknown or undefined
  */
 export type IsUnknownOrUndefined<T> = unknown extends T
@@ -59,3 +69,8 @@ export type Intersection<U1, U2> = U1 extends U2 ? U1 : never;
  * A relaxed union type that allows for any string
  */
 export type SoftUnion<T extends string> = T | (string & {});
+
+/**
+ * String key
+ */
+export type StringKey<T> = T & string;

@@ -1,7 +1,8 @@
 import type {
-  ClientFetchResult,
+  FetchResult,
   ClientQuery,
   ClientQueryBuilder,
+  CollectionNameFromModels,
   Models,
   SubscriptionOptions,
   TriplitClient,
@@ -18,23 +19,24 @@ import {
 } from 'rxjs';
 
 export function createQuery<
-  M extends Models<any, any> | undefined,
-  Q extends ClientQuery<M, any, any, any>
+  M extends Models,
+  CN extends CollectionNameFromModels<M>,
+  Q extends ClientQuery<M, CN>
 >(
   queryFn: () => {
     client: TriplitClient<any>;
-    query: ClientQueryBuilder<Q>;
+    query: ClientQueryBuilder<M, CN, Q>;
     options?: Partial<SubscriptionOptions>;
   }
 ): {
   fetching$: Observable<boolean>;
   fetchingLocal$: Observable<boolean>;
   fetchingRemote$: Observable<boolean>;
-  results$: Observable<Unalias<ClientFetchResult<Q>> | undefined>;
+  results$: Observable<Unalias<FetchResult<M, Q>> | undefined>;
   error$: Observable<any>;
 } {
   const queryParams$ = new BehaviorSubject(queryFn());
-  const resultSubject = new BehaviorSubject<ClientFetchResult<Q> | undefined>(
+  const resultSubject = new BehaviorSubject<FetchResult<M, Q> | undefined>(
     undefined
   );
   const fetchingLocalSubject = new BehaviorSubject<boolean>(true);
@@ -65,7 +67,7 @@ export function createQuery<
     .pipe(
       switchMap((params) => {
         const { client, query, options } = params;
-        return new Observable<ClientFetchResult<Q>>((observer) => {
+        return new Observable<FetchResult<M, Q>>((observer) => {
           fetchingLocalSubject.next(true);
           const unsubscribe = client.subscribe(
             query.build(),
