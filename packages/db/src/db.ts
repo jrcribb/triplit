@@ -1,4 +1,4 @@
-import { timestampedSchemaToSchema } from './schema/schema.js';
+import { schemaEntityToSchemaObject } from './schema/schema.js';
 import { schemaToJSON } from './schema/export/index.js';
 import {
   UpdateTypeFromModel,
@@ -14,8 +14,9 @@ import CollectionQueryBuilder, {
   initialFetchExecutionContext,
   subscribe,
   subscribeTriples,
+  loadQuery,
 } from './collection-query.js';
-import { Entity, constructEntity, updateEntity } from './query.js';
+import { COLLECTION_ATTRIBUTE, Entity, updateEntity } from './entity.js';
 import { MemoryBTreeStorage } from './storage/memory-btree.js';
 import { DBOptionsError, TriplitError } from './errors.js';
 import { Clock } from './clocks/clock.js';
@@ -60,6 +61,11 @@ import {
   DropRulePayload,
   SetAttributeOptionalPayload,
 } from './db/types/operations.js';
+import { generatePsuedoRandomId } from './utils/random.js';
+import {
+  getResultTriplesFromContext,
+  getSyncTriplesFromContext,
+} from './query/result-parsers.js';
 
 const DEFAULT_CACHE_DISABLED = true;
 export interface TransactOptions {
@@ -104,6 +110,10 @@ export interface DBFetchOptions {
   skipIndex?: boolean;
 }
 
+interface TriplesFetchOptions extends DBFetchOptions {
+  sync?: boolean;
+}
+
 export function ruleToTuple(
   collectionName: string,
   ruleType: keyof CollectionRules<any, any>,
@@ -142,12 +152,12 @@ type TriggerWhen =
   | 'beforeUpdate';
 
 // TODO: type this better
-export type EntityOpSet = OpSet<any>;
+export type EntityOpSet = OpSet<[string, any]>;
 
 export type OpSet<T> = {
-  inserts: [string, T][];
-  updates: [string, T][];
-  deletes: [string, T][];
+  inserts: T[];
+  updates: T[];
+  deletes: T[];
 };
 
 interface AfterCommitOptions<M extends Models> {
@@ -322,7 +332,7 @@ export default class DB<M extends Models = Models> {
   private isSchemaInitialized: boolean = false;
   ready: Promise<void>;
 
-  _schema?: Entity; // Timestamped Object
+  _schema?: Entity;
   schema?: StoreSchema<M>;
   private onSchemaChangeCallbacks: Set<SchemaChangeCallback<M>>;
 
@@ -338,6 +348,14 @@ export default class DB<M extends Models = Models> {
   };
   private _pendingSchemaRequest: Promise<void> | null;
   logger: Logger;
+  public activeSubscriptions: Map<
+    string,
+    {
+      query: CollectionQuery<M>;
+      unsubscribe: () => Promise<void>;
+      updateVariables: () => Promise<void>;
+    }
+  > = new Map();
 
   constructor({
     schema,
@@ -468,7 +486,7 @@ export default class DB<M extends Models = Models> {
 
         // Update schema
         updateEntity(this._schema!, schemaTriples);
-        const newSchema = timestampedSchemaToSchema(
+        const newSchema = schemaEntityToSchemaObject(
           this._schema!.data
         ) as StoreSchema<M>;
 
@@ -567,14 +585,10 @@ export default class DB<M extends Models = Models> {
 
   private async loadSchemaData() {
     const triples = await getSchemaTriples(this.tripleStore);
-
-    this._schema =
-      constructEntity(triples, appendCollectionToId('_metadata', '_schema')) ??
-      new Entity();
-
+    this._schema = new Entity(triples);
     // Schema should remain undefined if no triples
     if (triples.length) {
-      this.schema = timestampedSchemaToSchema(
+      this.schema = schemaEntityToSchemaObject(
         this._schema.data
       ) as StoreSchema<M>;
     }
@@ -630,6 +644,7 @@ export default class DB<M extends Models = Models> {
   }
 
   updateGlobalVariables(variables: Record<string, any>) {
+    this.activeSubscriptions.forEach((sub) => sub.updateVariables());
     this.systemVars.global = { ...this.systemVars.global, ...variables };
   }
 
@@ -637,10 +652,6 @@ export default class DB<M extends Models = Models> {
     const { successful, issues } = await overrideStoredSchema(this, schema);
     logSchemaChangeViolations(successful, issues, this.logger);
     return { successful, issues };
-  }
-
-  async echoQuery<Q extends SchemaQueries<M>>(query: Q) {
-    return query;
   }
 
   async fetch<Q extends SchemaQueries<M>>(
@@ -662,12 +673,13 @@ export default class DB<M extends Models = Models> {
     const noCache =
       options.noCache === undefined ? DEFAULT_CACHE_DISABLED : options.noCache;
 
-    const { results } = await fetch<M, Q>(
+    const executionContext = initialFetchExecutionContext();
+    const results = await fetch<M, Q>(
       options.scope
         ? this.tripleStore.setStorageScope(options.scope)
         : this.tripleStore,
       fetchQuery,
-      initialFetchExecutionContext(),
+      executionContext,
       {
         schema,
         cache: noCache ? undefined : this.cache,
@@ -689,7 +701,7 @@ export default class DB<M extends Models = Models> {
 
   async fetchTriples<Q extends SchemaQueries<M>>(
     query: Q,
-    options: DBFetchOptions = {}
+    options: TriplesFetchOptions = {}
   ) {
     await this.storageReady;
     const schema = (await this.getSchema())?.collections as M;
@@ -701,26 +713,40 @@ export default class DB<M extends Models = Models> {
         skipRules: options.skipRules,
       }
     );
-    return [
-      ...(
-        await fetch<M, Q>(
-          options.scope
-            ? this.tripleStore.setStorageScope(options.scope)
-            : this.tripleStore,
+    const executionContext = initialFetchExecutionContext();
+    const entityOrder = await loadQuery<M, Q>(
+      options.scope
+        ? this.tripleStore.setStorageScope(options.scope)
+        : this.tripleStore,
+      fetchQuery,
+      executionContext,
+      {
+        schema: schema,
+        stateVector: options.stateVector,
+        skipRules: options.skipRules,
+        session: {
+          systemVars: this.systemVars,
+          roles: this.sessionRoles,
+        },
+      }
+    );
+
+    if (options.sync) {
+      return Array.from(
+        getSyncTriplesFromContext<M, Q>(
           fetchQuery,
-          initialFetchExecutionContext(),
-          {
-            schema: schema,
-            stateVector: options.stateVector,
-            skipRules: options.skipRules,
-            session: {
-              systemVars: this.systemVars,
-              roles: this.sessionRoles,
-            },
-          }
-        )
-      ).triples,
-    ];
+          entityOrder,
+          executionContext
+        ).values()
+      ).flat();
+    }
+    return Array.from(
+      getResultTriplesFromContext<M, Q>(
+        fetchQuery,
+        entityOrder,
+        executionContext
+      ).values()
+    ).flat();
   }
 
   async fetchById<CN extends CollectionNameFromModels<M>>(
@@ -792,7 +818,7 @@ export default class DB<M extends Models = Models> {
         options.noCache === undefined
           ? DEFAULT_CACHE_DISABLED
           : options.noCache;
-      const unsub = subscribe<M, Q>(
+      const subscription = subscribe<M, Q>(
         options.scope
           ? this.tripleStore.setStorageScope(options.scope)
           : this.tripleStore,
@@ -820,17 +846,33 @@ export default class DB<M extends Models = Models> {
           onError?.(...args);
         }
       );
-      return unsub;
+      return subscription;
     };
 
-    const unsubPromise = startSubscription().catch(onError);
+    const subscriptionPromise = startSubscription().catch(onError);
 
+    // @ts-expect-error
+    const queryId = query.traceId ?? generatePsuedoRandomId();
+    this.activeSubscriptions.set(queryId, {
+      query,
+      unsubscribe: async () => {
+        // Immediately set unsubscribed to true to prevent any new results from being processed
+        unsubscribed = true;
+        this.logger.debug('subscribe END', { query });
+        const subscription = await subscriptionPromise;
+        this.activeSubscriptions.delete(queryId);
+        return subscription && subscription.unsubscribe();
+      },
+      updateVariables: async () => {
+        const subscription = await subscriptionPromise;
+        return subscription && (await subscription.updateVars(this.systemVars));
+      },
+    });
+
+    // Maybe return an object like { unsubscribe: () => void, updateVariables: () => void } but for now
+    // keep API backwards compatible
     return async () => {
-      // Immediately set unsubscribed to true to prevent any new results from being processed
-      unsubscribed = true;
-      this.logger.debug('subscribe END', { query });
-      const unsub = await unsubPromise;
-      return unsub?.();
+      return this.activeSubscriptions.get(queryId)?.unsubscribe();
     };
   }
 
@@ -965,7 +1007,7 @@ export default class DB<M extends Models = Models> {
     // is just the name of the collection it belongs to
     // e.g. { id: '123', name: 'alice', _collection: 'users'}
     const collectionMetaTriples = await genToArr(
-      this.tripleStore.findByAttribute(['_collection'])
+      this.tripleStore.findByAttribute(COLLECTION_ATTRIBUTE)
     );
 
     const stats = new Map();

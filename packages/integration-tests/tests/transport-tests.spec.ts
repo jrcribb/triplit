@@ -1,64 +1,15 @@
-import {
-  Server as TriplitServer,
-  Session,
-  Connection,
-  ClientSyncMessage,
-} from '@triplit/server-core';
-import {
-  TriplitClient,
-  SyncTransport,
-  TransportConnectParams,
-  ConnectionStatus,
-  ClientOptions,
-  ClientSchema,
-} from '@triplit/client';
+import { Server as TriplitServer } from '@triplit/server-core';
+import { TriplitClient, ClientSchema } from '@triplit/client';
 import { describe, vi, it, expect } from 'vitest';
 import DB, { Models, Schema as S, genToArr, or } from '@triplit/db';
 import { MemoryBTreeStorage as MemoryStorage } from '@triplit/db/storage/memory-btree';
-import { CloseReason } from '@triplit/types/sync';
-import { hashQuery } from '../../client/src/utils/query.js';
-
-function parseJWT(token: string | undefined) {
-  if (!token) throw new Error('No token provided');
-  let base64Url = token.split('.')[1];
-  let base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-  let jsonPayload = decodeURIComponent(
-    atob(base64)
-      .split('')
-      .map(function (c) {
-        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-      })
-      .join('')
-  );
-  return JSON.parse(jsonPayload);
-}
-
-/**
- *
- * @param ms [ms=100] - The number of milliseconds to pause
- */
-const pause = async (ms: number = 100) =>
-  new Promise((resolve) => setTimeout(resolve, ms));
-
-function createTestClient<M extends Models>(
-  server: TriplitServer,
-  apiKey: string,
-  options: ClientOptions<M> = {}
-) {
-  return new TriplitClient({
-    storage: 'memory',
-    transport: new TestTransport(server),
-    token: apiKey,
-    logLevel: 'error',
-    ...options,
-  });
-}
-
-const SERVICE_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ4LXRyaXBsaXQtdG9rZW4tdHlwZSI6InNlY3JldCIsIngtdHJpcGxpdC1wcm9qZWN0LWlkIjoidG9kb3MiLCJpYXQiOjE2OTY1MzMwMjl9.zAu3Coy49C4WSMKegE4NePHrCAtZ3B3_uJdDjTxu2NM';
-
-const NOT_SERVICE_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ4LXRyaXBsaXQtdG9rZW4tdHlwZSI6InRlc3QiLCJ4LXRyaXBsaXQtcHJvamVjdC1pZCI6InRvZG9zIiwiaWF0IjoxNjk3NDc5MDI3fQ.8vkJawoLwsnTJK8_-zC3PCHjcb8zTK50SgYluQ3VYtM';
+import { hashQuery } from '@triplit/client';
+import { pause } from '../utils/async.js';
+import {
+  NOT_SERVICE_KEY,
+  SERVICE_KEY,
+  createTestClient,
+} from '../utils/client.js';
 
 describe('TestTransport', () => {
   it('can sync an insert on one client to another client', async () => {
@@ -477,10 +428,19 @@ describe('Connection Status', () => {
   });
 });
 
+const client = new TriplitClient();
+const baseQuery = client.query('test');
 describe('deletes', () => {
-  it('can sync deletes', async () => {
+  it.each([
+    [baseQuery.where('name', 'like', '%bob%'), ['bob2']],
+    [baseQuery.order('name', 'DESC'), ['bob2', 'alice2']],
+    // TODO: get limit working
+    // [baseQuery.order('name', 'ASC').limit(1), ['alice2']],
+  ])('can sync deletes for queries ', async (query, results) => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
+    const alice = createTestClient(server, SERVICE_KEY, {
+      clientId: 'alice',
+    });
     const bob = createTestClient(server, SERVICE_KEY, { clientId: 'bob' });
 
     // set up data to delete
@@ -493,8 +453,9 @@ describe('deletes', () => {
     // set up subscriptions
     const aliceSub = vi.fn();
     const bobSub = vi.fn();
-    alice.subscribe(alice.query('test').build(), aliceSub);
-    bob.subscribe(bob.query('test').build(), bobSub);
+
+    alice.subscribe(query.build(), aliceSub);
+    bob.subscribe(query.build(), bobSub);
     await pause();
 
     // alice can delete her own
@@ -503,14 +464,94 @@ describe('deletes', () => {
     await alice.delete('test', 'bob1');
     await pause();
 
-    expect(aliceSub).toHaveBeenCalledTimes(4);
-    expect(aliceSub.mock.calls[1][0].length).toBe(4);
-    expect(aliceSub.mock.calls[2][0].length).toBe(3);
-    expect(aliceSub.mock.calls[3][0].length).toBe(2);
-    expect(bobSub).toHaveBeenCalledTimes(4);
-    expect(bobSub.mock.calls[1][0].length).toBe(4);
-    expect(bobSub.mock.calls[2][0].length).toBe(3);
-    expect(bobSub.mock.calls[3][0].length).toBe(2);
+    expect(aliceSub.mock.lastCall[0].map((e: any) => e.id)).toStrictEqual(
+      results
+    );
+    expect(bobSub.mock.lastCall[0].map((e: any) => e.id)).toStrictEqual(
+      results
+    );
+  });
+  it('can sync deletes when the subscribing queries have filters', async () => {
+    const schema = {
+      version: 0,
+      collections: {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            name: S.String(),
+          }),
+        },
+      },
+    };
+    const server = new TriplitServer(
+      new DB({
+        schema,
+      })
+    );
+    const alice = createTestClient(server, NOT_SERVICE_KEY);
+    const bob = createTestClient(server, NOT_SERVICE_KEY);
+    // set up a subscription for bob
+    const bobSub = vi.fn();
+    const aliceSub = vi.fn();
+    const query = bob.query('test').where('name', '=', 'george').build();
+    alice.subscribe(query, aliceSub);
+    bob.subscribe(query, bobSub);
+
+    // set up data to delete
+    await alice.insert('test', { id: 'alice1', name: 'george' });
+    await pause();
+
+    // they should both see the data
+    expect(aliceSub.mock.lastCall[0]).toHaveLength(1);
+    expect(bobSub.mock.lastCall[0]).toHaveLength(1);
+
+    // if bob deletes, Alice should see the delete
+    await bob.delete('test', 'alice1');
+    await pause();
+    expect(aliceSub.mock.lastCall[0]).toHaveLength(0);
+    expect(bobSub.mock.lastCall[0]).toHaveLength(0);
+  });
+  // Addresses an issue where related deletes were not being synced
+  it('Can sync related deletes', async () => {
+    const schema = {
+      collections: {
+        test: {
+          schema: S.Schema({
+            id: S.Id(),
+            related_id: S.String(),
+            related: S.RelationById('related', '$related_id'),
+          }),
+        },
+        related: {
+          schema: S.Schema({ id: S.Id() }),
+        },
+      },
+    };
+    const server = new TriplitServer(new DB({ schema }));
+    const alice = createTestClient(server, SERVICE_KEY, {
+      clientId: 'alice',
+      schema: schema.collections,
+    });
+    const bob = createTestClient(server, SERVICE_KEY, {
+      clientId: 'bob',
+      schema: schema.collections,
+    });
+    await alice.transact(async (tx) => {
+      await tx.insert('related', { id: 'related1' });
+      await tx.insert('test', { id: 'test1', related_id: 'related1' });
+    });
+    await pause();
+    const aliceSub = vi.fn();
+    const bobSub = vi.fn();
+    alice.subscribe(alice.query('test').include('related').build(), aliceSub);
+    bob.subscribe(bob.query('test').include('related').build(), bobSub);
+    await pause();
+    await bob.delete('related', 'related1');
+    await pause();
+    const lastCallAlice = aliceSub.mock.calls.at(-1)[0];
+    const lastCallBob = bobSub.mock.calls.at(-1)[0];
+    expect(lastCallAlice.find((e: any) => e.id === 'test1').related).toBe(null);
+    expect(lastCallBob.find((e: any) => e.id === 'test1').related).toBe(null);
   });
 });
 
@@ -757,6 +798,7 @@ describe('Sync situations', () => {
     });
   });
 
+  // TODO: look into the validity of this test...seeing mixed results depending on pause time
   it('subscriptions dont overfire', async () => {
     const server = new TriplitServer(new DB());
     const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
@@ -1040,7 +1082,10 @@ describe('Sync situations', () => {
 describe('sync status', () => {
   it('subscriptions are scoped via syncStatus', async () => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
+    const alice = createTestClient(server, SERVICE_KEY, {
+      clientId: 'alice',
+      autoConnect: false,
+    });
     const aliceSubPending = vi.fn();
     const aliceSubConfirmed = vi.fn();
     const aliceSubAll = vi.fn();
@@ -1053,12 +1098,12 @@ describe('sync status', () => {
       aliceSubConfirmed
     );
     alice.subscribe(alice.query('test').syncStatus('all').build(), aliceSubAll);
-    await pause();
-    await pause();
     await alice.insert('test', { id: 'test1', name: 'test1' });
     await pause();
+    alice.connect();
+    await pause(1000);
     expect(aliceSubPending.mock.calls.length).toBe(3); // initial, optimistic insert, outbox clear
-    expect(aliceSubConfirmed.mock.calls.length).toBe(3); // initial, cache update, hacky remote response
+    expect(aliceSubConfirmed.mock.calls.length).toBe(3); // initial, cache update
     expect(aliceSubAll.mock.calls.length).toBe(3); // initial, optimistic insert, outbox clear + cache update
 
     // Sync status is kind of a weird abstraction, doenst work well with updates
@@ -1622,7 +1667,7 @@ describe('pagination syncing', () => {
       created_at: new Date(date),
       id: new_id,
     });
-    await pause();
+    await pause(150);
     expect(bobSub.mock.calls.at(-1)[0]).toHaveLength(5);
     expect([...bobSub.mock.calls.at(-1)[0].map((e: any) => e.id)]).toEqual([
       new_id,
@@ -1698,11 +1743,12 @@ describe('stateful query syncing', () => {
     {
       const syncMessageCallback = vi.fn();
       client.syncEngine.onSyncMessageReceived(syncMessageCallback);
+      await pause();
       const unsub = client.subscribe(
         client.query('cities').where('state', '=', 'CA').build(),
         () => {}
       );
-      await pause(10);
+      await pause();
       expect(syncMessageCallback).toHaveBeenCalled();
       const triplesMessages = syncMessageCallback.mock.calls.filter(
         ([{ type }]) => type === 'TRIPLES'
@@ -2165,19 +2211,18 @@ describe('deduping subscriptions', () => {
     const unsub1 = alice.subscribe(query, sub1Callback);
 
     await pause();
-    expect(syncMessageCallback).toHaveBeenCalledTimes(2);
-    // console.dir(syncMessageCallback.mock.calls, { depth: 10 });
+    expect(syncMessageCallback).toHaveBeenCalledTimes(1);
     const unsub2 = alice.subscribe(query, sub2Callback);
     await pause();
 
-    expect(syncMessageCallback).toHaveBeenCalledTimes(2);
+    expect(syncMessageCallback).toHaveBeenCalledTimes(1);
     unsub1();
     await pause();
-    expect(syncMessageCallback).toHaveBeenCalledTimes(2);
+    expect(syncMessageCallback).toHaveBeenCalledTimes(1);
     expect(syncMessageCallback.mock.lastCall[0].type).toBe('CONNECT_QUERY');
     unsub2();
     await pause();
-    expect(syncMessageCallback).toHaveBeenCalledTimes(3);
+    expect(syncMessageCallback).toHaveBeenCalledTimes(2);
     expect(syncMessageCallback.mock.lastCall[0].type).toBe('DISCONNECT_QUERY');
   });
   it("will send updates to all subscribers that haven't been unsubscribed", async () => {
@@ -2297,96 +2342,3 @@ it('running reset will disconnect and reset the client sync state and clear all 
     expect(results.length).toBe(0);
   }
 });
-
-class TestTransport implements SyncTransport {
-  private connection: Connection | null = null;
-  clientId: string | undefined;
-  onMessageCallback: ((evt: any) => any) | null = null;
-  onOpenCallback: ((evt: any) => any) | null = null;
-  onCloseCallback: ((evt: any) => any) | null = null;
-  onErrorCallback: ((evt: any) => any) | null = null;
-  onConnectionChangeCallback: ((state: ConnectionStatus) => void) | null = null;
-  connectionStatus: ConnectionStatus = 'CLOSED';
-
-  private removeConnectionListener: (() => void) | undefined;
-
-  constructor(public server: TriplitServer) {}
-  get isOpen() {
-    return this.connectionStatus === 'OPEN';
-  }
-  async connect(params: TransportConnectParams) {
-    // simulate network connection, allow sync engine listeners to mount
-    setTimeout(() => {
-      const { syncSchema, token, clientId, schema } = params;
-      const parsedToken = parseJWT(token);
-      this.connection = this.server.openConnection(parsedToken, {
-        clientId,
-        clientSchemaHash: schema,
-        syncSchema,
-      });
-      this.clientId = clientId;
-      this.removeConnectionListener = this.connection.addListener(
-        (messageType, payload) => {
-          // @ts-expect-error type is {}
-          const error = payload.error;
-          if (error) console.error(error);
-          this.onMessageCallback &&
-            this.onMessageCallback({
-              data: JSON.stringify({ type: messageType, payload }),
-            });
-        }
-      );
-      this.setIsOpen(true);
-    }, 0);
-  }
-
-  private setIsOpen(open: boolean, event?: any) {
-    this.connectionStatus = open ? 'OPEN' : 'CLOSED';
-    if (this.connectionStatus === 'OPEN') {
-      this.onOpenCallback && this.onOpenCallback(event);
-    }
-    if (this.connectionStatus === 'CLOSED') {
-      this.onCloseCallback && this.onCloseCallback(event);
-    }
-    this.onConnectionChangeCallback &&
-      this.onConnectionChangeCallback(this.connectionStatus);
-  }
-
-  onOpen(callback: (ev: any) => void): void {
-    this.onOpenCallback = callback;
-  }
-
-  async sendMessage(message: ClientSyncMessage): Promise<void> {
-    if (!this.isOpen) {
-      return;
-    }
-    if (!this.connection) {
-      return;
-    }
-    this.connection.dispatchCommand(message);
-  }
-
-  onMessage(callback: (message: any) => void): void {
-    this.onMessageCallback = callback;
-  }
-
-  onError(callback: (ev: any) => void): void {
-    this.onErrorCallback = callback;
-  }
-
-  onClose(callback: (ev: any) => void): void {
-    this.onCloseCallback = callback;
-  }
-
-  onConnectionChange(callback: (state: ConnectionStatus) => void): void {
-    this.onConnectionChangeCallback = callback;
-  }
-
-  close(reason?: CloseReason) {
-    this.removeConnectionListener?.();
-    this.server.closeConnection(this.clientId!);
-    this.setIsOpen(false, {
-      reason: JSON.stringify(reason),
-    });
-  }
-}

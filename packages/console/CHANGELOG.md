@@ -1,5 +1,35 @@
 # @triplit/console
 
+## 0.4.5
+
+### Patch Changes
+
+- Updated dependencies [c9fde067]
+- Updated dependencies [16687b5a]
+- Updated dependencies [c9fde067]
+  - @triplit/db@0.4.5
+  - @triplit/client@0.5.5
+  - @triplit/react@0.4.5
+
+## 0.4.4
+
+### Patch Changes
+
+- Updated dependencies [f7ab3c65]
+  - @triplit/db@0.4.4
+  - @triplit/client@0.5.4
+  - @triplit/react@0.4.4
+
+## 0.4.3
+
+### Patch Changes
+
+- 3e96117b: rm logs
+- Updated dependencies [80a1d44b]
+  - @triplit/db@0.4.3
+  - @triplit/client@0.5.3
+  - @triplit/react@0.4.3
+
 ## 0.4.2
 
 ### Patch Changes

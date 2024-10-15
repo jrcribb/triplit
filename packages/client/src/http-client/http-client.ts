@@ -11,7 +11,6 @@ import {
   EntityId,
   constructEntity,
   TripleRow,
-  timestampedObjectToPlainObject,
   appendCollectionToId,
   EntityNotFoundError,
   Unalias,
@@ -239,9 +238,10 @@ export class HttpClient<M extends ClientSchema = ClientSchema> {
       );
     const entity = constructEntity(
       triples,
-      appendCollectionToId(collectionName, entityId)
+      appendCollectionToId(collectionName, entityId),
+      schema
     );
-    const entityData = timestampedObjectToPlainObject(entity?.data as any);
+    const entityData = entity?.data ?? {};
     const changes = new ChangeTracker(entityData);
     const updateProxy: any = createUpdateProxy(
       changes,

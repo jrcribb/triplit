@@ -1,5 +1,25 @@
 # @triplit/db
 
+## 0.4.5
+
+### Patch Changes
+
+- c9fde067: refire subscriptions on global var changes, add tracking of active subscriptions
+
+## 0.4.4
+
+### Patch Changes
+
+- f7ab3c65: bug fix for cross-client deletes
+
+## 0.4.3
+
+### Patch Changes
+
+- 80a1d44b: fix lazyScan bug with multiple stores
+- Updated dependencies [3e96117b]
+  - @triplit/tuple-database@2.2.28
+
 ## 0.4.2
 
 ### Patch Changes
