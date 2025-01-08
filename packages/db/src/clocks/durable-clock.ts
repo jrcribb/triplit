@@ -10,10 +10,12 @@ export class DurableClock implements Clock {
   private scope?: string;
   private scopedStore?: TripleStore;
 
-  private clockReady: Promise<void>;
+  clockReady: Promise<void>;
   private readyCallbacks?: [() => void, (reason?: any) => void];
   private assigned?: boolean;
   private onClearUnsubscribe?: () => void;
+  private beforeCommitUnsubscribe?: () => void;
+  private afterCommitUnsubscribe?: () => void;
 
   // THIS IS ONLY USED FOR INITIALIZING THE CLOCK
   // MANUAL ASSIGNMENTS ONLY HAVE USE CASES IN TESTING
@@ -58,27 +60,48 @@ export class DurableClock implements Clock {
       return rej(e);
     }
 
-    // Listen on all storages for new timestamps
-    store.onInsert(async (inserts) => {
-      const allTriples = Object.values(inserts).flat();
-      const maxTimestamp = allTriples.reduce<Timestamp | undefined>(
-        (max, triple) =>
-          timestampCompare(triple.timestamp, max) > 0 ? triple.timestamp : max,
-        undefined
-      );
+    // Use beforeCommit hook to update clock tuples in same transaction and avoid async issue
+    this.beforeCommitUnsubscribe?.();
+    this.beforeCommitUnsubscribe = store.beforeCommit(async (storeTriples) => {
+      let maxTimestamp: Timestamp | undefined = undefined;
+      for (const triples of Object.values(storeTriples)) {
+        for (const triple of triples) {
+          if (timestampCompare(triple.timestamp, maxTimestamp) > 0) {
+            maxTimestamp = triple.timestamp;
+          }
+        }
+      }
       await this.clockReady;
       if (timestampCompare(maxTimestamp, this.clock) > 0) {
-        this.clock = [maxTimestamp![0], this.clock![1]];
-        this.scopedStore!.updateMetadataTuples([
-          ['clock', ['tick'], this.clock![0]],
+        await this.scopedStore!.updateMetadataTuples([
+          ['clock', ['tick'], maxTimestamp![0]],
           ['clock', ['clientId'], this.clock![1]],
         ]);
       }
     });
+    // Use after commit hook to update cached clock data
+    this.afterCommitUnsubscribe?.();
+    this.afterCommitUnsubscribe = store.afterCommit(async (storeTriples) => {
+      let maxTimestamp: Timestamp | undefined = undefined;
+      for (const triples of Object.values(storeTriples)) {
+        for (const triple of triples) {
+          if (timestampCompare(triple.timestamp, maxTimestamp) > 0) {
+            maxTimestamp = triple.timestamp;
+          }
+        }
+      }
+      await this.clockReady;
+      if (timestampCompare(maxTimestamp, this.clock) > 0) {
+        this.clock = [maxTimestamp![0], this.clock![1]];
+      }
+    });
+
     this.onClearUnsubscribe?.();
     this.onClearUnsubscribe = store.onClear(async () => {
       this.assigned = false;
       this.clientId = nanoid();
+      this.beforeCommitUnsubscribe?.();
+      this.afterCommitUnsubscribe?.();
       this.clockReady = new Promise(async (res, rej) => {
         // Await for clock.start to be called
         // This is admitedly a bit of an odd pattern

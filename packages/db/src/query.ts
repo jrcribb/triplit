@@ -20,7 +20,7 @@ import {
 
 export function isFilterStatement<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 >(filter: WhereFilter<M, CN>): filter is FilterStatement<M, CN> {
   return (
     filter instanceof Array &&
@@ -32,21 +32,21 @@ export function isFilterStatement<
 
 export function isFilterGroup<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 >(filter: WhereFilter<M, CN>): filter is FilterGroup<M, CN> {
   return filter instanceof Object && 'mod' in filter;
 }
 
 export function isSubQueryFilter<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 >(filter: WhereFilter<M, CN>): filter is SubQueryFilter<M> {
   return filter instanceof Object && 'exists' in filter;
 }
 
 export function isExistsFilter<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 >(filter: WhereFilter<M, CN>): filter is RelationshipExistsFilter<M, CN> {
   return (
     filter instanceof Object &&
@@ -57,9 +57,22 @@ export function isExistsFilter<
 
 export function isBooleanFilter<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 >(filter: WhereFilter<M, CN>): filter is boolean {
   return typeof filter === 'boolean';
+}
+
+export function isWhereFilter<
+  M extends Models,
+  CN extends CollectionNameFromModels<M>,
+>(filter: any): filter is WhereFilter<M, CN> {
+  return (
+    isFilterStatement(filter) ||
+    isFilterGroup(filter) ||
+    isSubQueryFilter(filter) ||
+    isExistsFilter(filter) ||
+    isBooleanFilter(filter)
+  );
 }
 
 export function or<M extends Models, CN extends CollectionNameFromModels<M>>(
@@ -80,7 +93,7 @@ export function exists<
   P extends RelationPaths<ModelFromModels<M, CN>, M> = RelationPaths<
     ModelFromModels<M, CN>,
     M
-  >
+  >,
 >(
   relationship: P,
   query?: Pick<

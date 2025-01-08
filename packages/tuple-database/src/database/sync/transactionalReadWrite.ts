@@ -32,9 +32,15 @@ export function transactionalReadWrite<S extends KeyValuePair = KeyValuePair>(
 				retries,
 				() => {
 					const tx = dbOrTx.transact()
-					const result = fn(tx, ...args)
-					tx.commit()
-					return result
+					try {
+						const result = fn(tx, ...args)
+						tx.commit()
+						return result
+					} catch (e) {
+						// If the transaction is already committed, we don't need to cancel it.
+						if (!tx.committed && !tx.canceled) tx.cancel()
+						throw e
+					}
 				},
 				options
 			)

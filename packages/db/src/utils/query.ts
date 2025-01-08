@@ -1,5 +1,5 @@
 import { Value } from '@sinclair/typebox/value';
-import { CollectionQuery } from '@triplit/db';
+import { type CollectionQuery } from '../query/types/index.js';
 
 // Should update this as we add more query properties
 const COLLECTION_QUERY_PROPS: (keyof CollectionQuery)[] = [
@@ -24,4 +24,8 @@ export function hashQuery<Q extends CollectionQuery>(params: Q) {
   );
   const hash = Value.Hash(queryParams).toString();
   return hash;
+}
+
+export function hash(value: unknown): string {
+  return Value.Hash(value).toString();
 }

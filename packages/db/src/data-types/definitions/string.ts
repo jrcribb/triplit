@@ -33,12 +33,12 @@ export type StringType<TypeOptions extends StringTypeOptions<any> = {}> =
       >
     : never;
 
-type StringTypeOptions<E extends string> = UserTypeOptions & {
+export type StringTypeOptions<E extends string> = UserTypeOptions & {
   enum?: ReadonlyArray<E>;
 };
 
 export function StringType<
-  TypeOptions extends StringTypeOptions<any> = UserTypeOptions
+  TypeOptions extends StringTypeOptions<any> = UserTypeOptions,
 >(options: TypeOptions = {} as TypeOptions): StringType<TypeOptions> {
   if (options && !userTypeOptionsAreValid(options)) {
     throw new InvalidTypeOptionsError(options);

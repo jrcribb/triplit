@@ -101,7 +101,7 @@ export interface TripleStoreApi {
     [attribute, value, entityId]: [
       attribute?: Attribute,
       value?: TupleValue,
-      entityId?: EntityId
+      entityId?: EntityId,
     ],
     direction?: 'ASC' | 'DESC'
   ): AsyncGenerator<TripleRow>;
@@ -131,8 +131,8 @@ export interface TripleStoreApi {
 type RemoveFirstFromTuple<T extends any[]> = T['length'] extends 0
   ? never
   : ((...b: T) => void) extends (a: any, ...b: infer I) => void
-  ? I
-  : [];
+    ? I
+    : [];
 
 async function addIndexesToTransaction(
   tupleTx: MultiTupleTransaction<TupleIndex>
@@ -307,14 +307,29 @@ export class TripleStore<StoreKeys extends string = any>
 
   beforeInsert(callback: TripleStoreBeforeInsertHook) {
     this.hooks.beforeInsert.push(callback);
+    return () => {
+      this.hooks.beforeInsert = this.hooks.beforeInsert.filter(
+        (cb) => cb !== callback
+      );
+    };
   }
 
   beforeCommit(callback: TripleStoreBeforeCommitHook) {
     this.hooks.beforeCommit.push(callback);
+    return () => {
+      this.hooks.beforeCommit = this.hooks.beforeCommit.filter(
+        (cb) => cb !== callback
+      );
+    };
   }
 
   afterCommit(callback: TripleStoreAfterCommitHook) {
     this.hooks.afterCommit.push(callback);
+    return () => {
+      this.hooks.afterCommit = this.hooks.afterCommit.filter(
+        (cb) => cb !== callback
+      );
+    };
   }
 
   async *findByCollection(
@@ -327,7 +342,7 @@ export class TripleStore<StoreKeys extends string = any>
   async *findByEAT(
     [entityId, attribute]: [
       entityId?: string | undefined,
-      attribute?: Attribute | undefined
+      attribute?: Attribute | undefined,
     ],
     direction?: 'ASC' | 'DESC' | undefined
   ) {
@@ -337,7 +352,7 @@ export class TripleStore<StoreKeys extends string = any>
     [attribute, value, entityId]: [
       attribute?: Attribute | undefined,
       value?: TupleValue | undefined,
-      entityId?: string | undefined
+      entityId?: string | undefined,
     ],
     direction?: 'ASC' | 'DESC' | undefined
   ) {
@@ -639,6 +654,10 @@ export class TripleStore<StoreKeys extends string = any>
             await scopedTx.insertTriple(triple);
           }
           for (const kv of localMetadataScan) {
+            // excluding clock metadata
+            if (kv.key[0] === 'metadata' && kv.key[1] === 'clock') {
+              continue;
+            }
             await scopedTx.tupleTx.set(kv.key, kv.value);
           }
         }

@@ -3,7 +3,10 @@ import DB from '../../src/db.ts';
 import { Schema as S } from '../../src/schema/builder.ts';
 import { Models, StoreSchema } from '../../src/schema/types';
 import { and, exists, or } from '../../src/query.ts';
-import { WritePermissionError } from '../../src/errors.ts';
+import {
+  SessionVariableNotFoundError,
+  WritePermissionError,
+} from '../../src/errors.ts';
 import { InMemoryTupleStorage } from '@triplit/tuple-database';
 
 const messagingSchema = {
@@ -390,6 +393,169 @@ describe('Read', () => {
       expect(results.length).toEqual(1);
     }
   });
+
+  it('can handle union of two roles', async () => {
+    const schema = {
+      roles: {
+        authenticated: {
+          match: {
+            user_id: '$user_id',
+          },
+        },
+        admin: {
+          match: {
+            role: 'admin',
+            user_id: '$user_id',
+          },
+        },
+      },
+      collections: {
+        messages: {
+          schema: S.Schema({
+            id: S.Id(),
+            text: S.String(),
+            author_id: S.String(),
+            recipient_id: S.String(),
+          }),
+          permissions: {
+            authenticated: {
+              read: {
+                filter: [
+                  or([
+                    ['author_id', '=', '$role.user_id'],
+                    ['recipient_id', '=', '$role.user_id'],
+                  ]),
+                ],
+              },
+            },
+            admin: {
+              read: {
+                filter: [true],
+              },
+            },
+          },
+        },
+      },
+      version: 0,
+    } satisfies StoreSchema<Models>;
+
+    const db = new DB({ schema });
+
+    // insert messages
+    await db.transact(
+      async (tx) => {
+        await tx.insert('messages', {
+          id: 'message-1',
+          text: 'Hello, world!',
+          author_id: 'user-1',
+          recipient_id: 'user-2',
+        });
+        await tx.insert('messages', {
+          id: 'message-2',
+          text: 'Hello, world!',
+          author_id: 'user-2',
+          recipient_id: 'user-1',
+        });
+        await tx.insert('messages', {
+          id: 'message-3',
+          text: 'Hello, world!',
+          author_id: 'user-2',
+          recipient_id: 'user-3',
+        });
+      },
+      { skipRules: true }
+    );
+
+    const user1Token = {
+      user_id: 'user-1',
+    };
+    const adminToken = {
+      role: 'admin',
+      user_id: 'user-1',
+    };
+
+    const user1DB = db.withSessionVars(user1Token);
+    const adminDB = db.withSessionVars(adminToken);
+
+    expect(adminDB.sessionRoles).toEqual(
+      expect.arrayContaining([
+        { key: 'authenticated', roleVars: { user_id: 'user-1' } },
+        { key: 'admin', roleVars: { user_id: 'user-1' } },
+      ])
+    );
+
+    // User 1
+    {
+      const messages = await user1DB.fetch(user1DB.query('messages').build());
+      expect(messages.length).toEqual(2);
+      expect(messages.map((m) => m.id).sort()).toEqual([
+        'message-1',
+        'message-2',
+      ]);
+    }
+
+    // Admin
+    {
+      const messages = await adminDB.fetch(adminDB.query('messages').build());
+      expect(messages.length).toEqual(3);
+      expect(messages.map((m) => m.id).sort()).toEqual([
+        'message-1',
+        'message-2',
+        'message-3',
+      ]);
+    }
+  });
+
+  it("will throw an error if you add a permissions with a role variable that doesn't exist", async () => {
+    const schema = {
+      roles: {
+        authenticated: {
+          match: {
+            user_id: '$user_id',
+          },
+        },
+      },
+      collections: {
+        messages: {
+          schema: S.Schema({
+            id: S.Id(),
+            text: S.String(),
+            author_id: S.String(),
+            recipient_id: S.String(),
+          }),
+          permissions: {
+            authenticated: {
+              read: {
+                filter: [
+                  or([
+                    ['author_id', '=', '$role.$user_id'],
+                    ['recipient_id', '=', '$role.$user_id'],
+                  ]),
+                ],
+              },
+            },
+            admin: {
+              read: {
+                filter: [true],
+              },
+            },
+          },
+        },
+      },
+      version: 0,
+    } satisfies StoreSchema<Models>;
+    const db = new DB({ schema });
+
+    const user1Token = {
+      user_id: 'user-1',
+    };
+
+    const user1DB = db.withSessionVars(user1Token);
+
+    await expect(
+      user1DB.fetch(user1DB.query('messages').build())
+    ).rejects.toThrow(SessionVariableNotFoundError);
+  });
 });
 
 describe('Insert', () => {
@@ -504,6 +670,215 @@ describe('Insert', () => {
     );
     await expect(
       db.insert('permissionless', { id: '1' })
+    ).resolves.not.toThrow();
+  });
+
+  it('can handle union of two roles', async () => {
+    const schema = {
+      roles: {
+        authenticated: {
+          match: {
+            user_id: '$user_id',
+          },
+        },
+        admin: {
+          match: {
+            role: 'admin',
+            user_id: '$user_id',
+          },
+        },
+      },
+      collections: {
+        messages: {
+          schema: S.Schema({
+            id: S.Id(),
+            text: S.String(),
+            author_id: S.String(),
+          }),
+          permissions: {
+            authenticated: {
+              insert: {
+                filter: [['author_id', '=', '$role.user_id']],
+              },
+            },
+            admin: {
+              insert: {
+                filter: [true],
+              },
+            },
+          },
+        },
+      },
+      version: 0,
+    } satisfies StoreSchema<Models>;
+
+    const db = new DB({ schema });
+
+    const user1Token = {
+      user_id: 'user-1',
+    };
+    const adminToken = {
+      role: 'admin',
+      user_id: 'user-1',
+    };
+
+    const user1DB = db.withSessionVars(user1Token);
+    const adminDB = db.withSessionVars(adminToken);
+
+    await adminDB.ready;
+
+    expect(adminDB.sessionRoles).toEqual(
+      expect.arrayContaining([
+        { key: 'authenticated', roleVars: { user_id: 'user-1' } },
+        { key: 'admin', roleVars: { user_id: 'user-1' } },
+      ])
+    );
+
+    // User 1
+    await expect(
+      user1DB.insert('messages', {
+        id: 'message-1',
+        text: 'Hello, world!',
+        author_id: 'user-1',
+      })
+    ).resolves.not.toThrow();
+
+    await expect(
+      user1DB.insert('messages', {
+        id: 'message-2',
+        text: 'Hello, world!',
+        author_id: 'user-2',
+      })
+    ).rejects.toThrow();
+
+    // Admin
+    await expect(
+      adminDB.insert('messages', {
+        id: 'message-3',
+        text: 'Hello, world!',
+        author_id: 'user-2',
+      })
+    ).resolves.not.toThrow();
+  });
+  it('can handle collections where attributes named in the role are undefined/Optional', async () => {
+    const schema = {
+      roles: {
+        authenticated: {
+          match: {
+            user_id: '$user_id',
+          },
+        },
+      },
+      collections: {
+        messages: {
+          schema: S.Schema({
+            id: S.Id(),
+            text: S.String(),
+            author_id: S.Optional(S.String()),
+            recipient_id: S.String(),
+          }),
+          permissions: {
+            authenticated: {
+              read: {
+                filter: [['author_id', '=', '$role.user_id']],
+              },
+              insert: {
+                filter: [true],
+              },
+            },
+          },
+        },
+      },
+      version: 0,
+    } satisfies StoreSchema<Models>;
+
+    const db = new DB({ schema });
+
+    const user1Token = {
+      user_id: 'user-1',
+    };
+
+    const user1DB = db.withSessionVars(user1Token);
+
+    await expect(
+      user1DB.insert('messages', {
+        id: 'message-1',
+        text: 'Hello, world!',
+        recipient_id: 'user-1',
+      })
+    ).resolves.not.toThrow();
+
+    await expect(
+      user1DB.fetchById('messages', 'message-1')
+    ).resolves.toStrictEqual(null);
+  });
+  it('can handle an insertions in a transaction where the first entity is related to the second by a relational permission', async () => {
+    const schema = {
+      roles: {
+        authenticated: {
+          match: {
+            user_id: '$user_id',
+          },
+        },
+      },
+      collections: {
+        profile: {
+          schema: S.Schema({
+            id: S.Id(),
+            userId: S.String(),
+          }),
+          permissions: {
+            authenticated: {
+              read: {
+                filter: [['userId', '=', '$role.user_id']],
+              },
+              insert: {
+                filter: [['userId', '=', '$role.user_id']],
+              },
+            },
+          },
+        },
+        messages: {
+          schema: S.Schema({
+            id: S.Id(),
+            text: S.String(),
+            profile_id: S.String(),
+            sender: S.RelationById('profile', '$profile_id'),
+          }),
+          permissions: {
+            authenticated: {
+              read: {
+                filter: [['sender.userId', '=', '$role.user_id']],
+              },
+              insert: {
+                filter: [['sender.userId', '=', '$role.user_id']],
+              },
+            },
+          },
+        },
+      },
+      version: 0,
+    } satisfies StoreSchema<Models>;
+
+    const db = new DB({ schema });
+
+    const user1Token = {
+      user_id: 'user-1',
+    };
+
+    const user1DB = db.withSessionVars(user1Token);
+
+    await expect(
+      user1DB.transact(async (tx) => {
+        const { id: profile_id } = await tx.insert('profile', {
+          userId: 'user-1',
+        });
+        await tx.insert('messages', {
+          id: 'message-1',
+          text: 'Hello, world!',
+          profile_id,
+        });
+      })
     ).resolves.not.toThrow();
   });
 });
@@ -713,6 +1088,108 @@ describe('Update', () => {
       })
     ).rejects.toThrow(WritePermissionError);
   });
+
+  it('can handle union of two roles', async () => {
+    const schema = {
+      roles: {
+        authenticated: {
+          match: {
+            user_id: '$user_id',
+          },
+        },
+        admin: {
+          match: {
+            role: 'admin',
+            user_id: '$user_id',
+          },
+        },
+      },
+      collections: {
+        messages: {
+          schema: S.Schema({
+            id: S.Id(),
+            text: S.String(),
+            author_id: S.String(),
+          }),
+          permissions: {
+            authenticated: {
+              update: {
+                filter: [['author_id', '=', '$role.user_id']],
+              },
+            },
+            admin: {
+              update: {
+                filter: [true],
+              },
+            },
+          },
+        },
+      },
+      version: 0,
+    } satisfies StoreSchema<Models>;
+
+    const db = new DB({ schema });
+
+    // insert messages
+    await db.transact(
+      async (tx) => {
+        await tx.insert('messages', {
+          id: 'message-1',
+          text: 'Hello, world!',
+          author_id: 'user-1',
+        });
+        await tx.insert('messages', {
+          id: 'message-2',
+          text: 'Hello, world!',
+          author_id: 'user-2',
+        });
+        await tx.insert('messages', {
+          id: 'message-3',
+          text: 'Hello, world!',
+          author_id: 'user-2',
+        });
+      },
+      { skipRules: true }
+    );
+
+    const user1Token = {
+      user_id: 'user-1',
+    };
+    const adminToken = {
+      role: 'admin',
+      user_id: 'user-1',
+    };
+
+    const user1DB = db.withSessionVars(user1Token);
+    const adminDB = db.withSessionVars(adminToken);
+
+    expect(adminDB.sessionRoles).toEqual(
+      expect.arrayContaining([
+        { key: 'authenticated', roleVars: { user_id: 'user-1' } },
+        { key: 'admin', roleVars: { user_id: 'user-1' } },
+      ])
+    );
+
+    // User 1
+    await expect(
+      user1DB.update('messages', 'message-1', (entity) => {
+        entity.text = 'Hello, world!';
+      })
+    ).resolves.not.toThrow();
+
+    await expect(
+      user1DB.update('messages', 'message-2', (entity) => {
+        entity.text = 'Hello, world!';
+      })
+    ).rejects.toThrow();
+
+    // Admin
+    await expect(
+      adminDB.update('messages', 'message-2', (entity) => {
+        entity.text = 'Hello, world!';
+      })
+    ).resolves.not.toThrow();
+  });
 });
 
 describe('Delete', () => {
@@ -803,6 +1280,100 @@ describe('Delete', () => {
       WritePermissionError
     );
     await expect(db.delete('permissionless', '1')).resolves.not.toThrow();
+  });
+
+  it('can handle union of two roles', async () => {
+    const schema = {
+      roles: {
+        authenticated: {
+          match: {
+            user_id: '$user_id',
+          },
+        },
+        admin: {
+          match: {
+            role: 'admin',
+            user_id: '$user_id',
+          },
+        },
+      },
+      collections: {
+        messages: {
+          schema: S.Schema({
+            id: S.Id(),
+            text: S.String(),
+            author_id: S.String(),
+          }),
+          permissions: {
+            authenticated: {
+              delete: {
+                filter: [['author_id', '=', '$role.user_id']],
+              },
+            },
+            admin: {
+              delete: {
+                filter: [true],
+              },
+            },
+          },
+        },
+      },
+      version: 0,
+    } satisfies StoreSchema<Models>;
+
+    const db = new DB({ schema });
+
+    // insert messages
+    await db.transact(
+      async (tx) => {
+        await tx.insert('messages', {
+          id: 'message-1',
+          text: 'Hello, world!',
+          author_id: 'user-1',
+        });
+        await tx.insert('messages', {
+          id: 'message-2',
+          text: 'Hello, world!',
+          author_id: 'user-2',
+        });
+        await tx.insert('messages', {
+          id: 'message-3',
+          text: 'Hello, world!',
+          author_id: 'user-2',
+        });
+      },
+      { skipRules: true }
+    );
+
+    const user1Token = {
+      user_id: 'user-1',
+    };
+    const adminToken = {
+      role: 'admin',
+      user_id: 'user-1',
+    };
+
+    const user1DB = db.withSessionVars(user1Token);
+    const adminDB = db.withSessionVars(adminToken);
+
+    expect(adminDB.sessionRoles).toEqual(
+      expect.arrayContaining([
+        { key: 'authenticated', roleVars: { user_id: 'user-1' } },
+        { key: 'admin', roleVars: { user_id: 'user-1' } },
+      ])
+    );
+
+    // User 1
+    await expect(
+      user1DB.delete('messages', 'message-1')
+    ).resolves.not.toThrow();
+
+    await expect(user1DB.delete('messages', 'message-2')).rejects.toThrow();
+
+    // Admin
+    await expect(
+      adminDB.delete('messages', 'message-2')
+    ).resolves.not.toThrow();
   });
 });
 

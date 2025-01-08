@@ -1,4 +1,5 @@
 import { KeyValuePair } from "../../main.js"
+import { ReadWriteConflictError } from "../ConcurrencyLog.js"
 import {
 	AsyncTupleDatabaseClientApi,
 	AsyncTupleTransactionApi,
@@ -26,9 +27,15 @@ export function transactionalReadWriteAsync<
 				retries,
 				async () => {
 					const tx = dbOrTx.transact()
-					const result = await fn(tx, ...args)
-					await tx.commit()
-					return result
+					try {
+						const result = await fn(tx, ...args)
+						await tx.commit()
+						return result
+					} catch (e) {
+						// If the transaction is already committed, we don't need to cancel it.
+						if (!tx.committed && !tx.canceled) await tx.cancel()
+						throw e
+					}
 				},
 				options
 			)

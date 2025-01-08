@@ -1,5 +1,201 @@
 # @triplit/tanstack
 
+## 2.0.13
+
+### Patch Changes
+
+- @triplit/client@0.6.13
+- @triplit/react@0.4.31
+
+## 2.0.12
+
+### Patch Changes
+
+- @triplit/client@0.6.12
+- @triplit/react@0.4.30
+
+## 2.0.11
+
+### Patch Changes
+
+- @triplit/client@0.6.11
+- @triplit/react@0.4.29
+
+## 2.0.10
+
+### Patch Changes
+
+- @triplit/client@0.6.10
+- @triplit/react@0.4.28
+
+## 2.0.9
+
+### Patch Changes
+
+- Updated dependencies [4ccc6422]
+  - @triplit/client@0.6.9
+  - @triplit/react@0.4.27
+
+## 2.0.8
+
+### Patch Changes
+
+- @triplit/client@0.6.8
+- @triplit/react@0.4.26
+
+## 2.0.7
+
+### Patch Changes
+
+- @triplit/client@0.6.7
+- @triplit/react@0.4.25
+
+## 2.0.6
+
+### Patch Changes
+
+- @triplit/client@0.6.6
+- @triplit/react@0.4.24
+
+## 2.0.5
+
+### Patch Changes
+
+- @triplit/client@0.6.5
+- @triplit/react@0.4.23
+
+## 2.0.4
+
+### Patch Changes
+
+- Updated dependencies [6de9aaf4]
+  - @triplit/client@0.6.4
+  - @triplit/react@0.4.22
+
+## 2.0.3
+
+### Patch Changes
+
+- Updated dependencies [483c84b6]
+  - @triplit/client@0.6.3
+  - @triplit/react@0.4.21
+
+## 2.0.2
+
+### Patch Changes
+
+- Updated dependencies [2541c6e2]
+  - @triplit/client@0.6.2
+  - @triplit/react@0.4.20
+
+## 2.0.1
+
+### Patch Changes
+
+- @triplit/client@0.6.1
+- @triplit/react@0.4.19
+
+## 2.0.0
+
+### Patch Changes
+
+- Updated dependencies [2713ca43]
+  - @triplit/client@0.6.0
+  - @triplit/react@0.4.18
+
+## 1.0.17
+
+### Patch Changes
+
+- Updated dependencies [f1ce9675]
+- Updated dependencies [74854d68]
+  - @triplit/client@0.5.17
+  - @triplit/react@0.4.17
+
+## 1.0.16
+
+### Patch Changes
+
+- @triplit/client@0.5.16
+- @triplit/react@0.4.16
+
+## 1.0.15
+
+### Patch Changes
+
+- @triplit/client@0.5.15
+- @triplit/react@0.4.15
+
+## 1.0.14
+
+### Patch Changes
+
+- @triplit/client@0.5.14
+- @triplit/react@0.4.14
+
+## 1.0.13
+
+### Patch Changes
+
+- Updated dependencies [bdd50e7f]
+  - @triplit/client@0.5.13
+  - @triplit/react@0.4.13
+
+## 1.0.12
+
+### Patch Changes
+
+- @triplit/client@0.5.12
+- @triplit/react@0.4.12
+
+## 1.0.11
+
+### Patch Changes
+
+- Updated dependencies [8c97bfdb]
+- Updated dependencies [57d1e24b]
+  - @triplit/client@0.5.11
+  - @triplit/react@0.4.11
+
+## 1.0.10
+
+### Patch Changes
+
+- Updated dependencies [3d5e879d]
+  - @triplit/client@0.5.10
+  - @triplit/react@0.4.10
+
+## 1.0.9
+
+### Patch Changes
+
+- @triplit/client@0.5.9
+- @triplit/react@0.4.9
+
+## 1.0.8
+
+### Patch Changes
+
+- Updated dependencies [d1ceedcb]
+- Updated dependencies [ccfa038c]
+  - @triplit/react@0.4.8
+  - @triplit/client@0.5.8
+
+## 1.0.7
+
+### Patch Changes
+
+- @triplit/client@0.5.7
+- @triplit/react@0.4.7
+
+## 1.0.6
+
+### Patch Changes
+
+- Updated dependencies [3ca5265f]
+  - @triplit/client@0.5.6
+  - @triplit/react@0.4.6
+
 ## 1.0.5
 
 ### Patch Changes

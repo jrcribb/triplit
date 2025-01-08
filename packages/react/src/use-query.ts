@@ -38,7 +38,7 @@ type useInfiniteQueryPayload<M extends Models, Q extends ClientQuery<M>> = {
   fetchingMore: boolean;
   error: any;
   hasMore: boolean;
-  loadMore: () => void;
+  loadMore: (pageSize?: number) => void;
   disconnect: () => void;
 };
 /**
@@ -54,7 +54,7 @@ type useInfiniteQueryPayload<M extends Models, Q extends ClientQuery<M>> = {
 export function useQuery<
   M extends Models,
   CN extends CollectionNameFromModels<M>,
-  Q extends ClientQuery<M, CN>
+  Q extends ClientQuery<M, CN>,
 >(
   client: TriplitClient<M> | WorkerClient<M>,
   query: ClientQueryBuilder<M, CN, Q> | Q,
@@ -145,13 +145,16 @@ export function useQuery<
 export function usePaginatedQuery<
   M extends Models,
   CN extends CollectionNameFromModels<M>,
-  Q extends ClientQuery<M, CN>
+  Q extends ClientQuery<M, CN>,
 >(
   client: TriplitClient<M> | WorkerClient<M>,
-  query: ClientQueryBuilder<M, CN, Q>,
+  query: ClientQueryBuilder<M, CN, Q> | Q,
   options?: Partial<SubscriptionOptions>
 ): usePaginatedQueryPayload<M, Q> {
-  const builtQuery = useMemo(() => query.build(), [query]);
+  const builtQuery = useMemo(
+    () => query && ('build' in query ? query.build() : query),
+    [query]
+  );
   const [hasNextPage, setHasNextPage] = useState(false);
   const [hasPreviousPage, setHasPreviousPage] = useState(false);
   const [results, setResults] = useState<
@@ -233,13 +236,16 @@ export function usePaginatedQuery<
 export function useInfiniteQuery<
   M extends Models,
   CN extends CollectionNameFromModels<M>,
-  Q extends ClientQuery<M>
+  Q extends ClientQuery<M, CN>,
 >(
   client: TriplitClient<M> | WorkerClient<M>,
-  query: ClientQueryBuilder<M, CN, Q>,
+  query: ClientQueryBuilder<M, CN, Q> | Q,
   options?: Partial<SubscriptionOptions>
 ): useInfiniteQueryPayload<M, Q> {
-  const builtQuery = useMemo(() => query.build(), [query]);
+  const builtQuery = useMemo(
+    () => query && ('build' in query ? query.build() : query),
+    [query]
+  );
   const stringifiedQuery = builtQuery && JSON.stringify(builtQuery);
   const [hasMore, setHasMore] = useState(false);
   const [results, setResults] = useState<
@@ -252,7 +258,7 @@ export function useInfiniteQuery<
   );
   const [fetchingMore, setFetchingMore] = useState(false);
 
-  const loadMoreRef = useRef<() => void>();
+  const loadMoreRef = useRef<(pageSize?: number) => void>();
   const disconnectRef = useRef<() => void>();
   const hasResponseFromServer = useRef(false);
 
@@ -282,7 +288,7 @@ export function useInfiniteQuery<
         setHasMore(info.hasMore);
         setResults(
           // TODO: fix types to match
-          results
+          results as any
         );
       },
       (error) => {
@@ -306,9 +312,9 @@ export function useInfiniteQuery<
     };
   }, [stringifiedQuery, client]);
 
-  const loadMore = useCallback(() => {
+  const loadMore = useCallback((pageSize?: number) => {
     setFetchingMore(true);
-    loadMoreRef.current?.();
+    loadMoreRef.current?.(pageSize);
   }, []);
 
   const disconnect = useCallback(() => {

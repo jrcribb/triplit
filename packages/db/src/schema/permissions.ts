@@ -1,5 +1,6 @@
 import { CollectionNameFromModels } from '../db.js';
 import { matchPattern } from '../utils/pattern-matcher.js';
+import { hash } from '../utils/query.js';
 import { Models, StoreSchema } from './types/index.js';
 
 export type SessionRole = {
@@ -30,9 +31,42 @@ export function getRolesFromSession<M extends Models, S extends StoreSchema<M>>(
   return sessionRoles;
 }
 
+export function sessionRolesAreEquivalent(
+  a: SessionRole[] | undefined,
+  b: SessionRole[] | undefined
+): boolean {
+  if (a === undefined && b === undefined) {
+    return true;
+  }
+
+  if (a?.length !== b?.length) {
+    return false;
+  }
+
+  const aKeys = a?.map(({ key }) => key);
+  const bKeys = b?.map(({ key }) => key);
+  if (aKeys?.some((roleKey) => !bKeys?.includes(roleKey))) {
+    return false;
+  }
+
+  const aVarsHashed = hashRoleVars(a!);
+  const bVarsHashed = hashRoleVars(b!);
+  return aKeys?.every((key) => aVarsHashed[key] === bVarsHashed[key])!;
+}
+
+function hashRoleVars(roles: SessionRole[]) {
+  return roles.reduce(
+    (prev, { key, roleVars }) => {
+      prev[key] = hash(roleVars);
+      return prev;
+    },
+    {} as Record<string, string>
+  );
+}
+
 export function getCollectionPermissions<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 >(schema: M, collectionName: CN) {
   if (!schema) return undefined;
   const collection = schema[collectionName];

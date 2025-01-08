@@ -1,5 +1,158 @@
 # @triplit/db
 
+## 0.5.20
+
+### Patch Changes
+
+- 4ef05ec3: fixup typebox
+
+## 0.5.19
+
+### Patch Changes
+
+- 6d348d3d: Add `--failOnBackwardsIncompatibleChange` to @triplit/CLI `schema push` command
+
+## 0.5.18
+
+### Patch Changes
+
+- 398da292: adjust schema diffing for relations and speed up data validation
+
+## 0.5.17
+
+### Patch Changes
+
+- a80dbe04: add additional checks to schema diffs
+
+## 0.5.16
+
+### Patch Changes
+
+- 4ccc6422: upgrade @sinclair/typebox
+
+## 0.5.15
+
+### Patch Changes
+
+- f3186500: reset clock on any db reset
+- e5ff046f: export StringTypeOptions
+
+## 0.5.14
+
+### Patch Changes
+
+- b2b3eae5: use requery strategy for all triple subscription fetches
+
+## 0.5.13
+
+### Patch Changes
+
+- 7bbc8e53: ignore entity cache when state vector is present
+
+## 0.5.12
+
+### Patch Changes
+
+- bb973df7: Use new, efficient refetching strategy for queries that reconnect with existing caches
+
+## 0.5.11
+
+### Patch Changes
+
+- 8e9511dc: fixup types and add tests for query builder order
+- a2532548: Fixup and test additional where() query builder cases
+
+## 0.5.10
+
+### Patch Changes
+
+- a0932216: bug fix for experimental entity cache
+- Updated dependencies [1bcf734d]
+  - @triplit/tuple-database@2.2.33
+
+## 0.5.9
+
+### Patch Changes
+
+- 2713ca43: export additional methods
+
+## 0.5.8
+
+### Patch Changes
+
+- bdebed22: Fix issue where $session scoped variables weren't working in sync queries
+- 7b1839b6: Apply filter groupings in delta triples calculations
+
+## 0.5.7
+
+### Patch Changes
+
+- 9107e262: Unify underlying storage subscription handlers for query subscriptions
+- 0cc53c85: export getDefaultValuesForCollection helper function
+- cb785390: fixup prepareQuery editing inmemory schema
+
+## 0.5.6
+
+### Patch Changes
+
+- dd8278d1: Fixup select: ['id'] query results
+
+## 0.5.5
+
+### Patch Changes
+
+- 8f004df6: add bun server support
+- Updated dependencies [8f004df6]
+  - @triplit/tuple-database@2.2.32
+
+## 0.5.4
+
+### Patch Changes
+
+- e9eb5c26: actually ensure clock listeners on store unsubscribe on db clear
+
+## 0.5.3
+
+### Patch Changes
+
+- f201dd5a: Move clock update into updating transaction
+- 8c97bfdb: Add experimental entity cache
+
+## 0.5.2
+
+### Patch Changes
+
+- aca9cf75: fixup bug with multi store reactivity payloads
+- 3d5e879d: Add typing to TriplitError.toJSON()
+
+## 0.5.1
+
+### Patch Changes
+
+- Updated dependencies [9ef4f9a3]
+  - @triplit/tuple-database@2.2.31
+
+## 0.5.0
+
+### Minor Changes
+
+- 94417d39: Treat multiple matching roles as a union of permission filters rather than an intersection
+
+### Patch Changes
+
+- 3984bc94: Fix bug where results are not properly backfilled when syncing for queries with limits
+- Updated dependencies [9197cc72]
+  - @triplit/tuple-database@2.2.30
+
+## 0.4.6
+
+### Patch Changes
+
+- 15815dc2: fixup reactivity memory leak
+- 23b6171d: add support for webhooks
+- Updated dependencies [15815dc2]
+  - @triplit/tuple-database@2.2.29
+
 ## 0.4.5
 
 ### Patch Changes

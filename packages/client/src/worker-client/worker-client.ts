@@ -2,17 +2,13 @@ import * as ComLink from 'comlink';
 import type {
   TriplitClient as Client,
   ClientOptions,
-  FetchOptions,
-  InfiniteSubscription,
-  PaginatedSubscription,
-  SubscriptionOptions,
+  SimpleClientStorageOptions,
 } from '../client/triplit-client.js';
 import {
   ChangeTracker,
   ClearOptions,
   CollectionNameFromModels,
   CollectionQuery,
-  CollectionQueryDefault,
   DBTransaction,
   FetchResult,
   FetchResultEntity,
@@ -20,7 +16,6 @@ import {
   InsertTypeFromModel,
   JSONToSchema,
   ModelFromModels,
-  SchemaQueries,
   ToQuery,
   TransactionResult,
   Unalias,
@@ -33,6 +28,11 @@ import {
   ClientQueryDefault,
   ClientSchema,
   SchemaClientQueries,
+  SubscribeBackgroundOptions,
+  FetchOptions,
+  InfiniteSubscription,
+  PaginatedSubscription,
+  SubscriptionOptions,
 } from '../client/types';
 import { clientQueryBuilder } from '../client/query-builder.js';
 import SuperJSON from 'superjson';
@@ -86,8 +86,9 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
     {} as any;
   private _connectionStatus: ConnectionStatus;
   constructor(
-    options?: ClientOptions<M> & {
+    options?: Omit<ClientOptions<M>, 'storage'> & {
       workerUrl?: string;
+      storage?: SimpleClientStorageOptions;
     },
     workerEndpoint?: ComLink.Endpoint,
     sharedWorkerPort?: MessagePort
@@ -97,11 +98,28 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
       sharedWorkerPort ??
       getTriplitWorkerEndpoint(options?.workerUrl);
     this.clientWorker = ComLink.wrap<Client<M>>(workerEndpoint);
-    const { schema } = options || {};
+    const {
+      schema,
+      onSessionError,
+      token,
+      refreshOptions,
+      autoConnect,
+      ...remainingOptions
+    } = options || {};
+    if (token) {
+      this.startSession(
+        token,
+        autoConnect,
+        refreshOptions && ComLink.proxy(refreshOptions)
+      );
+    }
+    if (onSessionError) {
+      this.onSessionError(onSessionError);
+    }
     // @ts-expect-error
     this.initialized = this.clientWorker.init(
       {
-        ...options,
+        ...remainingOptions,
         schema: schema && schemaToJSON({ collections: schema, version: 0 }),
       },
       ComLink.proxy(new WorkerLogger())
@@ -306,6 +324,24 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
       unsubPromise.then((unsub) => unsub());
     };
   }
+
+  subscribeBackground<CQ extends SchemaClientQueries<M>>(
+    query: CQ,
+    options: SubscribeBackgroundOptions = {}
+  ) {
+    const unsubPromise = (async () => {
+      await this.initialized;
+      return this.clientWorker.subscribeBackground(
+        // @ts-expect-error
+        query,
+        ComLink.proxy(options)
+      );
+    })();
+    return () => {
+      unsubPromise.then((unsub) => unsub());
+    };
+  }
+
   /**
    * Subscribe to a query with helpers for pagination
    * This query will "oversubscribe" by 1 on either side of the current page to determine if there are "next" or "previous" pages
@@ -389,18 +425,32 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
     return JSONToSchema(await this.clientWorker.getSchemaJson());
   }
 
-  async updateOptions(options: Pick<ClientOptions, 'token' | 'serverUrl'>) {
-    await this.initialized;
-    return this.clientWorker.updateOptions(options);
-  }
-  async updateToken(token?: string) {
-    await this.initialized;
-    return this.clientWorker.updateToken(token);
-  }
-
   async updateServerUrl(serverUrl: string) {
     await this.initialized;
     return this.clientWorker.updateServerUrl(serverUrl);
+  }
+
+  async startSession(...args: Parameters<Client<M>['startSession']>) {
+    await this.initialized;
+    if (args[2]) args[2] = ComLink.proxy(args[2]);
+    return this.clientWorker.startSession(...args);
+  }
+
+  async endSession(...args: Parameters<Client<M>['endSession']>) {
+    await this.initialized;
+    return this.clientWorker.endSession(...args);
+  }
+
+  async onSessionError(...args: Parameters<Client<M>['onSessionError']>) {
+    await this.initialized;
+    return this.clientWorker.onSessionError(ComLink.proxy(args[0]));
+  }
+
+  async updateSessionToken(
+    ...args: Parameters<Client<M>['updateSessionToken']>
+  ) {
+    await this.initialized;
+    return this.clientWorker.updateSessionToken(...args);
   }
 
   async isFirstTimeFetchingQuery(

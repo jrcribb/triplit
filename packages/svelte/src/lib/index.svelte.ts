@@ -25,7 +25,7 @@ import { WorkerClient } from '@triplit/client/worker-client';
 export function useQuery<
   M extends Models,
   CN extends CollectionNameFromModels<M>,
-  Q extends ClientQuery<M, CN>
+  Q extends ClientQuery<M, CN>,
 >(
   client: TriplitClient<M> | WorkerClient<M>,
   query: ClientQueryBuilder<M, CN, Q>,
@@ -40,7 +40,7 @@ export function useQuery<
 } {
   let results: Unalias<FetchResult<M, Q>> | undefined = $state(undefined);
   let isInitialFetch = $state(true);
-  let fetchingLocal = $state(false);
+  let fetchingLocal = $state(true);
   let fetchingRemote = $state(client.connectionStatus !== 'CLOSED');
   let fetching = $derived(fetchingLocal || (isInitialFetch && fetchingRemote));
   let error: any = $state(undefined);

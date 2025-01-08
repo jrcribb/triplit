@@ -4,6 +4,7 @@ import {
 } from './data-types/constants.js';
 import { SessionRole } from './schema/permissions.js';
 import { Models } from './schema/types/index.js';
+import { ITriplitError } from '@triplit/types/errors.js';
 
 export const STATUS_CODES = {
   Success: 200,
@@ -46,10 +47,11 @@ export class TriplitError extends Error {
     return JSON.stringify(this.toJSON());
   }
 
-  toJSON() {
+  toJSON(): ITriplitError {
     return {
       name: this.name,
-      message: this.baseMessage,
+      message: this.message,
+      baseMessage: this.baseMessage,
       status: this.status,
       contextMessage: this.contextMessage,
     };
@@ -138,10 +140,19 @@ export class InvalidFilterError extends TriplitError {
 }
 
 export class SessionVariableNotFoundError extends TriplitError {
-  constructor(variableName: string, ...args: any[]) {
+  constructor(
+    variableName: string,
+    scope: string,
+    allVars: Record<string, any>,
+    ...args: any[]
+  ) {
     super(...args);
     this.name = 'SessionVariableNotFoundError';
-    this.baseMessage = `${variableName} could not be found in the provided variables for this query.`;
+    this.baseMessage = `\'${variableName}\' could not be found in the variables for this query. The available $${scope} variables are: ${Object.keys(
+      allVars
+    )
+      .map((v) => `\'$${scope}.${v}\'`)
+      .join(', ')}`;
     this.status = STATUS_CODES['Bad Request'];
   }
 }
@@ -317,8 +328,8 @@ export class WritePermissionError extends TriplitError {
       operation === 'insert'
         ? 'insertion'
         : operation === 'delete'
-        ? 'deletion'
-        : 'update'
+          ? 'deletion'
+          : 'update'
     } of the entity with id '${entityId}'. The provided session roles were [${sessionRoles
       .map((m) => m.key)
       .join(', ')}].`;
@@ -355,6 +366,16 @@ export class UnrecognizedAttributeTypeError extends TriplitError {
       ...COLLECTION_TYPE_KEYS,
       'query',
     ]}`;
+    this.status = STATUS_CODES['Bad Request'];
+  }
+}
+
+export class MalformedSchemaError extends TriplitError {
+  constructor(innerError: TriplitError, ...args: any[]) {
+    super(...args);
+    this.name = 'MalformedSchemaError';
+    this.baseMessage = `The schema provided is malformed.`;
+    this.contextMessage = `This was triggered by ${innerError.name}: ${innerError.message}`;
     this.status = STATUS_CODES['Bad Request'];
   }
 }
@@ -548,7 +569,7 @@ export class QueryNotPreparedError extends TriplitError {
   constructor(...args: any[]) {
     super(...args);
     this.name = 'QueryNotPreparedError';
-    this.baseMessage = `The query has not been prepared yet. This indicates a bug. Please inform the Triplit team.`;
+    this.baseMessage = `The query has parameters that have not been prepared with the schema. This could indicate that the database does not have a schema or that it is not up-to-date. Run \`npx triplit schema diff\` to verify that the server’s schema is in sync with the client’s. If it is not, run \`npx triplit schema push\` to update the server’s schema.`;
     this.status = STATUS_CODES['Internal Server Error'];
   }
 }

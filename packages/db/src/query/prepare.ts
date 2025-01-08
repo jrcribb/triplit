@@ -5,7 +5,11 @@ import {
   isQueryInclusionSubquery,
 } from '../collection-query.js';
 import { DataType } from '../data-types/types/index.js';
-import { appendCollectionToId, isValueVariable } from '../db-helpers.js';
+import {
+  appendCollectionToId,
+  isValueVariable,
+  replaceVariablesInFilterStatements,
+} from '../db-helpers.js';
 import { CollectionFromModels, CollectionNameFromModels } from '../db.js';
 import {
   IncludedNonRelationError,
@@ -18,11 +22,13 @@ import {
   TriplitError,
 } from '../errors.js';
 import {
+  and,
   exists,
   isBooleanFilter,
   isExistsFilter,
   isFilterGroup,
   isSubQueryFilter,
+  or,
 } from '../query.js';
 import {
   getCollectionPermissions,
@@ -45,6 +51,7 @@ import {
 
 export interface QueryPreparationOptions {
   skipRules?: boolean;
+  bindSessionVariables?: boolean;
 }
 
 interface Session {
@@ -57,7 +64,12 @@ export function prepareQuery<M extends Models, Q extends CollectionQuery<M>>(
   query: Q,
   schema: M | undefined,
   session: Session,
-  options: QueryPreparationOptions = {}
+  options: QueryPreparationOptions & {
+    collectionsPermissionsChecked?: Set<string>;
+  } = {
+    skipRules: false,
+    bindSessionVariables: false,
+  }
 ): Q {
   let fetchQuery = { ...query };
 
@@ -69,7 +81,13 @@ export function prepareQuery<M extends Models, Q extends CollectionQuery<M>>(
   const include = getQueryInclude(fetchQuery, schema, session, options);
 
   // Determine filters
-  const where = getQueryFilters(fetchQuery, schema, session, options);
+  const isPermissionAlreadyChecked = options.collectionsPermissionsChecked?.has(
+    fetchQuery.collectionName
+  );
+  const where = getQueryFilters(fetchQuery, schema, session, {
+    ...options,
+    skipRules: isPermissionAlreadyChecked || options.skipRules,
+  });
 
   // Determine order
   const order = getQueryOrder(fetchQuery, schema, options);
@@ -252,11 +270,19 @@ function getQueryFilters<M extends Models, Q extends CollectionQuery<M>>(
   ) {
     // Old permission system
     const ruleFilters = getReadRuleFilters(schema, query.collectionName);
-    if (ruleFilters?.length > 0)
+    if (ruleFilters?.length > 0) {
       filters.push(
         // @ts-expect-error
-        ...ruleFilters
+        ...(options.bindSessionVariables
+          ? replaceVariablesInFilterStatements(ruleFilters, {
+              // @ts-expect-error
+              ...session.session,
+              // @ts-expect-error
+              session: session.session,
+            })
+          : ruleFilters)
       );
+    }
 
     // New permission system
     const collectionPermissions = getCollectionPermissions(
@@ -265,7 +291,7 @@ function getQueryFilters<M extends Models, Q extends CollectionQuery<M>>(
     );
     // If we have collection permissions, we should apply them, otherwise its permissionless
     if (collectionPermissions) {
-      let permissionFilters: QueryWhere<M, any> = [];
+      let permissionFilters: QueryWhere<any, any>[] = [];
       let hasMatch = false;
       if (session.roles) {
         for (const sessionRole of session.roles) {
@@ -276,15 +302,19 @@ function getQueryFilters<M extends Models, Q extends CollectionQuery<M>>(
             // TODO: handle empty arrays
             if (Array.isArray(permission.filter)) {
               permissionFilters.push(
-                // @ts-expect-error
-                ...permission.filter
+                options.bindSessionVariables
+                  ? replaceVariablesInFilterStatements(permission.filter, {
+                      role: sessionRole.roleVars,
+                    })
+                  : permission.filter
               );
             }
           }
         }
       }
-      if (!hasMatch) permissionFilters = [false];
-      filters.push(...permissionFilters);
+      if (!hasMatch) permissionFilters = [[false]];
+      const permissionsWhere = or(permissionFilters.map((f) => and(f)));
+      filters.push(permissionsWhere);
     }
   }
 
@@ -331,7 +361,14 @@ function getQueryFilters<M extends Models, Q extends CollectionQuery<M>>(
       ];
 
       return {
-        exists: prepareQuery(subquery, schema, session, options),
+        exists: prepareQuery(subquery, schema, session, {
+          ...options,
+          collectionsPermissionsChecked: new Set([
+            // @ts-expect-error
+            ...(options.collectionsPermissionsChecked ?? []),
+            query.collectionName,
+          ]),
+        }),
       };
     }
     if (!Array.isArray(statement)) return statement;
@@ -354,7 +391,14 @@ function getQueryFilters<M extends Models, Q extends CollectionQuery<M>>(
         }
         subquery.where = [...subquery.where, [path.join('.'), op, val]];
         return {
-          exists: prepareQuery(subquery, schema, session, options),
+          exists: prepareQuery(subquery, schema, session, {
+            ...options,
+            collectionsPermissionsChecked: new Set([
+              // @ts-expect-error
+              ...(options.collectionsPermissionsChecked ?? []),
+              query.collectionName,
+            ]),
+          }),
         };
       }
     }
@@ -447,7 +491,7 @@ function getQueryAfter<M extends Models, Q extends CollectionQuery<M>>(
 
 function whereFilterValidator<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 >(
   schema: M | undefined,
   collectionName: CN
@@ -513,7 +557,7 @@ function mergeQueries<M extends Models>(
 
 function mapFilterStatements<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 >(
   statements: QueryWhere<M, CN>,
   mapFunction: (
@@ -530,8 +574,9 @@ function mapFilterStatements<
 ): QueryWhere<M, CN> {
   return statements.map((statement) => {
     if (isFilterGroup(statement)) {
-      statement.filters = mapFilterStatements(statement.filters, mapFunction);
-      return statement;
+      const group = { ...statement };
+      group.filters = mapFilterStatements(group.filters, mapFunction);
+      return group;
     }
     return mapFunction(statement);
   });
@@ -542,7 +587,7 @@ function mapFilterStatements<
  */
 function validateIdentifier<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 >(
   identifier: string,
   schema: M,

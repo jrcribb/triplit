@@ -1,5 +1,202 @@
 # @triplit/client
 
+## 0.6.13
+
+### Patch Changes
+
+- Updated dependencies [4ef05ec3]
+  - @triplit/db@0.5.20
+
+## 0.6.12
+
+### Patch Changes
+
+- Updated dependencies [6d348d3d]
+  - @triplit/db@0.5.19
+
+## 0.6.11
+
+### Patch Changes
+
+- Updated dependencies [398da292]
+  - @triplit/db@0.5.18
+
+## 0.6.10
+
+### Patch Changes
+
+- Updated dependencies [a80dbe04]
+  - @triplit/db@0.5.17
+
+## 0.6.9
+
+### Patch Changes
+
+- 4ccc6422: upgrade @sinclair/typebox
+- Updated dependencies [4ccc6422]
+  - @triplit/db@0.5.16
+
+## 0.6.8
+
+### Patch Changes
+
+- Updated dependencies [f3186500]
+- Updated dependencies [e5ff046f]
+  - @triplit/db@0.5.15
+
+## 0.6.7
+
+### Patch Changes
+
+- Updated dependencies [b2b3eae5]
+  - @triplit/db@0.5.14
+
+## 0.6.6
+
+### Patch Changes
+
+- Updated dependencies [7bbc8e53]
+  - @triplit/db@0.5.13
+
+## 0.6.5
+
+### Patch Changes
+
+- Updated dependencies [bb973df7]
+  - @triplit/db@0.5.12
+
+## 0.6.4
+
+### Patch Changes
+
+- 6de9aaf4: add ability to custom name storages without providing instances
+
+## 0.6.3
+
+### Patch Changes
+
+- 483c84b6: fix refresh interval
+
+## 0.6.2
+
+### Patch Changes
+
+- 2541c6e2: various fixups for the sessions API
+- Updated dependencies [8e9511dc]
+- Updated dependencies [a2532548]
+  - @triplit/db@0.5.11
+
+## 0.6.1
+
+### Patch Changes
+
+- Updated dependencies [a0932216]
+  - @triplit/db@0.5.10
+
+## 0.6.0
+
+### Minor Changes
+
+- 2713ca43: Implement new sessions API
+
+### Patch Changes
+
+- Updated dependencies [2713ca43]
+  - @triplit/db@0.5.9
+
+## 0.5.17
+
+### Patch Changes
+
+- f1ce9675: Prevent possible error in client subscription race condition
+- Updated dependencies [bdebed22]
+- Updated dependencies [7b1839b6]
+  - @triplit/db@0.5.8
+
+## 0.5.16
+
+### Patch Changes
+
+- Updated dependencies [9107e262]
+- Updated dependencies [0cc53c85]
+- Updated dependencies [cb785390]
+  - @triplit/db@0.5.7
+
+## 0.5.15
+
+### Patch Changes
+
+- Updated dependencies [dd8278d1]
+  - @triplit/db@0.5.6
+
+## 0.5.14
+
+### Patch Changes
+
+- Updated dependencies [8f004df6]
+  - @triplit/db@0.5.5
+
+## 0.5.13
+
+### Patch Changes
+
+- bdd50e7f: Fixup worker client subscribeBackground
+
+## 0.5.12
+
+### Patch Changes
+
+- Updated dependencies [e9eb5c26]
+  - @triplit/db@0.5.4
+
+## 0.5.11
+
+### Patch Changes
+
+- 8c97bfdb: Add experimental entity cache
+- 57d1e24b: Add onFulfilled to background subscription
+- Updated dependencies [f201dd5a]
+- Updated dependencies [8c97bfdb]
+  - @triplit/db@0.5.3
+
+## 0.5.10
+
+### Patch Changes
+
+- 3d5e879d: Pass remote sync errors to subscription error handlers
+- Updated dependencies [aca9cf75]
+- Updated dependencies [3d5e879d]
+  - @triplit/db@0.5.2
+
+## 0.5.9
+
+### Patch Changes
+
+- @triplit/db@0.5.1
+
+## 0.5.8
+
+### Patch Changes
+
+- ccfa038c: Add method subscribeBackground() for sync in background
+- Updated dependencies [3984bc94]
+- Updated dependencies [94417d39]
+  - @triplit/db@0.5.0
+
+## 0.5.7
+
+### Patch Changes
+
+- Updated dependencies [15815dc2]
+- Updated dependencies [23b6171d]
+  - @triplit/db@0.4.6
+
+## 0.5.6
+
+### Patch Changes
+
+- 3ca5265f: Fix query syncin race condition that occured with React Strict mode's double rendering behavior
+
 ## 0.5.5
 
 ### Patch Changes

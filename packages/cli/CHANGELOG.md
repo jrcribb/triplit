@@ -1,5 +1,188 @@
 # @triplit/cli
 
+## 0.6.35
+
+### Patch Changes
+
+- 4ef05ec3: Manual version bump for CLI dependencies
+
+## 0.6.34
+
+### Patch Changes
+
+- 6d348d3d: Add `--failOnBackwardsIncompatibleChange` to @triplit/CLI `schema push` command
+- 6d348d3d: Manual version bump for CLI dependencies
+
+## 0.6.33
+
+### Patch Changes
+
+- 398da292: Manual version bump for CLI dependencies
+
+## 0.6.32
+
+### Patch Changes
+
+- a80dbe04: Manual version bump for CLI dependencies
+
+## 0.6.31
+
+### Patch Changes
+
+- 4ccc6422: Manual version bump for CLI dependencies
+
+## 0.6.30
+
+### Patch Changes
+
+- e5ff046f: parse enum values in schema print
+- f3186500: Manual version bump for CLI dependencies
+
+## 0.6.29
+
+### Patch Changes
+
+- b2b3eae5: Manual version bump for CLI dependencies
+
+## 0.6.28
+
+### Patch Changes
+
+- 7bbc8e53: Manual version bump for CLI dependencies
+
+## 0.6.27
+
+### Patch Changes
+
+- bb973df7: Manual version bump for CLI dependencies
+
+## 0.6.26
+
+### Patch Changes
+
+- 72a807db: Manual version bump for CLI dependencies
+
+## 0.6.25
+
+### Patch Changes
+
+- 6de9aaf4: Manual version bump for CLI dependencies
+
+## 0.6.24
+
+### Patch Changes
+
+- 483c84b6: Manual version bump for CLI dependencies
+
+## 0.6.23
+
+### Patch Changes
+
+- 2541c6e2: Manual version bump for CLI dependencies
+
+## 0.6.22
+
+### Patch Changes
+
+- 1bcf734d: Manual version bump for CLI dependencies
+
+## 0.6.21
+
+### Patch Changes
+
+- 57c1971f: Manual version bump for CLI dependencies
+
+## 0.6.20
+
+### Patch Changes
+
+- 7bb32f7e: Manual version bump for CLI dependencies
+
+## 0.6.19
+
+### Patch Changes
+
+- 2713ca43: Manual version bump for CLI dependencies
+
+## 0.6.18
+
+### Patch Changes
+
+- 7b1839b6: Manual version bump for CLI dependencies
+
+## 0.6.17
+
+### Patch Changes
+
+- 0cc53c85: Manual version bump for CLI dependencies
+
+## 0.6.16
+
+### Patch Changes
+
+- dfcabc47: Manual version bump for CLI dependencies
+
+## 0.6.15
+
+### Patch Changes
+
+- dd8278d1: Manual version bump for CLI dependencies
+
+## 0.6.14
+
+### Patch Changes
+
+- 8f004df6: Manual version bump for CLI dependencies
+
+## 0.6.13
+
+### Patch Changes
+
+- bdd50e7f: Manual version bump for CLI dependencies
+
+## 0.6.12
+
+### Patch Changes
+
+- e9eb5c26: Manual version bump for CLI dependencies
+
+## 0.6.11
+
+### Patch Changes
+
+- 57d1e24b: Manual version bump for CLI dependencies
+
+## 0.6.10
+
+### Patch Changes
+
+- aca9cf75: Manual version bump for CLI dependencies
+
+## 0.6.9
+
+### Patch Changes
+
+- 9ef4f9a3: Manual version bump for CLI dependencies
+
+## 0.6.8
+
+### Patch Changes
+
+- 9197cc72: Manual version bump for CLI dependencies
+
+## 0.6.7
+
+### Patch Changes
+
+- 23b6171d: add support for webhooks
+- 15815dc2: Manual version bump for CLI dependencies
+
+## 0.6.6
+
+### Patch Changes
+
+- 3ca5265f: Manual version bump for CLI dependencies
+
 ## 0.6.5
 
 ### Patch Changes

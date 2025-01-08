@@ -15,6 +15,15 @@ import CollectionQueryBuilder, {
   subscribe,
   subscribeTriples,
   loadQuery,
+  getTriplesAfterStateVector,
+  fetchDeltaTriples,
+  generateQueryRootPermutations,
+  getEntitiesBeforeAndAfterNewTriples,
+  isQueryRelational,
+  applyTriplesToSubscribedQuery,
+  FetchFromStorageOptions,
+  fetchSyncTriplesRequeryArr,
+  fetchSyncTriplesReplay,
 } from './collection-query.js';
 import { COLLECTION_ATTRIBUTE, Entity, updateEntity } from './entity.js';
 import { MemoryBTreeStorage } from './storage/memory-btree.js';
@@ -28,9 +37,10 @@ import {
   getSchemaTriples,
   fetchResultToJS,
   logSchemaChangeViolations,
+  splitIdParts,
 } from './db-helpers.js';
 import { VariableAwareCache } from './variable-aware-cache.js';
-import { copyHooks } from './utils.js';
+import { copyDBHooks } from './utils.js';
 import { EAV, indexToTriple, TripleRow } from './triple-store-utils.js';
 import { ClearOptions, TripleStore } from './triple-store.js';
 import { Logger } from '@triplit/types/logger';
@@ -42,6 +52,7 @@ import {
   SchemaQueries,
   ToQuery,
   CollectionQueryDefault,
+  SubQueryFilter,
 } from './query/types/index.js';
 import { prepareQuery } from './query/prepare.js';
 import {
@@ -63,9 +74,18 @@ import {
 } from './db/types/operations.js';
 import { generatePsuedoRandomId } from './utils/random.js';
 import {
+  getEntitiesFromContext,
   getResultTriplesFromContext,
   getSyncTriplesFromContext,
 } from './query/result-parsers.js';
+import {
+  assignEntityCacheToStore,
+  createEntityCache,
+} from './db/entity-cache.js';
+import { EntityCache, EntityCacheOptions } from './db/types/entity-cache.js';
+import { hashQuery } from './index.js';
+import { isSubQueryFilter } from './query.js';
+import { getFilterPriorityOrder, satisfiesFilter } from './query/filters.js';
 
 const DEFAULT_CACHE_DISABLED = true;
 export interface TransactOptions {
@@ -85,18 +105,21 @@ export interface DBConfig<M extends Models = Models> {
   clock?: Clock;
   variables?: Record<string, any>;
   logger?: Logger;
+  experimental?: {
+    entityCache?: EntityCacheOptions;
+  };
 }
 
 export const DEFAULT_STORE_KEY = 'default';
 
 export type CollectionFromModels<
   M extends Models,
-  CN extends CollectionNameFromModels<M> = CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M> = CollectionNameFromModels<M>,
 > = M[CN];
 
 export type ModelFromModels<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > = M[CN]['schema'];
 
 export type CollectionNameFromModels<M extends Models = Models> = keyof M &
@@ -129,7 +152,7 @@ export function ruleToTuple(
 
 export type FetchByIdQueryParams<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > = Pick<CollectionQuery<M, CN>, 'include'>;
 
 type SchemaChangeCallback<M extends Models> = (
@@ -141,18 +164,21 @@ type TxOutput<Output> = {
   output: Output | undefined;
 };
 
-type TriggerWhen =
-  | 'afterCommit'
-  | 'afterDelete'
-  | 'afterInsert'
-  | 'afterUpdate'
-  | 'beforeCommit'
-  | 'beforeDelete'
-  | 'beforeInsert'
-  | 'beforeUpdate';
+const TRIGGER_WHEN = [
+  'afterCommit',
+  'afterDelete',
+  'afterInsert',
+  'afterUpdate',
+  'beforeCommit',
+  'beforeDelete',
+  'beforeInsert',
+  'beforeUpdate',
+] as const;
 
+type TriggerWhen = (typeof TRIGGER_WHEN)[number];
 // TODO: type this better
-export type EntityOpSet = OpSet<[string, any]>;
+
+export type EntityOpSet = OpSet<[string, { oldEntity: any; entity: any }]>;
 
 export type OpSet<T> = {
   inserts: T[];
@@ -170,14 +196,14 @@ type AfterCommitCallback<M extends Models> = (args: {
 }) => void | Promise<void>;
 interface AfterInsertOptions<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > {
   when: 'afterInsert';
   collectionName: CN;
 }
 type AfterInsertCallback<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > = (args: {
   entity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   tx: DBTransaction<M>;
@@ -185,31 +211,32 @@ type AfterInsertCallback<
 }) => void | Promise<void>;
 interface AfterUpdateOptions<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > {
   when: 'afterUpdate';
   collectionName: CN;
 }
 type AfterUpdateCallback<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > = (args: {
+  oldEntity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   entity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   tx: DBTransaction<M>;
   db: DB<M>;
 }) => void | Promise<void>;
 interface AfterDeleteOptions<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > {
   when: 'afterDelete';
   collectionName: CN;
 }
 type AfterDeleteCallback<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > = (args: {
-  entity: FetchResultEntity<M, CollectionQuery<M, CN>>;
+  oldEntity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   tx: DBTransaction<M>;
   db: DB<M>;
 }) => void | Promise<void>;
@@ -223,14 +250,14 @@ type BeforeCommitCallback<M extends Models> = (args: {
 }) => void | Promise<void>;
 interface BeforeInsertOptions<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > {
   when: 'beforeInsert';
   collectionName: CN;
 }
 type BeforeInsertCallback<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > = (args: {
   entity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   tx: DBTransaction<M>;
@@ -238,31 +265,32 @@ type BeforeInsertCallback<
 }) => void | Promise<void>;
 interface BeforeUpdateOptions<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > {
   when: 'beforeUpdate';
   collectionName: CN;
 }
 type BeforeUpdateCallback<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > = (args: {
+  oldEntity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   entity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   tx: DBTransaction<M>;
   db: DB<M>;
 }) => void | Promise<void>;
 interface BeforeDeleteOptions<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > {
   when: 'beforeDelete';
   collectionName: CN;
 }
 type BeforeDeleteCallback<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > = (args: {
-  entity: FetchResultEntity<M, CollectionQuery<M, CN>>;
+  oldEntity: FetchResultEntity<M, CollectionQuery<M, CN>>;
   tx: DBTransaction<M>;
   db: DB<M>;
 }) => void | Promise<void>;
@@ -287,33 +315,38 @@ type TriggerCallback =
   | BeforeUpdateCallback<any, any>
   | BeforeDeleteCallback<any, any>;
 
+export type TriggerMap<
+  C extends TriggerCallback,
+  O extends TriggerOptions,
+> = Map<string, [C, O]>;
+
 export type DBHooks<M extends Models> = {
-  afterCommit: [AfterCommitCallback<M>, AfterCommitOptions<M>][];
-  afterInsert: [
+  afterCommit: TriggerMap<AfterCommitCallback<M>, AfterCommitOptions<M>>;
+  afterInsert: TriggerMap<
     AfterInsertCallback<M, CollectionNameFromModels<M>>,
     AfterInsertOptions<M, CollectionNameFromModels<M>>
-  ][];
-  afterUpdate: [
-    AfterInsertCallback<M, CollectionNameFromModels<M>>,
+  >;
+  afterUpdate: TriggerMap<
+    AfterUpdateCallback<M, CollectionNameFromModels<M>>,
     AfterUpdateOptions<M, CollectionNameFromModels<M>>
-  ][];
-  afterDelete: [
+  >;
+  afterDelete: TriggerMap<
     AfterDeleteCallback<M, CollectionNameFromModels<M>>,
     AfterDeleteOptions<M, CollectionNameFromModels<M>>
-  ][];
-  beforeCommit: [BeforeCommitCallback<M>, BeforeCommitOptions<M>][];
-  beforeInsert: [
+  >;
+  beforeCommit: TriggerMap<BeforeCommitCallback<M>, BeforeCommitOptions<M>>;
+  beforeInsert: TriggerMap<
     BeforeInsertCallback<M, CollectionNameFromModels<M>>,
     BeforeInsertOptions<M, CollectionNameFromModels<M>>
-  ][];
-  beforeUpdate: [
+  >;
+  beforeUpdate: TriggerMap<
     BeforeUpdateCallback<M, CollectionNameFromModels<M>>,
     BeforeUpdateOptions<M, CollectionNameFromModels<M>>
-  ][];
-  beforeDelete: [
+  >;
+  beforeDelete: TriggerMap<
     BeforeDeleteCallback<M, CollectionNameFromModels<M>>,
     BeforeDeleteOptions<M, CollectionNameFromModels<M>>
-  ][];
+  >;
 };
 
 export type SystemVariables = {
@@ -325,6 +358,7 @@ export default class DB<M extends Models = Models> {
   tripleStore: TripleStore;
   systemVars: SystemVariables;
   cache: VariableAwareCache<M>;
+  entityCache: EntityCache | undefined;
 
   // DB setup
   private storageReady: Promise<void>;
@@ -337,16 +371,38 @@ export default class DB<M extends Models = Models> {
   private onSchemaChangeCallbacks: Set<SchemaChangeCallback<M>>;
 
   private hooks: DBHooks<M> = {
-    afterCommit: [],
-    afterInsert: [],
-    afterUpdate: [],
-    afterDelete: [],
-    beforeCommit: [],
-    beforeInsert: [],
-    beforeUpdate: [],
-    beforeDelete: [],
+    afterCommit: new Map(),
+    afterInsert: new Map(),
+    afterUpdate: new Map(),
+    afterDelete: new Map(),
+    beforeCommit: new Map(),
+    beforeInsert: new Map(),
+    beforeUpdate: new Map(),
+    beforeDelete: new Map(),
   };
   private _pendingSchemaRequest: Promise<void> | null;
+  private syncQueries: Map<
+    string,
+    {
+      connectionIds: Set<string>;
+      options: FetchFromStorageOptions;
+      query: CollectionQuery<any, any>;
+      queryPermutations: CollectionQuery<any, any>[];
+    } & (
+      | { type: 'fetch-delta-triples' }
+      | {
+          type: 'ivm';
+          results: Map<string, Entity>;
+        }
+    )
+  > = new Map();
+  private connectionCallbacks: Map<
+    string,
+    {
+      onResults: (results: any, forQueries: string[]) => void;
+      onError: (error: any) => void;
+    }
+  > = new Map();
   logger: Logger;
   public activeSubscriptions: Map<
     string,
@@ -365,6 +421,7 @@ export default class DB<M extends Models = Models> {
     clock,
     variables,
     logger,
+    experimental,
   }: DBConfig<M> = {}) {
     this.logger = logger ?? {
       info: console.info,
@@ -406,6 +463,10 @@ export default class DB<M extends Models = Models> {
     });
 
     this.cache = new VariableAwareCache(this);
+    if (experimental?.entityCache) {
+      this.entityCache = createEntityCache(experimental?.entityCache);
+      assignEntityCacheToStore(this.tripleStore, this.entityCache);
+    }
 
     // Add listener to update in memory schema
     const updateCachedSchemaOnChange: SchemaChangeCallback<M> = (schema) =>
@@ -418,7 +479,9 @@ export default class DB<M extends Models = Models> {
       tripleStoreSchema: tripleStoreSchema && schemaToJSON(tripleStoreSchema),
     });
 
-    this.storageReady = this.tripleStore.ensureStorageIsMigrated();
+    this.storageReady = this.tripleStore
+      .ensureStorageIsMigrated()
+      .then(() => this.tripleStore.clock.clockReady);
     this.schemaInitialized = !!tripleStoreSchema
       ? this.storageReady
           // Setup schema subscription
@@ -437,6 +500,47 @@ export default class DB<M extends Models = Models> {
     this.ready = Promise.all([this.storageReady, this.schemaInitialized]).then(
       () => this.logger.debug('Ready')
     );
+
+    this.ready
+      .catch(() => {})
+      .then(() => {
+        this.tripleStore.onWrite(async (storeWrites) => {
+          if (this.syncQueries.size === 0) return;
+          const newTriples = Object.values(storeWrites).flatMap(
+            (ops) => ops.inserts
+          );
+          await this.updateSubscriptionsWithNewTriples(newTriples);
+          // currently handle IVM queries separately
+          for (const [queryId, syncQueryMetadata] of this.syncQueries) {
+            if (syncQueryMetadata.type !== 'ivm') continue;
+            const { results, connectionIds } = syncQueryMetadata;
+            const update = await applyTriplesToSubscribedQuery(
+              this.tripleStore,
+              {
+                schema: this.getSchemaSync(true)?.collections,
+                session: {
+                  systemVars: this.systemVars,
+                  roles: this.sessionRoles,
+                },
+              },
+              results,
+              storeWrites,
+              syncQueryMetadata.query
+            );
+            syncQueryMetadata.results = update.results;
+            const deltaTriples = Array.from(
+              update.deltaTriples.values()
+            ).flat();
+            if (deltaTriples.length > 0) {
+              for (const connectionId of connectionIds) {
+                const connection = this.connectionCallbacks.get(connectionId);
+                if (!connection) continue;
+                connection.onResults(deltaTriples, [queryId]);
+              }
+            }
+          }
+        });
+      });
   }
 
   get sessionRoles() {
@@ -498,80 +602,55 @@ export default class DB<M extends Models = Models> {
     );
   }
 
-  addTrigger(on: AfterCommitOptions<M>, callback: AfterCommitCallback<M>): void;
+  addTrigger(
+    on: AfterCommitOptions<M>,
+    callback: AfterCommitCallback<M>
+  ): string;
   addTrigger<CN extends CollectionNameFromModels<M>>(
     on: AfterInsertOptions<M, CN>,
     callback: AfterInsertCallback<M, CN>
-  ): void;
+  ): string;
   addTrigger<CN extends CollectionNameFromModels<M>>(
     on: AfterUpdateOptions<M, CN>,
     callback: AfterUpdateCallback<M, CN>
-  ): void;
+  ): string;
   addTrigger<CN extends CollectionNameFromModels<M>>(
     on: AfterDeleteOptions<M, CN>,
     callback: AfterDeleteCallback<M, CN>
-  ): void;
+  ): string;
   addTrigger(
     on: BeforeCommitOptions<M>,
     callback: BeforeCommitCallback<M>
-  ): void;
+  ): string;
   addTrigger<CN extends CollectionNameFromModels<M>>(
     on: BeforeInsertOptions<M, CN>,
     callback: BeforeInsertCallback<M, CN>
-  ): void;
+  ): string;
   addTrigger<CN extends CollectionNameFromModels<M>>(
     on: BeforeUpdateOptions<M, CN>,
     callback: BeforeUpdateCallback<M, CN>
-  ): void;
+  ): string;
   addTrigger<CN extends CollectionNameFromModels<M>>(
     on: BeforeDeleteOptions<M, CN>,
     callback: BeforeDeleteCallback<M, CN>
-  ): void;
-  addTrigger(on: TriggerOptions, callback: TriggerCallback) {
-    switch (on.when) {
-      case 'afterCommit':
-        this.hooks.afterCommit.push([callback as AfterCommitCallback<M>, on]);
-        break;
-      case 'afterInsert':
-        this.hooks.afterInsert.push([
-          callback as AfterInsertCallback<M, CollectionNameFromModels<M>>,
-          on,
-        ]);
-        break;
-      case 'afterUpdate':
-        this.hooks.afterUpdate.push([
-          callback as AfterUpdateCallback<M, CollectionNameFromModels<M>>,
-          on,
-        ]);
-        break;
-      case 'afterDelete':
-        this.hooks.afterDelete.push([
-          callback as AfterDeleteCallback<M, CollectionNameFromModels<M>>,
-          on,
-        ]);
-        break;
-      case 'beforeCommit':
-        this.hooks.beforeCommit.push([callback as BeforeCommitCallback<M>, on]);
-        break;
-      case 'beforeInsert':
-        this.hooks.beforeInsert.push([
-          callback as BeforeInsertCallback<M, CollectionNameFromModels<M>>,
-          on,
-        ]);
-        break;
-      case 'beforeUpdate':
-        this.hooks.beforeUpdate.push([
-          callback as BeforeUpdateCallback<M, CollectionNameFromModels<M>>,
-          on,
-        ]);
-        break;
-      case 'beforeDelete':
-        this.hooks.beforeDelete.push([
-          callback as BeforeDeleteCallback<M, CollectionNameFromModels<M>>,
-          on,
-        ]);
-        break;
+  ): string;
+  addTrigger(on: TriggerOptions, callback: TriggerCallback): string {
+    if (!TRIGGER_WHEN.includes(on.when)) {
+      throw new Error(`Invalid trigger when: ${on.when}`);
     }
+    const id = generatePsuedoRandomId();
+    // @ts-expect-error
+    this.hooks[on.when].set(id, [callback, on]);
+    return id;
+  }
+
+  removeTrigger(id: string): boolean {
+    for (const when of TRIGGER_WHEN) {
+      if (this.hooks[when].delete(id)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   withSessionVars(variables: Record<string, any>): DB<M> {
@@ -625,7 +704,7 @@ export default class DB<M extends Models = Models> {
     );
     try {
       const resp = await this.tripleStore.transact(async (tripTx) => {
-        const tx = new DBTransaction<M>(this, tripTx, copyHooks(this.hooks), {
+        const tx = new DBTransaction<M>(this, tripTx, copyDBHooks(this.hooks), {
           schema,
           skipRules: options.skipRules,
           logger: this.logger.scope('tx'),
@@ -648,9 +727,16 @@ export default class DB<M extends Models = Models> {
     this.systemVars.global = { ...this.systemVars.global, ...variables };
   }
 
-  async overrideSchema(schema: StoreSchema<M> | undefined) {
-    const { successful, issues } = await overrideStoredSchema(this, schema);
-    logSchemaChangeViolations(successful, issues, this.logger);
+  async overrideSchema(
+    schema: StoreSchema<M> | undefined,
+    options?: Parameters<typeof overrideStoredSchema>[2]
+  ) {
+    const { successful, issues } = await overrideStoredSchema(
+      this,
+      schema,
+      options
+    );
+    logSchemaChangeViolations(successful, issues, { logger: this.logger });
     return { successful, issues };
   }
 
@@ -683,6 +769,7 @@ export default class DB<M extends Models = Models> {
       {
         schema,
         cache: noCache ? undefined : this.cache,
+        entityCache: this.entityCache,
         skipRules: options.skipRules,
         skipIndex: options.skipIndex,
         session: {
@@ -805,7 +892,7 @@ export default class DB<M extends Models = Models> {
     const startSubscription = async () => {
       await this.storageReady;
       const schema = (await this.getSchema())?.collections as M;
-      let subscriptionQuery = prepareQuery(
+      const subscriptionQuery = prepareQuery(
         query,
         schema,
         { roles: this.sessionRoles },
@@ -826,6 +913,7 @@ export default class DB<M extends Models = Models> {
         {
           schema,
           cache: noCache ? undefined : this.cache,
+          entityCache: this.entityCache,
           skipRules: options.skipRules,
           stateVector: options.stateVector,
           skipIndex: options.skipIndex,
@@ -908,6 +996,7 @@ export default class DB<M extends Models = Models> {
           skipRules: options.skipRules,
           stateVector: options.stateVector,
           cache: noCache ? undefined : this.cache,
+          entityCache: this.entityCache,
           skipIndex: options.skipIndex,
           session: {
             systemVars: this.systemVars,
@@ -1029,6 +1118,349 @@ export default class DB<M extends Models = Models> {
   onSchemaChange(cb: SchemaChangeCallback<M>) {
     this.onSchemaChangeCallbacks.add(cb);
     return () => this.onSchemaChangeCallbacks.delete(cb);
+  }
+
+  createQuerySyncer(
+    connectionId: string,
+    onResults: (results: TripleRow[], forQueries: string[]) => void,
+    onError: (error: any, queryId?: string) => void
+  ) {
+    this.connectionCallbacks.set(connectionId, { onResults, onError });
+
+    const registerQuery = async (
+      query: CollectionQuery<M>,
+      options: DBFetchOptions = {}
+    ) => {
+      await this.storageReady;
+      const schema = (await this.getSchema())?.collections as M;
+      const subscriptionQuery = prepareQuery(
+        query,
+        schema,
+        // systemVars (specifically session) is used by legacy rule system
+        { roles: this.sessionRoles, ...this.systemVars },
+        {
+          skipRules: options.skipRules,
+          bindSessionVariables: true,
+        }
+      );
+      const noCache =
+        options.noCache === undefined
+          ? DEFAULT_CACHE_DISABLED
+          : options.noCache;
+      const subscribeTriplesOptions = {
+        schema,
+        skipRules: options.skipRules,
+        stateVector: options.stateVector,
+        cache: noCache ? undefined : this.cache,
+        entityCache: this.entityCache,
+        skipIndex: options.skipIndex,
+        session: {
+          systemVars: this.systemVars,
+          roles: this.sessionRoles,
+        },
+      };
+
+      const queryId = hashQuery(subscriptionQuery as any);
+      if (this.syncQueries.has(queryId)) {
+        const syncQuery = this.syncQueries.get(queryId)!;
+        syncQuery.connectionIds.add(connectionId);
+      } else {
+        const queryPermutations =
+          generateQueryRootPermutations(subscriptionQuery);
+        const shouldUseIVM =
+          query.limit != undefined &&
+          !isQueryRelational(query, {
+            schema: schema,
+          });
+        this.syncQueries.set(queryId, {
+          connectionIds: new Set([connectionId]),
+          options: subscribeTriplesOptions,
+          query: subscriptionQuery,
+          queryPermutations,
+          ...(shouldUseIVM
+            ? {
+                results: new Map(),
+                type: 'ivm',
+              }
+            : {
+                type: 'fetch-delta-triples',
+              }),
+        });
+      }
+      (async () => {
+        // Make initial fetch
+        let triples: TripleRow[] = [];
+        try {
+          if (options.stateVector && options.stateVector.size > 0) {
+            const deltaTriples = await fetchSyncTriplesRequeryArr<
+              M,
+              typeof subscriptionQuery
+            >(
+              this.tripleStore,
+              subscriptionQuery,
+              initialFetchExecutionContext(),
+              subscribeTriplesOptions
+            );
+            triples = deltaTriples;
+          } else {
+            const executionContext = initialFetchExecutionContext();
+            // const resultOrder = await loadQuery<M, Q>(
+            const resultOrder = await loadQuery<M, any>(
+              this.tripleStore,
+              subscriptionQuery,
+              executionContext,
+              {
+                schema: subscribeTriplesOptions.schema,
+                // stateVector: subscribeTriplesOptions.stateVector,
+                cache: subscribeTriplesOptions.cache,
+                entityCache: subscribeTriplesOptions.entityCache,
+                session: subscribeTriplesOptions.session,
+              }
+            );
+            triples = Array.from(
+              // getSyncTriplesFromContext<M, Q>(
+              getSyncTriplesFromContext<M, any>(
+                subscriptionQuery,
+                resultOrder,
+                executionContext
+              ).values()
+            ).flat();
+
+            if (this.syncQueries.get(queryId)?.type === 'ivm') {
+              // @ts-expect-error
+              this.syncQueries.get(queryId)!.results = getEntitiesFromContext(
+                resultOrder,
+                executionContext
+              );
+            }
+          }
+        } catch (e) {
+          console.error(e);
+          onError && (await onError(e, queryId));
+        }
+        onResults(triples, [queryId]);
+      })();
+      return queryId;
+    };
+
+    const unregisterQuery = async (id: string) => {
+      await this.storageReady;
+
+      const queryId = id;
+      if (this.syncQueries.has(queryId)) {
+        const syncQuery = this.syncQueries.get(queryId)!;
+        syncQuery.connectionIds.delete(connectionId);
+        if (syncQuery.connectionIds.size === 0) {
+          this.syncQueries.delete(queryId);
+        }
+      }
+    };
+
+    const close = () => {
+      for (const [queryId, syncQuery] of this.syncQueries.entries()) {
+        syncQuery.connectionIds.delete(connectionId);
+        if (syncQuery.connectionIds.size === 0) {
+          this.syncQueries.delete(queryId);
+        }
+      }
+      this.connectionCallbacks.delete(connectionId);
+    };
+
+    return {
+      registerQuery,
+      unregisterQuery,
+      close,
+    };
+  }
+
+  private async updateSubscriptionsWithNewTriples(newTriples: TripleRow[]) {
+    const schema = (await this.getSchema())?.collections;
+    const tx = this.tripleStore;
+    try {
+      const deltaTriplesPerConnection: Map<
+        string,
+        { triples: TripleRow[]; forQueries: Set<string> }
+      > = new Map();
+      const beforeAndAfterEntities = await getEntitiesBeforeAndAfterNewTriples(
+        tx,
+        newTriples
+      );
+      const beforeContext = initialFetchExecutionContext();
+      const afterContext = initialFetchExecutionContext();
+      for (const [
+        changedEntityId,
+        { oldEntity: beforeData, entity: afterData, changedTriples },
+      ] of beforeAndAfterEntities) {
+        const entityBeforeStateVector = beforeData;
+        if (beforeData) {
+          beforeContext.executionCache.setEntity(changedEntityId, {
+            entity: beforeData,
+            tripleHistory: [...beforeData.triples],
+          });
+          beforeContext.executionCache.setComponent(changedEntityId, {
+            entityId: changedEntityId,
+            relationships: {},
+          });
+        }
+        const entityAfterStateVector = afterData;
+        if (afterData) {
+          afterContext.executionCache.setEntity(changedEntityId, {
+            entity: afterData,
+            tripleHistory: [...afterData.triples],
+          });
+          afterContext.executionCache.setComponent(changedEntityId, {
+            entityId: changedEntityId,
+            relationships: {},
+          });
+        }
+        for (const [
+          id,
+          { query, connectionIds, queryPermutations, type, options },
+        ] of this.syncQueries) {
+          if (type !== 'fetch-delta-triples') continue;
+          for (const queryPermutation of queryPermutations) {
+            if (
+              queryPermutation.collectionName !==
+              splitIdParts(changedEntityId)[0]
+            ) {
+              continue;
+            }
+
+            // Check that entity matches filters:
+            // Start with the checking that the entity exists, assume it matches the query
+            // Then check for unsatisfied filters
+            let matchesBefore =
+              !!entityBeforeStateVector && !entityBeforeStateVector.isDeleted;
+            let matchesAfter =
+              !!entityAfterStateVector && !entityAfterStateVector.isDeleted;
+            if (queryPermutation.where) {
+              const where = queryPermutation.where;
+              const filterPriorityOrder = getFilterPriorityOrder(
+                queryPermutation.where
+              );
+              if (matchesBefore) {
+                for (const filterIdx of filterPriorityOrder) {
+                  const filter = where[filterIdx];
+                  const satisfied = await satisfiesFilter(
+                    tx,
+                    queryPermutation,
+                    beforeContext,
+                    options,
+                    [changedEntityId, entityBeforeStateVector!],
+                    filter
+                  );
+                  if (!satisfied) {
+                    matchesBefore = false;
+                    break;
+                  }
+                }
+              }
+
+              if (matchesAfter) {
+                for (const filterIdx of filterPriorityOrder) {
+                  const filter = where[filterIdx];
+                  const satisfied = await satisfiesFilter(
+                    tx,
+                    queryPermutation,
+                    afterContext,
+                    options,
+                    [changedEntityId, entityAfterStateVector!],
+                    filter
+                  );
+                  if (!satisfied) {
+                    matchesAfter = false;
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (!matchesBefore && !matchesAfter) {
+              continue;
+            }
+
+            if (!matchesBefore) {
+              const afterTriplesMatch = [];
+              for (const fulfillmentEntityId of afterContext.fulfillmentEntities) {
+                const entity =
+                  afterContext.executionCache.getData(
+                    fulfillmentEntityId
+                  )?.entity;
+                if (!entity) continue;
+                for (const triple of entity.triples) {
+                  afterTriplesMatch.push(triple);
+                }
+              }
+              // Basically we're including the whole entity if it is new to the result set
+              // but we also want to filter any triples that will be included in the
+              // final step of adding changed triples for the given entity
+              // An example is if we insert a net new entity it will not match before
+              // so it need's the whole entity to be sent but that will fully overlap
+              // with the last step.
+              const alreadyIncludedTriples = changedTriples;
+              const tripleKeys = new Set(
+                alreadyIncludedTriples.map(
+                  (t) =>
+                    t.id +
+                    JSON.stringify(t.attribute) +
+                    JSON.stringify(t.timestamp)
+                )
+              );
+              const trips = Object.values(afterData!.triples).filter(
+                (t) =>
+                  !tripleKeys.has(
+                    t.id +
+                      JSON.stringify(t.attribute) +
+                      JSON.stringify(t.timestamp)
+                  )
+              );
+              for (const triple of trips) {
+                afterTriplesMatch.push(triple);
+              }
+              for (const triple of afterTriplesMatch) {
+                for (const connectionId of connectionIds) {
+                  if (!deltaTriplesPerConnection.has(connectionId)) {
+                    deltaTriplesPerConnection.set(connectionId, {
+                      triples: [],
+                      forQueries: new Set(),
+                    });
+                  }
+                  const connectionResults =
+                    deltaTriplesPerConnection.get(connectionId)!;
+                  connectionResults.triples.push(triple);
+                  connectionResults.forQueries.add(id);
+                }
+              }
+            }
+            for (const triple of changedTriples) {
+              for (const connectionId of connectionIds) {
+                if (!deltaTriplesPerConnection.has(connectionId)) {
+                  deltaTriplesPerConnection.set(connectionId, {
+                    triples: [],
+                    forQueries: new Set(),
+                  });
+                }
+                const connectionResults =
+                  deltaTriplesPerConnection.get(connectionId)!;
+                connectionResults.triples.push(triple);
+                connectionResults.forQueries.add(id);
+              }
+            }
+          }
+        }
+      }
+      for (const [
+        connectionId,
+        { triples, forQueries },
+      ] of deltaTriplesPerConnection) {
+        const connection = this.connectionCallbacks.get(connectionId);
+        if (!(connection && triples.length)) continue;
+        connection.onResults(triples, [...forQueries]);
+      }
+    } catch (error) {
+      console.error(error);
+      // onError && (await onError(error));
+    }
   }
 }
 

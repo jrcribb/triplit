@@ -11,7 +11,6 @@ import {
   FetchResult,
   compareCursors,
   ValueCursor,
-  DBFetchOptions as AllDBFetchOptions,
   Attribute,
   TupleValue,
   schemaToJSON,
@@ -24,25 +23,41 @@ import {
   FetchResultEntityFromParts,
   StoreSchema,
   ClearOptions,
+  EntityCacheOptions,
+  Roles,
+  sessionRolesAreEquivalent,
+  getRolesFromSession,
+  normalizeSessionVars,
 } from '@triplit/db';
-import { decodeToken } from '../token.js';
+import { decodeToken, tokenIsExpired } from '../token.js';
 import {
   IndexedDbUnavailableError,
+  NoActiveSessionError,
+  SessionAlreadyActiveError,
+  SessionRolesMismatchError,
+  TokenExpiredError,
   UnrecognizedFetchPolicyError,
 } from '../errors.js';
 import { MemoryBTreeStorage } from '@triplit/db/storage/memory-btree';
 import { IndexedDbStorage } from '@triplit/db/storage/indexed-db';
 import { SyncTransport } from '../transport/transport.js';
-import { SyncEngine } from '../sync-engine.js';
+import { OnSessionErrorCallback, SyncEngine } from '../sync-engine.js';
 import {
+  ClientDBFetchOptions,
   ClientQuery,
   ClientQueryDefault,
   ClientSchema,
+  ErrorCallback,
+  FetchOptions,
+  InfiniteSubscription,
+  PaginatedSubscription,
   SchemaClientQueries,
+  SubscribeBackgroundOptions,
+  SubscriptionOptions,
 } from './types';
 import { clientQueryBuilder } from './query-builder.js';
 import { HttpClient } from '../http-client/http-client.js';
-import { Logger } from '@triplit/types/logger';
+import { Logger } from '../@triplit/types/logger.js';
 import { DefaultLogger } from '../client-logger.js';
 
 export interface SyncOptions {
@@ -63,6 +78,8 @@ interface AuthOptions {
 // Could probably make this an option if you want client side validation
 const SKIP_RULES = true;
 
+const SESSION_ROLES_KEY = 'SESSION_ROLES';
+
 function parseScope(query: ClientQuery<any, any>) {
   const { syncStatus } = query;
   if (!syncStatus) return ['cache', 'outbox'];
@@ -76,45 +93,17 @@ function parseScope(query: ClientQuery<any, any>) {
   }
 }
 
-type DBFetchOptions = Pick<AllDBFetchOptions, 'noCache'>;
+type SupportClientStorageProviders = 'indexeddb' | 'memory';
 
-export type LocalFirstFetchOptions = {
-  policy: 'local-first';
-};
-export type LocalOnlyFetchOptions = {
-  policy: 'local-only';
-};
-export type RemoteFirstFetchOptions = {
-  policy: 'remote-first';
-};
-export type RemoteOnlyFetchOptions = {
-  policy: 'remote-only';
-};
-export type LocalAndRemoteFetchOptions = {
-  policy: 'local-and-remote';
-  timeout?: number;
-};
-export type FetchOptions = DBFetchOptions &
-  (
-    | LocalFirstFetchOptions
-    | LocalOnlyFetchOptions
-    | RemoteFirstFetchOptions
-    | RemoteOnlyFetchOptions
-    | LocalAndRemoteFetchOptions
-  );
+export type SimpleClientStorageOptions =
+  | SupportClientStorageProviders
+  | { type: SupportClientStorageProviders; name?: string };
 
-type ClientSubscriptionOptions = {
-  localOnly: boolean;
-  onRemoteFulfilled?: () => void;
-};
-export type SubscriptionOptions = DBFetchOptions & ClientSubscriptionOptions;
-
-type StorageOptions =
+type SimpleStorageOrInstances =
   | { cache: Storage; outbox: Storage }
-  | 'indexeddb'
-  | 'memory';
+  | SimpleClientStorageOptions;
 
-function getClientStorage(storageOption: StorageOptions) {
+function getClientStorage(storageOption: SimpleStorageOrInstances) {
   if (
     typeof storageOption === 'object' &&
     ('cache' in storageOption || 'outbox' in storageOption)
@@ -124,19 +113,25 @@ function getClientStorage(storageOption: StorageOptions) {
     return storageOption;
   }
 
-  if (storageOption === 'memory')
+  const storageType =
+    typeof storageOption === 'object' ? storageOption.type : storageOption;
+
+  const storageName =
+    typeof storageOption === 'object' ? storageOption.name : 'triplit';
+
+  if (storageType === 'memory')
     return {
       cache: new MemoryBTreeStorage(),
       outbox: new MemoryBTreeStorage(),
     };
 
-  if (storageOption === 'indexeddb') {
+  if (storageType === 'indexeddb') {
     if (typeof indexedDB === 'undefined') {
       throw new IndexedDbUnavailableError();
     }
     return {
-      cache: new IndexedDbStorage('triplit-cache'),
-      outbox: new IndexedDbStorage('triplit-outbox'),
+      cache: new IndexedDbStorage(`${storageName}-cache`),
+      outbox: new IndexedDbStorage(`${storageName}-outbox`),
     };
   }
 }
@@ -148,15 +143,36 @@ type ClientTransactOptions = Pick<
   'manualSchemaRefresh' | 'skipRules'
 >;
 
+type TokenRefreshOptions = {
+  refreshHandler: () => Promise<string>;
+  interval?: number;
+};
+
 export interface ClientOptions<M extends ClientSchema = ClientSchema> {
   /**
    * The schema used to validate database operations and provide type-hinting. Read more about schemas {@link https://www.triplit.dev/docs/schemas | here }
    */
   schema?: M;
+
+  /**
+   * The roles used to authorize database operations. Read more about roles {@link https://www.triplit.dev/docs/authorization | here }
+   */
+  roles?: Roles;
   /**
    * The token used to authenticate with the server. If not provided, the client will not connect to a server. Read more about tokens {@link https://www.triplit.dev/docs/auth | here }
    */
   token?: string;
+
+  /**
+   * A callback that is called when the client's connection to server closes due to a session-related error.
+   */
+  onSessionError?: OnSessionErrorCallback;
+
+  /**
+   *
+   */
+  refreshOptions?: TokenRefreshOptions;
+
   /**
    * The path to the claims in the token, if they are nested.
    */
@@ -177,7 +193,7 @@ export interface ClientOptions<M extends ClientSchema = ClientSchema> {
   /**
    * The storage for the client cache. Can be `memory`, `indexeddb` or an object with `cache` and `outbox` properties. Defaults to `memory`. Read more about storage {@link https://www.triplit.dev/docs/client/storage | here }
    */
-  storage?: StorageOptions;
+  storage?: SimpleStorageOrInstances;
 
   /**
    * Default options for fetch queries. Read more about fetch options {@link https://www.triplit.dev/docs/client/fetch#policy | here }
@@ -202,6 +218,10 @@ export interface ClientOptions<M extends ClientSchema = ClientSchema> {
    */
   logLevel?: 'info' | 'warn' | 'error' | 'debug';
   skipRules?: boolean;
+
+  experimental?: {
+    entityCache?: EntityCacheOptions;
+  };
 }
 
 // default policy is local-and-remote and no timeout
@@ -217,6 +237,7 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
    */
   syncEngine: SyncEngine;
   authOptions: AuthOptions;
+  private tokenRefreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   http: HttpClient<M>;
 
@@ -236,7 +257,10 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
   constructor(options?: ClientOptions<M>) {
     const {
       schema,
+      roles,
       token,
+      onSessionError,
+      refreshOptions,
       claimsPath,
       serverUrl,
       syncSchema,
@@ -247,6 +271,7 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
       defaultQueryOptions,
       logger,
       logLevel = 'info',
+      experimental,
     } = options ?? {};
     this.logger =
       logger ??
@@ -262,13 +287,16 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
     const autoConnect = options?.autoConnect ?? true;
     const clock = new DurableClock('cache', clientId);
     this.authOptions = { token, claimsPath };
-    const dbSchema = schema ? { collections: schema, version: 0 } : undefined;
+    const dbSchema = schema
+      ? { collections: schema, version: 0, roles }
+      : undefined;
     this.db = new DB<M>({
       clock,
       schema: dbSchema,
       variables,
       sources: getClientStorage(storage ?? DEFAULT_STORAGE_OPTION),
       logger: this.logger.scope('db'),
+      experimental,
     });
 
     this.defaultFetchOptions = {
@@ -292,25 +320,24 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
       this.http.updateOptions({ schema: schema?.collections });
     });
 
-    if (this.authOptions.token) {
-      syncOptions.token = this.authOptions.token;
-      const decoded = decodeToken(
-        this.authOptions.token,
-        this.authOptions.claimsPath
-      );
-
-      this.db = this.db.withSessionVars(decoded);
-    }
-
     this.syncEngine = new SyncEngine(this, syncOptions);
+
+    if (onSessionError) {
+      this.onSessionError(onSessionError);
+    }
     // Look into how calling connect / disconnect early is handled
-    this.db.ready.then(() => {
-      if (autoConnect) this.syncEngine.connect();
+    this.db.ready.then(async () => {
+      token && (await this.startSession(token, autoConnect, refreshOptions));
     });
 
     if (syncSchema) {
-      this.syncEngine.subscribe(
-        this.db.query('_metadata').id('_schema').build()
+      this.subscribeBackground(
+        this.db.query('_metadata').id('_schema').build(),
+        {
+          onError: () => {
+            console.warn('Schema sync disconnected');
+          },
+        }
       );
     }
   }
@@ -409,6 +436,9 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
     }
 
     if (opts.policy === 'remote-only') {
+      console.warn(
+        "The fetch policy 'remote-only' is deprecated and may return incorrect results for queries with relations. Use TriplitClient.http.fetch to bypass the local cache completely and fetch from the server."
+      );
       return this.syncEngine.fetchQuery(query);
     }
 
@@ -426,7 +456,7 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
 
   private async fetchLocal<CQ extends SchemaClientQueries<M>>(
     query: CQ,
-    options?: Partial<DBFetchOptions>
+    options?: Partial<ClientDBFetchOptions>
   ): Promise<Unalias<FetchResult<M, ToQuery<M, CQ>>>> {
     const scope = parseScope(query);
     this.logger.debug('fetchLocal START', query, scope);
@@ -475,7 +505,7 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
   }
 
   async reset(options: ClearOptions = {}) {
-    await this.syncEngine.reset();
+    await this.syncEngine.resetQueryState();
     await this.clear(options);
   }
 
@@ -614,7 +644,7 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
       results: Unalias<FetchResult<M, ToQuery<M, CQ>>>,
       info: { hasRemoteFulfilled: boolean }
     ) => void | Promise<void>,
-    onError?: (error: any) => void | Promise<void>,
+    onError?: ErrorCallback,
     options?: Partial<SubscriptionOptions>
   ) {
     let unsubscribed = false;
@@ -639,8 +669,15 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
           }
         );
       } catch (e) {
-        if (onError) onError(e);
-        else warnError(e);
+        if (onError) {
+          if (e instanceof Error) onError(e);
+          else
+            onError(
+              new TriplitError(
+                'An unknown error occurred while running subscription'
+              )
+            );
+        } else warnError(e);
         return () => {};
       }
     }
@@ -691,11 +728,16 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
         // This is a hack to make sure we don't call onRemoteFulfilled before
         // the local subscription callback has had a chance to refire
         fulfilledTimeout = setTimeout(() => {
-          clientSubscriptionCallback(results);
+          // Technically results might not be defined, for now return an empty array and the DB will fire with the latest data
+          // TODO: centralize subscription pipeline to handle this better
+          clientSubscriptionCallback(results ?? []);
           opts.onRemoteFulfilled?.();
         }, 250);
       };
-      unsubscribeRemote = this.syncEngine.subscribe(query, onFulfilled);
+      unsubscribeRemote = this.syncEngine.subscribe(query, {
+        onQueryFulfilled: onFulfilled,
+        onQueryError: onError,
+      });
     }
     return () => {
       unsubscribed = true;
@@ -710,7 +752,7 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
       results: TripleRow[],
       info: { hasRemoteFulfilled: boolean }
     ) => void | Promise<void>,
-    onError?: (error: any) => void | Promise<void>,
+    onError?: ErrorCallback,
     options?: Partial<SubscriptionOptions>
   ) {
     let unsubscribed = false;
@@ -735,8 +777,15 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
           }
         );
       } catch (e) {
-        if (onError) onError(e);
-        else warnError(e);
+        if (onError) {
+          if (e instanceof Error) onError(e);
+          else
+            onError(
+              new TriplitError(
+                'An unknown error occurred while running subscription'
+              )
+            );
+        } else warnError(e);
         return () => {};
       }
     }
@@ -788,13 +837,29 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
           opts.onRemoteFulfilled?.();
         }, 250);
       };
-      unsubscribeRemote = this.syncEngine.subscribe(query, onFulfilled);
+      unsubscribeRemote = this.syncEngine.subscribe(query, {
+        onQueryFulfilled: onFulfilled,
+        onQueryError: onError,
+      });
     }
     return () => {
       unsubscribed = true;
       unsubscribeLocal();
       unsubscribeRemote();
     };
+  }
+
+  /**
+   * Syncs a query to your local database in the background. This is useful to pre-fetch a larger portion of data and used in combination with local-only subscriptions.
+   */
+  subscribeBackground<CQ extends SchemaClientQueries<M>>(
+    query: CQ,
+    options: SubscribeBackgroundOptions = {}
+  ) {
+    return this.syncEngine.subscribe(query, {
+      onQueryFulfilled: options.onFulfilled,
+      onQueryError: options.onError,
+    });
   }
 
   /**
@@ -1088,7 +1153,9 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
    *
    * @param options - The options to update the client with
    */
-  updateOptions(options: Pick<ClientOptions<M>, 'token' | 'serverUrl'>) {
+  private updateOptions(
+    options: Pick<ClientOptions<M>, 'token' | 'serverUrl'>
+  ) {
     const { token, serverUrl } = options;
     const hasToken = options.hasOwnProperty('token');
     const hasServerUrl = options.hasOwnProperty('serverUrl');
@@ -1119,6 +1186,143 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
     }
   }
 
+  private async getRolesForSyncSession(): Promise<DB['sessionRoles']> {
+    const savedSessionRoles = await this.db.tripleStore.readMetadataTuples(
+      SESSION_ROLES_KEY,
+      []
+    );
+    if (savedSessionRoles.length === 0) return undefined;
+    if (savedSessionRoles[0][2] === null) return undefined;
+    let parsedRoles;
+    try {
+      parsedRoles = JSON.parse(
+        savedSessionRoles[0][2] as string
+      ) as DB['sessionRoles'];
+    } catch (e) {
+      console.error('Error parsing saved session roles', e);
+    }
+    return parsedRoles;
+  }
+
+  /**
+   * Starts a new sync session with the provided token
+   *
+   * @param token - The token to start the session with
+   * @param autoConnect - If true, the client will automatically connect to the server after starting the session. Defaults to true.
+   * @param refreshOptions - Options for refreshing the token
+   * @param refreshOptions.interval - The interval in milliseconds to refresh the token. If not provided, the token will be refreshed 500ms before it expires.
+   * @param refreshOptions.handler - The function to call to refresh the token. It returns a promise that resolves with the new token.
+   */
+  async startSession(
+    token: string,
+    autoConnect = true,
+    refreshOptions?: {
+      interval?: number;
+      refreshHandler: () => Promise<string>;
+    }
+  ) {
+    // If there is already an active session, you should not be able to start a new one
+    if (this.syncEngine.token) {
+      throw new SessionAlreadyActiveError();
+    }
+    if (tokenIsExpired(decodeToken(token))) {
+      if (!refreshOptions?.refreshHandler) {
+        // should we centralize this in
+        throw new TokenExpiredError();
+      }
+      token = await refreshOptions.refreshHandler();
+    }
+    // TODO: handle db readiness in lower level APIs
+    await this.db.ready;
+
+    // Start the session with the provided token
+    // Update the token on the client to the new token (this will close the current connection)
+    this.updateToken(token);
+
+    // Check if the role information for this token is the same as the last
+    // If so, we don't need to reset the sync state
+    const savedRoles = await this.getRolesForSyncSession();
+    if (!sessionRolesAreEquivalent(this.db.sessionRoles, savedRoles)) {
+      // save the new session roles to storage
+      await this.db.tripleStore.updateMetadataTuples([
+        [SESSION_ROLES_KEY, [], JSON.stringify(this.db.sessionRoles ?? [])],
+      ]);
+      await this.syncEngine.resetQueryState();
+    }
+
+    // If autoConnect is true, connect the client to the server
+    autoConnect && this.connect();
+
+    // Setup token refresh handler
+    if (!refreshOptions) return;
+    const { interval, refreshHandler } = refreshOptions;
+    const setRefreshTimeoutForToken = (refreshToken: string) => {
+      const decoded = decodeToken(refreshToken);
+      if (!decoded.exp && !interval) return;
+      let delay = interval ?? decoded.exp * 1000 - Date.now() - 1000;
+      if (delay < 1000) {
+        this.logger.warn(
+          `The minimum allowed refresh interval is 1000ms, the ${interval ? 'provided interval' : 'interval determined from the provided token'} was ${Math.round(delay)}ms.`
+        );
+        delay = 1000;
+      }
+      this.tokenRefreshTimer = setTimeout(async () => {
+        const freshToken = await refreshHandler();
+        this.updateSessionToken(freshToken);
+        setRefreshTimeoutForToken(freshToken);
+      }, delay);
+    };
+    setRefreshTimeoutForToken(token);
+    return () => {
+      this.resetTokenRefreshHandler();
+    };
+  }
+
+  /**
+   * Disconnects the client from the server and ends the current sync session.
+   */
+  async endSession() {
+    this.resetTokenRefreshHandler();
+    this.disconnect();
+    this.updateToken(undefined);
+    await this.syncEngine.resetQueryState();
+    await this.db.tripleStore.transact(async (tx) => {
+      await tx.deleteMetadataTuples([[SESSION_ROLES_KEY]]);
+    });
+  }
+
+  /**
+   * Attempts to update the token of the current session, which re-use the current connection. If the new token does not have the same roles as the current session, an error will be thrown.
+   */
+  updateSessionToken(token: string) {
+    if (!this.syncEngine.token) {
+      throw new NoActiveSessionError();
+    }
+    const decodedToken = decodeToken(token);
+    if (tokenIsExpired(decodedToken)) {
+      throw new TokenExpiredError();
+    }
+    const sessionRoles = getRolesFromSession(
+      this.db.schema,
+      normalizeSessionVars(decodedToken)
+    );
+    if (!sessionRolesAreEquivalent(this.db.sessionRoles, sessionRoles)) {
+      throw new SessionRolesMismatchError();
+    }
+    this.syncEngine.updateTokenForSession(token);
+  }
+
+  resetTokenRefreshHandler() {
+    if (this.tokenRefreshTimer) {
+      clearTimeout(this.tokenRefreshTimer);
+      this.tokenRefreshTimer = null;
+    }
+  }
+
+  onSessionError(callback: OnSessionErrorCallback) {
+    return this.syncEngine.onSessionError(callback);
+  }
+
   withSessionVars(session: any) {
     const newClient = new TriplitClient<M>(this.options);
     newClient.db = this.db.withSessionVars(session);
@@ -1130,7 +1334,7 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
    *
    * @param token
    */
-  updateToken(token: string | undefined) {
+  private updateToken(token: string | undefined) {
     this.updateOptions({ token });
   }
 
@@ -1159,8 +1363,8 @@ export class TriplitClient<M extends ClientSchema = ClientSchema> {
    * @param callback
    * @returns a function removing the listener callback
    */
-  onTxFailureRemote(txId: string, callback: () => void) {
-    return this.syncEngine.onTxFailure(txId, callback);
+  onTxFailureRemote(...args: Parameters<typeof this.syncEngine.onTxFailure>) {
+    return this.syncEngine.onTxFailure(...args);
   }
 
   /**
@@ -1255,17 +1459,6 @@ function warnError(e: any) {
     console.warn(e);
   }
 }
-
-export type PaginatedSubscription = {
-  unsubscribe: () => void;
-  nextPage: () => void;
-  prevPage: () => void;
-};
-
-export type InfiniteSubscription = {
-  unsubscribe: () => void;
-  loadMore: (pageSize?: number) => void;
-};
 
 function flipOrder(order: any) {
   if (!order) return undefined;

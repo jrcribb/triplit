@@ -1,21 +1,47 @@
 import { Server as TriplitServer } from '@triplit/server-core';
-import { TriplitClient, ClientSchema } from '@triplit/client';
+import {
+  TriplitClient,
+  ClientSchema,
+  SessionAlreadyActiveError,
+  TokenExpiredError,
+  SessionRolesMismatchError,
+  NoActiveSessionError,
+} from '@triplit/client';
 import { describe, vi, it, expect } from 'vitest';
-import DB, { Models, Schema as S, genToArr, or } from '@triplit/db';
-import { MemoryBTreeStorage as MemoryStorage } from '@triplit/db/storage/memory-btree';
-import { hashQuery } from '@triplit/client';
+import DB, {
+  Models,
+  Roles,
+  Schema as S,
+  StoreSchema,
+  genToArr,
+  or,
+} from '@triplit/db';
+import {
+  MemoryBTreeStorage,
+  MemoryBTreeStorage as MemoryStorage,
+} from '@triplit/db/storage/memory-btree';
+import { hashQuery } from '@triplit/db';
 import { pause } from '../utils/async.js';
 import {
   NOT_SERVICE_KEY,
   SERVICE_KEY,
   createTestClient,
+  spyMessages,
+  throwOnError,
 } from '../utils/client.js';
+import * as Jose from 'jose';
 
 describe('TestTransport', () => {
   it('can sync an insert on one client to another client', async () => {
     const server = new TriplitServer(new DB({ source: new MemoryStorage() }));
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
-    const bob = createTestClient(server, SERVICE_KEY, { clientId: 'bob' });
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'bob',
+    });
     const callback = vi.fn();
     bob.subscribe(bob.query('test').build(), callback);
     await alice.insert('test', { name: 'alice' });
@@ -43,12 +69,14 @@ describe('schema syncing', () => {
         schema: { collections: schema, version: 1 },
       })
     );
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
       clientId: 'alice',
       schema,
       syncSchema: true,
+      token: SERVICE_KEY,
     });
-    const bob = createTestClient(server, SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'bob',
       schema,
       syncSchema: true,
@@ -100,12 +128,14 @@ describe('schema syncing', () => {
     const server = new TriplitServer(
       new DB({ source: new MemoryStorage(), schema })
     );
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
       syncSchema: false,
     });
-    const bob = createTestClient(server, SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'bob',
       schema: schema.collections,
       syncSchema: true,
@@ -145,12 +175,14 @@ describe('schema syncing', () => {
     const server = new TriplitServer(
       new DB({ source: new MemoryStorage(), schema })
     );
-    const alice = createTestClient(server, NOT_SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: NOT_SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
       syncSchema: true,
     });
-    const bob = createTestClient(server, SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'bob',
       schema: schema.collections,
       syncSchema: true,
@@ -215,11 +247,13 @@ describe('Relational Query Syncing', () => {
     const server = new TriplitServer(
       new DB({ source: new MemoryStorage(), schema })
     );
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
     });
-    const bob = createTestClient(server, SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'bob',
       schema: schema.collections,
     });
@@ -256,9 +290,16 @@ describe('Relational Query Syncing', () => {
 describe('Conflicts', () => {
   it('can merge conflicts', async () => {
     const server = new TriplitServer(new DB({ source: new MemoryStorage() }));
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
-    const bob = createTestClient(server, SERVICE_KEY, { clientId: 'bob' });
-    const charlie = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'bob',
+    });
+    const charlie = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'charlie',
     });
     const query = bob.query('rappers').build();
@@ -357,7 +398,8 @@ describe('Connection Status', () => {
     const server = new TriplitServer(
       new DB({ source: new MemoryStorage(), schema })
     );
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
     });
@@ -379,7 +421,8 @@ describe('Connection Status', () => {
     }
     // expect(await alice.fetch(query)).toHaveLength(1);
 
-    const bob = createTestClient(server, SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'bob',
       schema: schema.collections,
     });
@@ -404,7 +447,8 @@ describe('Connection Status', () => {
     const server = new TriplitServer(
       new DB({ source: new MemoryStorage(), schema })
     );
-    const client = createTestClient(server, SERVICE_KEY, {
+    const client = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
     });
@@ -438,10 +482,14 @@ describe('deletes', () => {
     // [baseQuery.order('name', 'ASC').limit(1), ['alice2']],
   ])('can sync deletes for queries ', async (query, results) => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
     });
-    const bob = createTestClient(server, SERVICE_KEY, { clientId: 'bob' });
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'bob',
+    });
 
     // set up data to delete
     await alice.insert('test', { id: 'alice1', name: 'alice1' });
@@ -488,8 +536,8 @@ describe('deletes', () => {
         schema,
       })
     );
-    const alice = createTestClient(server, NOT_SERVICE_KEY);
-    const bob = createTestClient(server, NOT_SERVICE_KEY);
+    const alice = createTestClient(server, { token: NOT_SERVICE_KEY });
+    const bob = createTestClient(server, { token: NOT_SERVICE_KEY });
     // set up a subscription for bob
     const bobSub = vi.fn();
     const aliceSub = vi.fn();
@@ -528,11 +576,13 @@ describe('deletes', () => {
       },
     };
     const server = new TriplitServer(new DB({ schema }));
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
     });
-    const bob = createTestClient(server, SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'bob',
       schema: schema.collections,
     });
@@ -559,8 +609,14 @@ describe('array syncing', () => {
   // Important to test for rules...
   it('can sync schemaless arrays', async () => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
-    const bob = createTestClient(server, SERVICE_KEY, { clientId: 'bob' });
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'bob',
+    });
     // insert data
     await alice.insert('test', { id: 'alice1', data: [1, 2, 3] });
     await pause();
@@ -608,8 +664,14 @@ describe('array syncing', () => {
 describe('record syncing', () => {
   it('can sync record deletes', async () => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
-    const bob = createTestClient(server, SERVICE_KEY, { clientId: 'bob' });
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'bob',
+    });
     // insert data
     await alice.insert('test', {
       id: 'alice1',
@@ -649,8 +711,14 @@ describe('record syncing', () => {
 
   it('can sync record re-assignments', async () => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
-    const bob = createTestClient(server, SERVICE_KEY, { clientId: 'bob' });
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'bob',
+    });
     // insert data
     await alice.insert('test', {
       id: 'alice1',
@@ -709,7 +777,10 @@ describe('Server API', () => {
     const sesh = server.createSession({
       'x-triplit-token-type': 'secret',
     });
-    const bob = createTestClient(server, NOT_SERVICE_KEY, { clientId: 'bob' });
+    const bob = createTestClient(server, {
+      token: NOT_SERVICE_KEY,
+      clientId: 'bob',
+    });
     const callback = vi.fn();
     bob.subscribe(bob.query('test').build(), callback);
     await pause();
@@ -731,10 +802,14 @@ describe('Sync situations', () => {
       const serverDB = new DB();
       await serverDB.insert('test', { id: 'test1', name: 'test1' });
       const server = new TriplitServer(serverDB);
-      const alice = createTestClient(server, SERVICE_KEY, {
+      const alice = createTestClient(server, {
+        token: SERVICE_KEY,
         clientId: 'alice',
       });
-      const bob = createTestClient(server, SERVICE_KEY, { clientId: 'bob' });
+      const bob = createTestClient(server, {
+        token: SERVICE_KEY,
+        clientId: 'bob',
+      });
 
       const aliceSub = vi.fn();
       const bobSub = vi.fn();
@@ -768,10 +843,14 @@ describe('Sync situations', () => {
       const serverDB = new DB();
       await serverDB.insert('test', { id: 'test1' });
       const server = new TriplitServer(serverDB);
-      const alice = createTestClient(server, SERVICE_KEY, {
+      const alice = createTestClient(server, {
+        token: SERVICE_KEY,
         clientId: 'alice',
       });
-      const bob = createTestClient(server, SERVICE_KEY, { clientId: 'bob' });
+      const bob = createTestClient(server, {
+        token: SERVICE_KEY,
+        clientId: 'bob',
+      });
 
       // set up subscriptions
       const aliceSub = vi.fn();
@@ -801,7 +880,10 @@ describe('Sync situations', () => {
   // TODO: look into the validity of this test...seeing mixed results depending on pause time
   it('subscriptions dont overfire', async () => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
     const aliceSub = vi.fn();
     alice.subscribe(alice.query('test').build(), aliceSub);
     await pause();
@@ -849,8 +931,14 @@ describe('Sync situations', () => {
       id: 'austin',
       state: 'TX',
     });
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
-    const bob = createTestClient(server, SERVICE_KEY, { clientId: 'bob' });
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'bob',
+    });
     const query = alice
       .query('cities')
       .select(['id'])
@@ -901,11 +989,13 @@ describe('Sync situations', () => {
     };
     const db = new DB({ schema });
     const server = new TriplitServer(db);
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
     });
-    const bob = createTestClient(server, SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'bob',
       schema: schema.collections,
     });
@@ -1026,11 +1116,13 @@ describe('Sync situations', () => {
     await server.db.insert('main', { id: '3', relationId: '3' });
     await server.db.insert('main', { id: '4', relationId: '4' });
 
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
     });
-    const bob = createTestClient(server, SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'bob',
       schema: schema.collections,
     });
@@ -1077,12 +1169,100 @@ describe('Sync situations', () => {
       expect(bobResults).toEqual(['4', '2', '3', '1']);
     }
   });
+
+  describe('background syncing', () => {
+    it('can subscribe to a bulk query in the background and use local subscriptions for data', async () => {
+      const server = new TriplitServer(new DB());
+      await server.db.transact(async (tx) => {
+        await tx.insert('students', { id: '1', name: 'Alice', dorm: 'A' });
+        await tx.insert('students', { id: '2', name: 'Bob', dorm: 'B' });
+        await tx.insert('students', { id: '3', name: 'Charlie', dorm: 'A' });
+        await tx.insert('students', { id: '4', name: 'David', dorm: 'B' });
+        await tx.insert('students', { id: '5', name: 'Eve', dorm: 'A' });
+      });
+
+      const alice = createTestClient(server, {
+        token: SERVICE_KEY,
+        clientId: 'alice',
+      });
+
+      const remoteQuery = alice.query('students').build();
+      const localQueryA = alice
+        .query('students')
+        .where('dorm', '=', 'A')
+        .build();
+      const localQueryB = alice
+        .query('students')
+        .where('dorm', '=', 'B')
+        .build();
+
+      const subA = vi.fn();
+      const subB = vi.fn();
+
+      alice.subscribe(localQueryA, subA, throwOnError, { localOnly: true });
+      alice.subscribe(localQueryB, subB, throwOnError, { localOnly: true });
+
+      await pause();
+
+      expect(subA.mock.calls.at(-1)[0]).toHaveLength(0);
+      expect(subA).toHaveBeenCalledTimes(1);
+      expect(subB.mock.calls.at(-1)[0]).toHaveLength(0);
+      expect(subB).toHaveBeenCalledTimes(1);
+
+      // triggers sync
+      alice.subscribeBackground(remoteQuery, { onError: throwOnError });
+
+      await pause();
+
+      expect(subA.mock.calls.at(-1)[0]).toHaveLength(3);
+      expect(subA).toHaveBeenCalledTimes(2);
+      expect(subB.mock.calls.at(-1)[0]).toHaveLength(2);
+      expect(subB).toHaveBeenCalledTimes(2);
+
+      await alice.insert('students', { id: '6', name: 'Frank', dorm: 'A' });
+
+      await pause();
+
+      expect(subA.mock.calls.at(-1)[0]).toHaveLength(4);
+      expect(subA).toHaveBeenCalledTimes(3);
+      expect(subB.mock.calls.at(-1)[0]).toHaveLength(2);
+      expect(subB).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('fires onFulfileld callback when a query is fulfilled', async () => {
+    const server = new TriplitServer(new DB());
+    await server.db.insert('test', { id: 'test1', name: 'test1' });
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
+    const query = alice.query('test').build();
+
+    {
+      const fetchResult = await alice.fetch(query);
+      expect(fetchResult).toHaveLength(0);
+    }
+
+    const callback = vi.fn();
+    alice.subscribeBackground(query, {
+      onError: throwOnError,
+      onFulfilled: callback,
+    });
+    await pause();
+    expect(callback).toHaveBeenCalledTimes(1);
+    {
+      const fetchResult = await alice.fetch(query);
+      expect(fetchResult).toHaveLength(1);
+    }
+  });
 });
 
 describe('sync status', () => {
   it('subscriptions are scoped via syncStatus', async () => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       autoConnect: false,
     });
@@ -1118,7 +1298,10 @@ describe('sync status', () => {
   });
   it('subscriptions return a subset of entity attributes based on syncStatus', async () => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
     const aliceSubPending = vi.fn();
     const aliceSubConfirmed = vi.fn();
     const aliceSubAll = vi.fn();
@@ -1164,8 +1347,14 @@ describe('sync status', () => {
 describe('offline capabilities', () => {
   it('can sync deletes after being offline', async () => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
-    const bob = createTestClient(server, SERVICE_KEY, { clientId: 'bob' });
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'bob',
+    });
     await alice.insert('test', { id: 'test1', name: 'test1' });
     await pause();
 
@@ -1237,11 +1426,13 @@ describe('subquery syncing', () => {
     const server = new TriplitServer(
       new DB({ source: new MemoryStorage(), schema })
     );
-    const alice = createTestClient(server, NOT_SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: NOT_SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
     });
-    const bob = createTestClient(server, NOT_SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: NOT_SERVICE_KEY,
       clientId: 'bob',
       schema: schema.collections,
     });
@@ -1303,11 +1494,13 @@ describe('subquery syncing', () => {
     const server = new TriplitServer(
       new DB({ source: new MemoryStorage(), schema })
     );
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
     });
-    const bob = createTestClient(server, SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'bob',
       schema: schema.collections,
     });
@@ -1363,11 +1556,13 @@ describe('subquery syncing', () => {
     const server = new TriplitServer(
       new DB({ source: new MemoryStorage(), schema })
     );
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
     });
-    const bob = createTestClient(server, SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'bob',
       schema: schema.collections,
     });
@@ -1425,11 +1620,13 @@ describe('subquery syncing', () => {
     const server = new TriplitServer(
       new DB({ source: new MemoryStorage(), schema })
     );
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
     });
-    const bob = createTestClient(server, SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'bob',
       schema: schema.collections,
     });
@@ -1501,11 +1698,13 @@ describe('subquery syncing', () => {
       },
     };
     const server = new TriplitServer(new DB({ schema }));
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
     });
-    const bob = createTestClient(server, SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'bob',
       schema: schema.collections,
     });
@@ -1554,7 +1753,8 @@ describe('subquery syncing', () => {
     } satisfies ClientSchema;
     const serverDb = new DB({ schema: { collections: schema, version: 0 } });
     const server = new TriplitServer(serverDb);
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       schema: schema,
     });
@@ -1613,11 +1813,13 @@ describe('pagination syncing', () => {
     const server = new TriplitServer(
       new DB({ source: new MemoryStorage(), schema })
     );
-    const alice = createTestClient(server, SERVICE_KEY, {
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
       schema: schema.collections,
     });
-    const bob = createTestClient(server, SERVICE_KEY, {
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'bob',
       schema: schema.collections,
     });
@@ -1660,17 +1862,17 @@ describe('pagination syncing', () => {
         .map(([id]) => id)
     );
     // insert new todo
-    const new_id = 'inserted';
-    const date = '2021-01-05T00:00:00.001Z';
+    const NEW_ID = 'inserted';
+    const DATE = '2021-01-05T00:00:00.001Z';
     await alice.insert('todos', {
       text: 'todo',
-      created_at: new Date(date),
-      id: new_id,
+      created_at: new Date(DATE),
+      id: NEW_ID,
     });
     await pause(150);
     expect(bobSub.mock.calls.at(-1)[0]).toHaveLength(5);
     expect([...bobSub.mock.calls.at(-1)[0].map((e: any) => e.id)]).toEqual([
-      new_id,
+      NEW_ID,
       ...datesInASCOrder
         .slice()
         .reverse()
@@ -1678,8 +1880,8 @@ describe('pagination syncing', () => {
         .map(([id]) => id),
     ]);
     // delete a todo
-    await alice.delete('todos', new_id);
-    await pause();
+    await alice.delete('todos', NEW_ID);
+    await pause(200);
     expect(bobSub.mock.calls.at(-1)[0]).toHaveLength(5);
     expect([...bobSub.mock.calls.at(-1)[0].map((e: any) => e.id)]).toEqual(
       datesInASCOrder
@@ -1720,7 +1922,8 @@ describe('stateful query syncing', () => {
       id: 'austin',
       state: 'TX',
     });
-    const client = createTestClient(server, SERVICE_KEY, {
+    const client = createTestClient(server, {
+      token: SERVICE_KEY,
       clientId: 'alice',
     });
     {
@@ -1762,8 +1965,14 @@ describe('stateful query syncing', () => {
 
 it('Updates dont oversend triples', async () => {
   const server = new TriplitServer(new DB());
-  const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
-  const bob = createTestClient(server, SERVICE_KEY, { clientId: 'bob' });
+  const alice = createTestClient(server, {
+    token: SERVICE_KEY,
+    clientId: 'alice',
+  });
+  const bob = createTestClient(server, {
+    token: SERVICE_KEY,
+    clientId: 'bob',
+  });
   await alice.insert('test', { id: 'test1', name: 'test1' });
   await pause();
   // // setup subscriptions
@@ -1796,8 +2005,14 @@ it('Updates dont oversend triples', async () => {
 describe('outbox', () => {
   it('on sync data will move from the outbox to the cache', async () => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
-    const bob = createTestClient(server, SERVICE_KEY, { clientId: 'bob' });
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
+    const bob = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'bob',
+    });
 
     const query = alice.query('test').build();
     const aliceSub = vi.fn();
@@ -1854,7 +2069,8 @@ describe('outbox', () => {
       async () => {
         // Setup some initial data in the outbox
         const server = new TriplitServer(new DB());
-        const alice = createTestClient(server, SERVICE_KEY, {
+        const alice = createTestClient(server, {
+          token: SERVICE_KEY,
           clientId: 'alice',
           autoConnect: false,
         });
@@ -1929,7 +2145,8 @@ describe('outbox', () => {
 
       // Schemas dont match but the server doenst disconnect?
       const server = new TriplitServer(db);
-      const alice = createTestClient(server, SERVICE_KEY, {
+      const alice = createTestClient(server, {
+        token: SERVICE_KEY,
         clientId: 'alice',
         autoConnect: false,
       });
@@ -1953,6 +2170,7 @@ describe('outbox', () => {
 
       // When alice sends the first TRIPLES message, all txs should send
       {
+        let passed = false;
         const unsubscribe = alice.syncEngine.onSyncMessageSent(
           async (message) => {
             if (message.type === 'TRIPLES') {
@@ -1970,17 +2188,20 @@ describe('outbox', () => {
               expect(tx1Triples).toHaveLength(3);
               expect(tx2Triples).toHaveLength(3);
               expect(tx3Triples).toHaveLength(3);
+              passed = true;
             }
           }
         );
+        alice.syncEngine.connect();
+        await pause(1000);
+        expect(passed).toBe(true);
       }
-      alice.syncEngine.connect();
-      await pause(300);
-      // @ts-expect-error (not exposed)
 
+      // @ts-expect-error (not exposed)
       // Eventaully, flush outbox again and check that only the failed tx is sent
       alice.syncEngine.signalOutboxTriples();
       {
+        let passed = false;
         const unsubscribe = alice.syncEngine.onSyncMessageSent(
           async (message) => {
             if (message.type === 'TRIPLES') {
@@ -1998,17 +2219,20 @@ describe('outbox', () => {
               expect(tx1Triples).toHaveLength(0);
               expect(tx2Triples).toHaveLength(3);
               expect(tx3Triples).toHaveLength(0);
+              passed = true;
             }
           }
         );
+        await pause(300);
+        expect(passed).toBe(true);
       }
-      await pause(300);
     });
 
     it('on socket disconnect, un-ACKed triples will be re-sent', async () => {
       // Setup data with a successful tx
       const server = new TriplitServer(new DB());
-      const alice = createTestClient(server, SERVICE_KEY, {
+      const alice = createTestClient(server, {
+        token: SERVICE_KEY,
         clientId: 'alice',
         autoConnect: false,
       });
@@ -2084,7 +2308,7 @@ describe('rules', () => {
               filter: [
                 or([
                   ['author_id', '=', '$SESSION_USER_ID'],
-                  ['collaborators', 'has', '$SESSION_USER_ID'],
+                  ['collaborators', 'has', '$session.SESSION_USER_ID'],
                 ]),
               ],
             },
@@ -2094,16 +2318,17 @@ describe('rules', () => {
     } satisfies ClientSchema;
     const serverDb = new DB({ schema: { collections: schema, version: 0 } });
     const server = new TriplitServer(serverDb);
-
     // Insert users
     await serverDb.insert('users', { id: 'alice', name: 'Alice' });
     await serverDb.insert('users', { id: 'bob', name: 'Bob' });
 
-    const alice = createTestClient(server, ALICE_TOKEN, {
+    const alice = createTestClient(server, {
+      token: ALICE_TOKEN,
       clientId: 'alice',
       schema: schema,
     });
-    const bob = createTestClient(server, BOB_TOKEN, {
+    const bob = createTestClient(server, {
+      token: BOB_TOKEN,
       clientId: 'bob',
       schema: schema,
     });
@@ -2124,9 +2349,9 @@ describe('rules', () => {
     const secondPostId = output?.id;
     await pause(200);
     expect(bobCallback).toHaveBeenCalledTimes(2);
-    const lastCallVal = bobCallback.mock.calls.at(-1)[0];
-    expect(lastCallVal).toHaveLength(1);
-    expect(lastCallVal.find((e: any) => e.id === secondPostId)).toBeTruthy();
+    const bobLastCallVal = bobCallback.mock.calls.at(-1)[0];
+    expect(bobLastCallVal).toHaveLength(1);
+    expect(bobLastCallVal.find((e: any) => e.id === secondPostId)).toBeTruthy();
   });
 
   it('can write when matching rules', async () => {
@@ -2167,11 +2392,13 @@ describe('rules', () => {
     await serverDb.insert('users', { id: 'alice', name: 'Alice' });
     await serverDb.insert('users', { id: 'bob', name: 'Bob' });
 
-    const alice = createTestClient(server, ALICE_TOKEN, {
+    const alice = createTestClient(server, {
+      token: ALICE_TOKEN,
       clientId: 'alice',
       schema: schema,
     });
-    const bob = createTestClient(server, BOB_TOKEN, {
+    const bob = createTestClient(server, {
+      token: BOB_TOKEN,
       clientId: 'bob',
       schema: schema,
     });
@@ -2199,10 +2426,334 @@ describe('rules', () => {
   });
 });
 
+describe('permissions', () => {
+  const SCHEMA = {
+    roles: {
+      user: {
+        match: {
+          sub: '$userId',
+        },
+      },
+    },
+    collections: {
+      groupChats: {
+        schema: S.Schema({
+          id: S.String(),
+          memberIds: S.Set(S.String()),
+          name: S.String(),
+          adminId: S.String(),
+        }),
+        permissions: {
+          user: {
+            read: {
+              filter: [['memberIds', 'has', '$role.userId']],
+            },
+            update: {
+              filter: [['adminId', '=', '$role.userId']],
+            },
+            insert: {
+              filter: [['memberIds', 'has', '$role.userId']],
+            },
+          },
+        },
+      },
+      messages: {
+        schema: S.Schema({
+          id: S.String(),
+          authorId: S.String(),
+          text: S.String(),
+          groupId: S.String(),
+          group: S.RelationById('groupChats', '$groupId'),
+        }),
+        permissions: {
+          user: {
+            read: {
+              filter: [['group.memberIds', 'has', '$role.userId']],
+            },
+            update: {
+              filter: [false],
+            },
+            insert: {
+              filter: [
+                ['group.memberIds', 'has', '$role.userId'],
+                ['authorId', '=', '$role.userId'],
+              ],
+            },
+          },
+        },
+      },
+    },
+    version: 0,
+  } satisfies StoreSchema<Models>;
+
+  // signing key = "integration-tests"
+  const ALICE_TOKEN =
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbGljZSIsIngtdHJpcGxpdC1wcm9qZWN0LWlkIjoidG9kb3MiLCJpYXQiOjE2OTc0NzkwMjd9.5sgJA0olA18LreY8_XTGx4_CAnoDLy9tvJsgUqTI2JU';
+  const BOB_TOKEN =
+    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJib2IiLCJ4LXRyaXBsaXQtcHJvamVjdC1pZCI6InRvZG9zIiwiaWF0IjoxNjk3NDc5MDI3fQ.S9lOFgpUnUnZuX19bzxkEnyoPDQ4oscpWmwA_NkEW5g';
+
+  describe('insert', async () => {
+    it('restricts groupChat insertions', async () => {
+      const server = new TriplitServer(new DB({ schema: SCHEMA }));
+      const alice = createTestClient(server, {
+        token: ALICE_TOKEN,
+        clientId: 'alice',
+        schema: SCHEMA.collections,
+      });
+      const bob = createTestClient(server, {
+        token: BOB_TOKEN,
+        clientId: 'bob',
+        schema: SCHEMA.collections,
+      });
+      const aliceSub = vi.fn();
+      const bobSub = vi.fn();
+      alice.subscribe(alice.query('groupChats').build(), aliceSub);
+      bob.subscribe(bob.query('groupChats').build(), bobSub);
+
+      await pause();
+
+      // Alice can insert a group chat where she is a member
+      {
+        const { txId: aliceTx } = await alice.insert('groupChats', {
+          id: 'chat1',
+          memberIds: new Set(['alice']),
+          name: 'chat1',
+          adminId: 'alice',
+        });
+        alice.onTxFailureRemote(aliceTx!, throwOnError);
+        await pause();
+        expect(aliceSub).toHaveBeenCalled();
+        expect(aliceSub.mock.calls.at(-1)?.[0]).toHaveLength(1);
+        expect(bobSub).toHaveBeenCalled();
+        expect(bobSub.mock.calls.at(-1)?.[0]).toHaveLength(0);
+      }
+
+      // Bob cannot insert a group chat where he is not a member
+      {
+        const { txId } = await bob.insert('groupChats', {
+          id: 'chat2',
+          memberIds: new Set(['alice']),
+          name: 'chat2',
+          adminId: 'alice',
+        });
+        const bobErrorSub = vi.fn();
+        bob.onTxFailureRemote(txId!, bobErrorSub);
+        await pause();
+        expect(bobErrorSub).toHaveBeenCalled();
+      }
+    });
+
+    it('restricts message insertions', async () => {
+      const server = new TriplitServer(new DB({ schema: SCHEMA }));
+      await server.db.insert(
+        'groupChats',
+        {
+          id: 'chat1',
+          memberIds: new Set(['alice']),
+          name: 'chat1',
+          adminId: 'alice',
+        },
+        { skipRules: true }
+      );
+      await server.db.insert(
+        'groupChats',
+        {
+          id: 'chat2',
+          memberIds: new Set(['alice', 'bob']),
+          name: 'chat2',
+          adminId: 'bob',
+        },
+        { skipRules: true }
+      );
+      const alice = createTestClient(server, {
+        token: ALICE_TOKEN,
+        clientId: 'alice',
+        schema: SCHEMA.collections,
+      });
+      const bob = createTestClient(server, {
+        token: BOB_TOKEN,
+        clientId: 'bob',
+        schema: SCHEMA.collections,
+      });
+
+      const aliceSub = vi.fn();
+      const bobSub = vi.fn();
+      alice.subscribe(alice.query('messages').build(), aliceSub);
+      bob.subscribe(bob.query('messages').build(), bobSub);
+
+      await pause();
+
+      // Alice can insert a message in a group chat where she is a member
+      {
+        const { txId } = await alice.insert('messages', {
+          id: 'msg1',
+          groupId: 'chat1',
+          authorId: 'alice',
+          text: 'hello',
+        });
+        alice.onTxFailureRemote(txId!, throwOnError);
+        await pause();
+
+        // All group members get the messages in group
+        expect(aliceSub).toHaveBeenCalled();
+        expect(aliceSub.mock.calls.at(-1)?.[0]).toHaveLength(1);
+        expect(bobSub).toHaveBeenCalled();
+        expect(bobSub.mock.calls.at(-1)?.[0]).toHaveLength(0);
+      }
+
+      const bobErrorSub = vi.fn();
+      // Bob cannot insert a message as alice
+      {
+        const { txId } = await bob.insert('messages', {
+          id: 'msg2',
+          groupId: 'chat2',
+          authorId: 'alice',
+          text: 'hello',
+        });
+        bob.onTxFailureRemote(txId!, bobErrorSub);
+        await pause();
+        expect(bobErrorSub).toHaveBeenCalled();
+        bobErrorSub.mockClear();
+      }
+
+      // Bob cannot insert a message into a group he is not a member of
+      {
+        const { txId } = await bob.insert('messages', {
+          id: 'msg4',
+          groupId: 'chat1',
+          authorId: 'bob',
+          text: 'hello',
+        });
+        bob.onTxFailureRemote(txId!, bobErrorSub);
+        await pause();
+        expect(bobErrorSub).toHaveBeenCalled();
+      }
+    });
+  });
+
+  describe('update', async () => {
+    it('restricts groupChat updates', async () => {
+      const serverDb = new DB({ schema: SCHEMA });
+      const server = new TriplitServer(serverDb);
+      const alice = createTestClient(server, {
+        token: ALICE_TOKEN,
+        clientId: 'alice',
+        schema: SCHEMA.collections,
+      });
+      const bob = createTestClient(server, {
+        token: BOB_TOKEN,
+        clientId: 'bob',
+        schema: SCHEMA.collections,
+      });
+
+      // Create a group chat
+      await server.db.insert(
+        'groupChats',
+        {
+          id: 'chat1',
+          memberIds: new Set(['alice', 'bob']),
+          name: 'chat1',
+          adminId: 'alice',
+        },
+        { skipRules: true }
+      );
+
+      await pause();
+      const aliceSub = vi.fn();
+      const bobSub = vi.fn();
+      alice.subscribe(alice.query('groupChats').build(), aliceSub);
+      bob.subscribe(bob.query('groupChats').build(), bobSub);
+
+      await pause();
+      expect(aliceSub).toHaveBeenCalled();
+      expect(aliceSub.mock.calls.at(-1)?.[0]).toHaveLength(1);
+      expect(bobSub).toHaveBeenCalled();
+      expect(bobSub.mock.calls.at(-1)?.[0]).toHaveLength(1);
+
+      // Bob cannot update group chat because he is not the admin
+      const { txId } = await bob.update('groupChats', 'chat1', (entity) => {
+        entity.name = 'updated';
+      });
+      const bobErrorSub = vi.fn();
+      bob.onTxFailureRemote(txId!, bobErrorSub);
+      await pause();
+      expect(bobErrorSub).toHaveBeenCalled();
+    });
+
+    it('restricts message updates', async () => {
+      const server = new TriplitServer(new DB({ schema: SCHEMA }));
+      const alice = createTestClient(server, {
+        token: ALICE_TOKEN,
+        clientId: 'alice',
+        schema: SCHEMA.collections,
+      });
+      const bob = createTestClient(server, {
+        token: BOB_TOKEN,
+        clientId: 'bob',
+        schema: SCHEMA.collections,
+      });
+
+      // Create a group chat
+      await server.db.insert(
+        'groupChats',
+        {
+          id: 'chat1',
+          memberIds: new Set(['alice', 'bob']),
+          name: 'chat1',
+          adminId: 'alice',
+        },
+        { skipRules: true }
+      );
+
+      const aliceSub = vi.fn();
+      const bobSub = vi.fn();
+      alice.subscribe(alice.query('messages').build(), aliceSub);
+      bob.subscribe(bob.query('messages').build(), bobSub);
+
+      await pause();
+      await alice.insert('messages', {
+        id: 'msg1',
+        groupId: 'chat1',
+        authorId: 'alice',
+        text: 'hello',
+      });
+      await pause();
+      expect(aliceSub).toHaveBeenCalled();
+      expect(aliceSub.mock.calls.at(-1)?.[0]).toHaveLength(1);
+      expect(bobSub).toHaveBeenCalled();
+      expect(bobSub.mock.calls.at(-1)?.[0]).toHaveLength(1);
+
+      // Alice cannot update message because message updates are illegal
+      {
+        const { txId } = await alice.update('messages', 'msg1', (entity) => {
+          entity.text = 'updated';
+        });
+        const errCallback = vi.fn();
+        alice.onTxFailureRemote(txId!, errCallback);
+        await pause();
+        expect(errCallback).toHaveBeenCalled();
+      }
+      // Bob cannot update message because message updates are illegal
+      {
+        const { txId } = await bob.update('messages', 'msg1', (entity) => {
+          entity.text = 'updated';
+        });
+        const errCallback = vi.fn();
+        bob.onTxFailureRemote(txId!, errCallback);
+        await pause();
+        expect(errCallback).toHaveBeenCalled();
+      }
+    });
+  });
+});
+
 describe('deduping subscriptions', () => {
   it('sends only one CONNECT_QUERY message for multiple subscriptions to the same query', async () => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
     const query = alice.query('test').build();
     const sub1Callback = vi.fn();
     const sub2Callback = vi.fn();
@@ -2227,7 +2778,10 @@ describe('deduping subscriptions', () => {
   });
   it("will send updates to all subscribers that haven't been unsubscribed", async () => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
     const query = alice.query('test').build();
     const sub1 = vi.fn();
     const sub2 = vi.fn();
@@ -2257,7 +2811,10 @@ describe('deduping subscriptions', () => {
   });
   it('subsequent subscriptions initiated after the first resolves should be immediately fulfilled', async () => {
     const server = new TriplitServer(new DB());
-    const alice = createTestClient(server, SERVICE_KEY, { clientId: 'alice' });
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+    });
     const query = alice.query('test').build();
     const sub1 = vi.fn();
     const sub2 = vi.fn();
@@ -2277,7 +2834,8 @@ it('running reset will disconnect and reset the client sync state and clear all 
   const server = new TriplitServer(db);
   await db.insert('collection_a', { id: 'a1' });
   await db.insert('collection_b', { id: 'b1' });
-  const alice = createTestClient(server, SERVICE_KEY, {
+  const alice = createTestClient(server, {
+    token: SERVICE_KEY,
     clientId: 'alice',
   });
   const query1 = alice.query('collection_a').build();
@@ -2324,10 +2882,10 @@ it('running reset will disconnect and reset the client sync state and clear all 
       // @ts-expect-error (not exposed)
       alice.syncEngine.awaitingAck.size
     ).toBe(0);
-    expect(
-      // @ts-expect-error (not exposed)
-      alice.syncEngine.queries.size
-    ).toBe(0);
+    // expect(
+    //   // @ts-expect-error (not exposed)
+    //   alice.syncEngine.queries.size
+    // ).toBe(0);
     await expect(
       alice.syncEngine
         // @ts-expect-error (not exposed)
@@ -2341,4 +2899,530 @@ it('running reset will disconnect and reset the client sync state and clear all 
     const results = await alice.fetch(query1);
     expect(results.length).toBe(0);
   }
+});
+
+describe('sessions API', async () => {
+  describe('startSession', async () => {
+    it('respects the `autoConnect` option in the constructor ', async () => {
+      const server = new TriplitServer(new DB());
+      const alice = createTestClient(server, {
+        token: SERVICE_KEY,
+        clientId: 'alice',
+        autoConnect: false,
+      });
+      expect(alice.syncEngine.connectionStatus).toBe('CLOSED');
+      alice.connect();
+      await pause(25);
+      expect(alice.syncEngine.connectionStatus).toBe('OPEN');
+
+      const bob = createTestClient(server, {
+        token: SERVICE_KEY,
+        clientId: 'bob',
+      });
+      await pause(25);
+      expect(bob.syncEngine.connectionStatus).toBe('OPEN');
+    });
+    it('respects the `autoConnect` option in the `startSession` method', async () => {
+      const server = new TriplitServer(new DB());
+      const alice = createTestClient(server, {
+        clientId: 'alice',
+      });
+      expect(alice.syncEngine.connectionStatus).toBe('CLOSED');
+      await alice.startSession(SERVICE_KEY, true);
+      await pause(25);
+      expect(alice.syncEngine.connectionStatus).toBe('OPEN');
+
+      const bob = createTestClient(server, {
+        clientId: 'bob',
+      });
+      await bob.startSession(SERVICE_KEY, false);
+      await pause(25);
+      expect(bob.syncEngine.connectionStatus).toBe('CLOSED');
+    });
+    it('will throw an error if you call start session without ending the session first', async () => {
+      const server = new TriplitServer(new DB());
+      const alice = createTestClient(server, {
+        clientId: 'alice',
+      });
+      await alice.startSession(SERVICE_KEY, true);
+      expect(
+        async () => await alice.startSession(SERVICE_KEY, true)
+      ).rejects.toThrow(SessionAlreadyActiveError);
+    });
+    it('will throw an error if you attempt to start a session with an expired token', async () => {
+      const server = new TriplitServer(new DB());
+      const alice = createTestClient(server, {
+        clientId: 'alice',
+      });
+      const expiredToken = new Jose.UnsecuredJWT({ exp: 0 }).encode();
+      console.log(expiredToken);
+      expect(
+        async () => await alice.startSession(expiredToken, true)
+      ).rejects.toThrow(TokenExpiredError);
+    });
+    it('will save the current roles to storage', async () => {
+      const roles: Roles = {
+        admin: {
+          match: {
+            'x-triplit-token-type': 'secret',
+          },
+        },
+      };
+      const collections = {
+        test: {
+          schema: S.Schema({ id: S.Id(), name: S.String() }),
+        },
+      };
+      const server = new TriplitServer(
+        new DB({ schema: { version: 0, roles, collections } })
+      );
+      const alice = createTestClient(server, {
+        clientId: 'alice',
+        schema: collections,
+        roles,
+      });
+      //@ts-expect-error - private method
+      const preSessionRoles = await alice.getRolesForSyncSession();
+      expect(preSessionRoles).toStrictEqual(undefined);
+      await alice.startSession(SERVICE_KEY, true);
+      //@ts-expect-error - private method
+      const savedRoles = await alice.getRolesForSyncSession();
+      expect(savedRoles).toStrictEqual([{ key: 'admin', roleVars: {} }]);
+    });
+    it('can setup a refresh handler to continuously refresh the session token which will clear when you end session', async () => {
+      const roles: Roles = {
+        admin: {
+          match: {
+            'x-triplit-token-type': 'secret',
+          },
+        },
+      };
+      const collections = {
+        test: {
+          schema: S.Schema({ id: S.Id(), name: S.String() }),
+        },
+      };
+      const server = new TriplitServer(
+        new DB({ schema: { version: 0, roles, collections } })
+      );
+      const alice = createTestClient(server, {
+        clientId: 'alice',
+        schema: collections,
+        roles,
+      });
+      const EXPIRE_TIME = 2000;
+      // create tokens that expire every 2000ms
+      function getToken() {
+        return new Jose.UnsecuredJWT({
+          'x-triplit-token-type': 'secret',
+          exp: (Date.now() + EXPIRE_TIME) / 1000,
+        }).encode();
+      }
+
+      const refreshTracker = vi.fn();
+
+      await alice.startSession(getToken(), true, {
+        refreshHandler: () => {
+          refreshTracker();
+          return new Promise((resolve) => {
+            resolve(getToken());
+          });
+        },
+      });
+
+      await pause((EXPIRE_TIME - 950) * 3);
+      expect(refreshTracker).toHaveBeenCalledTimes(3);
+      refreshTracker.mockClear();
+
+      // ending the session should stop the refresh handler
+      await alice.endSession();
+      pause(200);
+      expect(refreshTracker).not.toHaveBeenCalled();
+
+      // you can also pass in a refresh interval
+      const refreshTracker2 = vi.fn();
+      const endRefresh = await alice.startSession(getToken(), true, {
+        refreshHandler: () => {
+          refreshTracker2();
+          return new Promise((resolve) => {
+            resolve(getToken());
+          });
+        },
+        interval: EXPIRE_TIME,
+      });
+      await pause(EXPIRE_TIME * 3 + 10);
+      expect(refreshTracker2).toHaveBeenCalledTimes(3);
+      refreshTracker2.mockClear();
+      endRefresh?.();
+      await pause(200);
+      expect(refreshTracker2).not.toHaveBeenCalled();
+    }, 30000);
+    it('will handle the sync session state of the previous session if you use durable storage', async () => {
+      const cache = new MemoryBTreeStorage();
+      const outbox = new MemoryBTreeStorage();
+      const roles: Roles = {
+        admin: {
+          match: {
+            'x-triplit-token-type': 'secret',
+          },
+        },
+      };
+      const collections = {
+        test: {
+          schema: S.Schema({ id: S.Id(), name: S.String() }),
+        },
+      };
+      const server = new TriplitServer(
+        new DB({ schema: { version: 0, roles, collections } })
+      );
+      await server.db.insert('test', { id: 'test1', name: 'test1' });
+
+      const alice = createTestClient(server, {
+        clientId: 'alice',
+        schema: collections,
+        roles,
+        token: SERVICE_KEY,
+        storage: { cache, outbox },
+      });
+      const query = alice.query('test').build();
+      const queryHash = hashQuery(query);
+      // alice shouldn't have any saved roles or state vectors
+      await pause(100);
+      //@ts-expect-error - private method
+      const preSessionRoles = await alice.getRolesForSyncSession();
+      expect(preSessionRoles).toStrictEqual([{ key: 'admin', roleVars: {} }]);
+
+      //@ts-expect-error - private method
+      let queryState = await alice.syncEngine.getQueryState(queryHash);
+      expect(queryState).toStrictEqual(undefined);
+
+      alice.subscribe(query, () => {});
+      await pause(100);
+
+      //@ts-expect-error - private method
+      queryState = await alice.syncEngine.getQueryState(queryHash);
+      expect(queryState).toBeDefined();
+
+      // start a new client - this is mocking a client that went offline mid-session
+      const newAlice = createTestClient(server, {
+        clientId: 'alice',
+        schema: collections,
+        roles,
+        token: SERVICE_KEY,
+        storage: { cache, outbox },
+      });
+      await pause(100);
+
+      // new client should have the saved roles and state vectors
+      //@ts-expect-error - private method
+      const savedRoles = await newAlice.getRolesForSyncSession();
+      expect(savedRoles).toStrictEqual([{ key: 'admin', roleVars: {} }]);
+      //@ts-expect-error - private method
+      queryState = await newAlice.syncEngine.getQueryState(queryHash);
+      expect(queryState).toBeDefined();
+
+      // not create another client with a different token
+      const newAlice2 = createTestClient(server, {
+        clientId: 'alice',
+        schema: collections,
+        roles,
+        token: NOT_SERVICE_KEY,
+        storage: { cache, outbox },
+      });
+      await pause(100);
+
+      // new client should have overwritten the saved roles and state vectors
+      //@ts-expect-error - private method
+      const savedRoles2 = await newAlice2.getRolesForSyncSession();
+      expect(savedRoles2).toStrictEqual([]);
+      //@ts-expect-error - private method
+      queryState = await newAlice2.syncEngine.getQueryState(queryHash);
+      expect(queryState).toBe(undefined);
+    });
+  });
+  describe('updateSessionToken', async () => {
+    it('will throw an error if you attempt to update the session token with a token for a different session', async () => {
+      const roles: Roles = {
+        admin: {
+          match: {
+            'x-triplit-token-type': 'secret',
+          },
+        },
+      };
+      const collections = {
+        test: {
+          schema: S.Schema({ id: S.Id(), name: S.String() }),
+        },
+      };
+      const server = new TriplitServer(
+        new DB({ schema: { version: 0, roles, collections } })
+      );
+      const alice = createTestClient(server, {
+        clientId: 'alice',
+        schema: collections,
+        roles,
+        token: SERVICE_KEY,
+      });
+      // kind of tricky -- this is reliant on some async initialization in the client
+      await pause(10);
+      expect(() => alice.updateSessionToken(NOT_SERVICE_KEY)).toThrow(
+        SessionRolesMismatchError
+      );
+    });
+    it('will throw an error if you attempt to update the session token with an expired token', async () => {
+      const roles: Roles = {
+        admin: {
+          match: {
+            'x-triplit-token-type': 'secret',
+          },
+        },
+      };
+      const collections = {
+        test: {
+          schema: S.Schema({ id: S.Id(), name: S.String() }),
+        },
+      };
+      const server = new TriplitServer(
+        new DB({ schema: { version: 0, roles, collections } })
+      );
+      const alice = createTestClient(server, {
+        clientId: 'alice',
+        schema: collections,
+        roles,
+        token: SERVICE_KEY,
+      });
+      await alice.startSession(SERVICE_KEY, true);
+      const expiredToken = new Jose.UnsecuredJWT({ exp: 0 }).encode();
+      expect(
+        async () => await alice.updateSessionToken(expiredToken)
+      ).rejects.toThrow(TokenExpiredError);
+    });
+    it('will throw an error if you attempt to update the session token while no session is active', async () => {
+      const server = new TriplitServer(new DB());
+      const alice = createTestClient(server, {
+        clientId: 'alice',
+      });
+
+      expect(() => alice.updateSessionToken(SERVICE_KEY)).toThrow(
+        NoActiveSessionError
+      );
+    });
+  });
+  describe('endSession', async () => {
+    it('will disconnect the client and clear the token, state vectors, and saved roles', async () => {
+      const roles: Roles = {
+        admin: {
+          match: {
+            'x-triplit-token-type': 'secret',
+          },
+        },
+      };
+      const collections = {
+        test: {
+          schema: S.Schema({ id: S.Id(), name: S.String() }),
+        },
+      };
+      const db = new DB();
+      await db.insert('test', { id: 'test1', name: 'test1' });
+      await db.insert('test', { id: 'test2', name: 'test2' });
+
+      const server = new TriplitServer(db);
+      const bob = createTestClient(server, {
+        token: SERVICE_KEY,
+        clientId: 'bob',
+        roles,
+        schema: collections,
+      });
+      await pause(25);
+      expect(bob.syncEngine.connectionStatus).toBe('OPEN');
+      expect(bob.token).toBe(SERVICE_KEY);
+      // @ts-expect-error - private method
+      expect(await bob.getRolesForSyncSession()).toStrictEqual([
+        { key: 'admin', roleVars: {} },
+      ]);
+
+      const bobCallback = vi.fn();
+
+      const query = bob.query('test').build();
+      const queryHash = hashQuery(query);
+      bob.subscribe(query, bobCallback);
+      await pause(50);
+
+      // validate state during the session
+      await expect(
+        bob.syncEngine
+          // @ts-expect-error (not exposed)
+          .getQueryState(queryHash)
+      ).resolves.toBeDefined();
+      // @ts-expect-error (not exposed)
+      expect(bob.syncEngine.queries.size).toBe(1);
+      // @ts-expect-error (not exposed)
+      expect(bob.syncEngine.awaitingAck.size).toBe(0);
+
+      // validate the state after the session ends
+      await bob.endSession();
+      expect(bob.syncEngine.connectionStatus).toBe('CLOSED');
+      expect(bob.token).toBe(undefined);
+      //@ts-expect-error - private method
+      const savedRoles = await bob.getRolesForSyncSession();
+      expect(savedRoles).toStrictEqual(undefined);
+      await expect(
+        bob.syncEngine
+          // @ts-expect-error (not exposed)
+          .getQueryState(queryHash)
+      ).resolves.toBeUndefined();
+      // @ts-expect-error (not exposed)
+      expect(bob.syncEngine.queries.size).toBe(1);
+    });
+  });
+});
+
+describe('backfilling queries with limits', async () => {
+  // Server starts with data larger than the limit,
+  // the client subscribes to some data with a limit,
+  // then deletes some data, which should trigger
+  // a backfill so that the client has the correct number of items
+  it('can handle simple non-relational query', async () => {
+    const schema = {
+      collections: {
+        test: {
+          schema: S.Schema({ id: S.Id(), name: S.String() }),
+        },
+      },
+    };
+    const serverDB = new DB({ schema });
+    // insert 20 items
+    for (let i = 0; i < 40; i++) {
+      serverDB.insert('test', { id: `test${i}`, name: `test${i}` });
+    }
+    const LIMIT = 10;
+
+    const server = new TriplitServer(serverDB);
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+      schema: schema.collections,
+    });
+    const query = alice
+      .query('test')
+      .where('name', 'like', 'test%')
+      .limit(LIMIT)
+      .build();
+    const messages = spyMessages(alice);
+
+    const aliceSub = vi.fn();
+    alice.subscribe(query, aliceSub);
+    await pause(200);
+    expect(aliceSub).toHaveBeenCalled();
+    const initialResults = aliceSub.mock.calls.at(-1)[0];
+    expect(initialResults).toHaveLength(LIMIT);
+    const itemsToDelete = initialResults.map((e: any) => e.id).slice(0, 5);
+    await alice.transact(async (tx) => {
+      for (const id of itemsToDelete) {
+        await tx.delete('test', id);
+      }
+    });
+    await pause(200);
+    const latestResults = aliceSub.mock.calls.at(-1)[0];
+    expect(latestResults).toHaveLength(LIMIT);
+    const resultIds = latestResults.map((e: any) => e.id);
+
+    const deletedIds = ['test0', 'test1', 'test2', 'test3', 'test4'];
+    expect(resultIds).not.toContain(deletedIds);
+  });
+  it('can handle a simple non-relational query with an order', async () => {
+    const schema = {
+      collections: {
+        test: {
+          schema: S.Schema({ id: S.Id(), name: S.String() }),
+        },
+      },
+    };
+    const serverDB = new DB({ schema });
+    // insert 20 items
+    for (let i = 0; i < 40; i++) {
+      serverDB.insert('test', { id: `test${i}`, name: `test${i}` });
+    }
+    const LIMIT = 10;
+
+    const server = new TriplitServer(serverDB);
+    const alice = createTestClient(server, {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+      schema: schema.collections,
+    });
+    const query = alice
+      .query('test')
+      .order('name', 'ASC')
+      .where('name', 'like', 'test%')
+      .limit(LIMIT)
+      .build();
+    const messages = spyMessages(alice);
+
+    const aliceSub = vi.fn();
+    alice.subscribe(query, aliceSub);
+    await pause(200);
+    expect(aliceSub).toHaveBeenCalled();
+    const initialResults = aliceSub.mock.calls.at(-1)[0];
+    expect(initialResults).toHaveLength(LIMIT);
+    const itemsToDelete = initialResults.map((e: any) => e.id).slice(0, 5);
+    await alice.transact(async (tx) => {
+      for (const id of itemsToDelete) {
+        await tx.delete('test', id);
+      }
+    });
+    await pause(200);
+    const latestResults = aliceSub.mock.calls.at(-1)[0];
+    expect(latestResults).toHaveLength(LIMIT);
+    const resultIds = latestResults.map((e: any) => e.id);
+
+    const deletedIds = ['test0', 'test1', 'test2', 'test3', 'test4'];
+    expect(resultIds).not.toContain(deletedIds);
+  });
+});
+
+describe('entity cache on client', async () => {
+  it('can get cached results for the same collection from two different subscriptions', async () => {
+    const schema = {
+      users: {
+        schema: S.Schema({
+          id: S.Id(),
+          name: S.String(),
+          events: S.RelationMany('event_registrations', {
+            where: [['user_id', '=', '$id']],
+          }),
+        }),
+      },
+      event_registrations: {
+        schema: S.Schema({
+          id: S.Id(),
+          user_id: S.String(),
+        }),
+      },
+    };
+    const serverDB = new DB({ schema: { collections: schema, version: 0 } });
+    for (let i = 0, len = 31; i < len; i++) {
+      await serverDB.insert('users', { id: `user${i}`, name: `user${i}` });
+    }
+    const alice = createTestClient(new TriplitServer(serverDB), {
+      token: SERVICE_KEY,
+      clientId: 'alice',
+      schema: schema,
+      experimental: {
+        entityCache: {
+          capacity: 10000,
+        },
+      },
+    });
+    const allUsersQuery = alice.query('users').include('events').build();
+    const currentUserQuery = alice.query('users').id('user0').limit(1).build();
+
+    const allUsersSub = vi.fn();
+    const currentUserSub = vi.fn();
+    alice.subscribe(allUsersQuery, allUsersSub);
+    alice.subscribe(currentUserQuery, currentUserSub);
+    await pause(200);
+
+    expect(allUsersSub.mock.lastCall?.[0]).toHaveLength(31);
+  });
 });

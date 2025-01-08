@@ -1,23 +1,26 @@
 import { DB as TriplitDB, TriplitError } from '@triplit/db';
-import {
-  ConnectionOptions,
-  ServerResponse,
-  Session,
-  routeNotFoundResponse,
-} from './session.js';
-import { SyncConnection } from './sync-connection.js';
+import { ServerResponse, Session, routeNotFoundResponse } from './session.js';
+import { ConnectionOptions, SyncConnection } from './sync-connection.js';
 import type { ServerResponse as ServerResponseType } from './session.js';
 import { isTriplitError } from './utils.js';
 import { Logger, NullLogger } from './logging.js';
 import { ProjectJWT } from './token.js';
+import { WebhooksManager } from './webhooks-manager.js';
 
 /**
  * Represents a Triplit server for a specific tenant.
  */
 export class Server {
   private connections: Map<string, SyncConnection> = new Map();
+  public webhooksManager: WebhooksManager;
 
-  constructor(public db: TriplitDB<any>, public logger: Logger = NullLogger) {}
+  constructor(
+    public db: TriplitDB<any>,
+    public exceptionReporter: (e: unknown) => void = (e) => console.error(e),
+    public logger: Logger = NullLogger
+  ) {
+    this.webhooksManager = new WebhooksManager(db);
+  }
 
   createSession(token: ProjectJWT) {
     return new Session(this, token);
@@ -28,8 +31,12 @@ export class Server {
   }
 
   openConnection(token: ProjectJWT, connectionOptions: ConnectionOptions) {
-    const session = this.createSession(token);
-    const connection = session.createConnection(connectionOptions);
+    const connection = new SyncConnection(
+      token,
+      this.db,
+      this.logger,
+      connectionOptions
+    );
     this.connections.set(connectionOptions.clientId, connection);
     return connection;
   }
@@ -97,8 +104,24 @@ export class Server {
           resp = await session.delete(collectionName, entityId);
           break;
         }
+        case 'delete-all': {
+          const { collectionName } = params;
+          resp = await session.deleteAll(collectionName);
+        }
         case 'schema': {
           resp = await session.getSchema(params);
+          break;
+        }
+        case 'webhooks-get': {
+          resp = await session.handleWebhooksGet();
+          break;
+        }
+        case 'webhooks-push': {
+          resp = await session.handleWebhooksJSONPush(params);
+          break;
+        }
+        case 'webhooks-clear': {
+          resp = await session.handleWebhooksClear();
           break;
         }
         case 'override-schema': {
@@ -110,7 +133,11 @@ export class Server {
           break;
       }
     } catch (e: any) {
-      const error = isTriplitError(e)
+      const knownError = isTriplitError(e);
+      if (!knownError) {
+        this.exceptionReporter(e);
+      }
+      const error = knownError
         ? e
         : new TriplitError(
             `An unknown error occurred while handling the request: ${route.join(
@@ -135,6 +162,7 @@ const TRIPLIT_SEGEMENTS = [
   'bulk-insert',
   'clear',
   'delete',
+  'delete-all',
   'delete-triples',
   'fetch',
   'insert',
@@ -145,6 +173,9 @@ const TRIPLIT_SEGEMENTS = [
   'schema',
   'stats',
   'update',
+  'webhooks-get',
+  'webhooks-push',
+  'webhooks-clear',
 ] as const;
 
 type TriplitPath = [(typeof TRIPLIT_SEGEMENTS)[number]];

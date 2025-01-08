@@ -24,7 +24,7 @@ import {
 export type BuilderBase<
   T,
   Ignore extends string = never,
-  Extend extends string = never
+  Extend extends string = never,
 > = {
   [K in keyof Omit<T, Ignore> | Extend]-?: (...args: any) => any;
 } & { build: () => T };
@@ -35,12 +35,11 @@ export type BuilderBase<
 export type FilterInput<
   M extends Models,
   CN extends CollectionNameFromModels<M>,
-  P extends SchemaPaths<M, CN> = SchemaPaths<M, CN>
+  P extends SchemaPaths<M, CN> = SchemaPaths<M, CN>,
 > =
   | [typeof undefined]
   | FilterStatement<M, CN, P>
-  | [FilterStatement<M, CN, P>]
-  | WhereFilter<M, CN>[]
+  | QueryWhere<M, CN>
   | [QueryWhere<M, CN>];
 
 /**
@@ -48,15 +47,19 @@ export type FilterInput<
  */
 export type OrderInput<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
-> = OrderStatement<M, CN> | [OrderStatement<M, CN>] | [QueryOrder<M, CN>];
+  CN extends CollectionNameFromModels<M>,
+> =
+  | [typeof undefined]
+  | OrderStatement<M, CN>
+  | QueryOrder<M, CN>
+  | [QueryOrder<M, CN>];
 
 /**
  * Input for builder after() clauses
  */
 export type AfterInput<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > = ValueCursor | undefined; // FetchResultEntity<CollectionQueryDefault<M, CN>>
 
 /**
@@ -65,7 +68,7 @@ export type AfterInput<
 export type InclusionByRName<
   M extends Models,
   CN extends CollectionNameFromModels<M>,
-  RName extends RelationAttributes<M, CN>
+  RName extends RelationAttributes<M, CN>,
 > = RelationSubquery<
   M,
   ToQuery<M, RefQuery<M, CN, RName>>,
@@ -77,7 +80,7 @@ export type InclusionByRName<
  */
 export type IncludeSubquery<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > = Pick<
   CollectionQueryDefault<M, CN>,
   'select' | 'order' | 'where' | 'limit' | 'include'

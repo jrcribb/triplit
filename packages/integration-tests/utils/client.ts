@@ -10,13 +10,11 @@ export const NOT_SERVICE_KEY =
 
 export function createTestClient<M extends ClientSchema>(
   server: TriplitServer,
-  apiKey: string,
   options: ClientOptions<M> = {}
 ) {
   return new TriplitClient({
     storage: 'memory',
     transport: new TestTransport(server),
-    token: apiKey,
     logLevel: 'error',
     ...options,
   });
@@ -33,4 +31,8 @@ export function spyMessages(client: TriplitClient) {
     messages.push({ direction: 'SENT', message });
   });
   return messages;
+}
+
+export function throwOnError(error: unknown) {
+  throw error;
 }

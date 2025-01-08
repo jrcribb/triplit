@@ -1,5 +1,175 @@
 # @triplit/react
 
+## 0.4.31
+
+### Patch Changes
+
+- @triplit/client@0.6.13
+
+## 0.4.30
+
+### Patch Changes
+
+- @triplit/client@0.6.12
+
+## 0.4.29
+
+### Patch Changes
+
+- @triplit/client@0.6.11
+
+## 0.4.28
+
+### Patch Changes
+
+- @triplit/client@0.6.10
+
+## 0.4.27
+
+### Patch Changes
+
+- Updated dependencies [4ccc6422]
+  - @triplit/client@0.6.9
+
+## 0.4.26
+
+### Patch Changes
+
+- @triplit/client@0.6.8
+
+## 0.4.25
+
+### Patch Changes
+
+- @triplit/client@0.6.7
+
+## 0.4.24
+
+### Patch Changes
+
+- @triplit/client@0.6.6
+
+## 0.4.23
+
+### Patch Changes
+
+- @triplit/client@0.6.5
+
+## 0.4.22
+
+### Patch Changes
+
+- Updated dependencies [6de9aaf4]
+  - @triplit/client@0.6.4
+
+## 0.4.21
+
+### Patch Changes
+
+- Updated dependencies [483c84b6]
+  - @triplit/client@0.6.3
+
+## 0.4.20
+
+### Patch Changes
+
+- Updated dependencies [2541c6e2]
+  - @triplit/client@0.6.2
+
+## 0.4.19
+
+### Patch Changes
+
+- @triplit/client@0.6.1
+
+## 0.4.18
+
+### Patch Changes
+
+- Updated dependencies [2713ca43]
+  - @triplit/client@0.6.0
+
+## 0.4.17
+
+### Patch Changes
+
+- 74854d68: fixup useInfiniteQuery and usePaginatedQuery types
+- Updated dependencies [f1ce9675]
+  - @triplit/client@0.5.17
+
+## 0.4.16
+
+### Patch Changes
+
+- @triplit/client@0.5.16
+
+## 0.4.15
+
+### Patch Changes
+
+- @triplit/client@0.5.15
+
+## 0.4.14
+
+### Patch Changes
+
+- @triplit/client@0.5.14
+
+## 0.4.13
+
+### Patch Changes
+
+- Updated dependencies [bdd50e7f]
+  - @triplit/client@0.5.13
+
+## 0.4.12
+
+### Patch Changes
+
+- @triplit/client@0.5.12
+
+## 0.4.11
+
+### Patch Changes
+
+- Updated dependencies [8c97bfdb]
+- Updated dependencies [57d1e24b]
+  - @triplit/client@0.5.11
+
+## 0.4.10
+
+### Patch Changes
+
+- Updated dependencies [3d5e879d]
+  - @triplit/client@0.5.10
+
+## 0.4.9
+
+### Patch Changes
+
+- @triplit/client@0.5.9
+
+## 0.4.8
+
+### Patch Changes
+
+- d1ceedcb: fixup loadMore function to accept page size parameter in useInfiniteQuery
+- Updated dependencies [ccfa038c]
+  - @triplit/client@0.5.8
+
+## 0.4.7
+
+### Patch Changes
+
+- @triplit/client@0.5.7
+
+## 0.4.6
+
+### Patch Changes
+
+- Updated dependencies [3ca5265f]
+  - @triplit/client@0.5.6
+
 ## 0.4.5
 
 ### Patch Changes

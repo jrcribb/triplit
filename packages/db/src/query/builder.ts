@@ -30,12 +30,15 @@ import {
   CollectionQueryDefault,
   KeyedModelQueries,
   ModelQueries,
+  WhereFilter,
 } from './types/index.js';
+import { isBooleanFilter, isFilterGroup, isFilterStatement } from '../index.js';
+import { isSubQueryFilter, isWhereFilter } from '../query.js';
 
 export class QueryBuilder<
   M extends Models,
   CN extends CollectionNameFromModels<M>,
-  Q extends ModelQueries<M, CN> = CollectionQueryDefault<M, CN>
+  Q extends ModelQueries<M, CN> = CollectionQueryDefault<M, CN>,
 > implements
     BuilderBase<CollectionQuery<M, CN>, 'collectionName' | 'entityId', 'id'>
 {
@@ -178,7 +181,7 @@ export class QueryBuilder<
   subquery<
     Alias extends string,
     PQ extends SchemaQueries<M>,
-    Cardinality extends QueryResultCardinality = 'many'
+    Cardinality extends QueryResultCardinality = 'many',
   >(
     relationName: Alias,
     query: PQ,
@@ -232,7 +235,7 @@ export class QueryBuilder<
 export function relationBuilder<
   M extends Models,
   CN extends CollectionNameFromModels<M>,
-  RName extends RelationAttributes<M, CN>
+  RName extends RelationAttributes<M, CN>,
 >(relationName: RName) {
   return new RelationBuilder<M, CN, RName>(relationName);
 }
@@ -245,7 +248,10 @@ export class RelationBuilder<
     M,
     RefCollectionName<M, CN, RName>
   > = QuerySelection<M, RefCollectionName<M, CN, RName>>,
-  RelInclusions extends QueryInclusions<M, RefCollectionName<M, CN, RName>> = {}
+  RelInclusions extends QueryInclusions<
+    M,
+    RefCollectionName<M, CN, RName>
+  > = {},
 > {
   private relationName: RName;
   private ext: RefQueryExtension<
@@ -295,7 +301,7 @@ export class RelationBuilder<
 
   include<
     Alias extends string,
-    RQ extends RefSubquery<M, RefCollectionName<M, CN, RName>>
+    RQ extends RefSubquery<M, RefCollectionName<M, CN, RName>>,
   >(
     alias: Alias,
     refQuery: RQ
@@ -308,7 +314,7 @@ export class RelationBuilder<
   >;
   include<
     Alias extends string,
-    RQ extends RefSubquery<M, RefCollectionName<M, CN, RName>>
+    RQ extends RefSubquery<M, RefCollectionName<M, CN, RName>>,
   >(
     alias: Alias,
     builder: (
@@ -316,7 +322,7 @@ export class RelationBuilder<
         InclusionRName extends RelationAttributes<
           M,
           RefCollectionName<M, CN, RName>
-        >
+        >,
       >(
         relationName: InclusionRName
       ) => RelationBuilder<M, RefCollectionName<M, CN, RName>, InclusionRName>
@@ -356,41 +362,63 @@ export class RelationBuilder<
 
 export type QUERY_INPUT_TRANSFORMERS<
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 > = ReturnType<typeof QUERY_INPUT_TRANSFORMERS<M, CN>>;
+
+/**
+ * E.g. where(undefined)
+ */
+function isInputNoOp(args: any): args is [undefined] {
+  return Array.isArray(args) && args[0] === undefined;
+}
+
+/**
+ * E.g. where("id", "=", "123")
+ */
+function isInputSpreadFilter<
+  M extends Models,
+  CN extends CollectionNameFromModels<M>,
+>(args: any): args is FilterStatement<M, CN> {
+  return isFilterStatement(args);
+}
+
+/**
+ * E.g. where(["id", "=", "123"], more filters)
+ */
+function isInputSpreadClauses<
+  M extends Models,
+  CN extends CollectionNameFromModels<M>,
+>(args: any): args is QueryWhere<M, CN> {
+  return Array.isArray(args) && args.every((arg: any) => isWhereFilter(arg));
+}
+
+/**
+ *  E.g. where([["id", "=", "123"], ["name", "=", "foo"]])
+ */
+function isInputClauseGroup<
+  M extends Models,
+  CN extends CollectionNameFromModels<M>,
+>(args: any): args is [QueryWhere<M, CN>] {
+  return args.length === 1 && isInputSpreadClauses(args[0]);
+}
 
 // TODO: add functional type guards for conditionals
 export const QUERY_INPUT_TRANSFORMERS = <
   M extends Models,
-  CN extends CollectionNameFromModels<M>
+  CN extends CollectionNameFromModels<M>,
 >() => ({
   where: <A extends FilterInput<M, CN, any>>(
     q: Pick<CollectionQuery<M, CN>, 'where'>,
     ...args: A
   ): QueryWhere<M, CN> => {
     let newWhere: QueryWhere<M, CN> = [];
-    if (args[0] == undefined) return q.where ?? [];
-    if (typeof args[0] === 'boolean') {
-      newWhere = [args[0]];
-    } else if (typeof args[0] === 'string') {
-      /**
-       * E.g. where("id", "=", "123")
-       */
-      newWhere = [args as FilterStatement<M, CN>];
-    } else if (
-      args.length === 1 &&
-      args[0] instanceof Array &&
-      args[0].every((filter) => typeof filter === 'object')
-    ) {
-      /**
-       *  E.g. where([["id", "=", "123"], ["name", "=", "foo"]])
-       */
-      newWhere = args[0] as FilterStatement<M, CN>[];
-    } else if (args.every((arg) => typeof arg === 'object')) {
-      /**
-       * E.g. where(["id", "=", "123"], ["name", "=", "foo"]);
-       */
-      newWhere = args as QueryWhere<M, CN>;
+    if (isInputNoOp(args)) return q.where ?? [];
+    if (isInputSpreadFilter<M, CN>(args)) {
+      newWhere = [args];
+    } else if (isInputSpreadClauses<M, CN>(args)) {
+      newWhere = args;
+    } else if (isInputClauseGroup<M, CN>(args)) {
+      newWhere = args[0];
     } else {
       throw new QueryClauseFormattingError('where', args);
     }
@@ -400,7 +428,7 @@ export const QUERY_INPUT_TRANSFORMERS = <
     q: Pick<CollectionQuery<M, CN>, 'order'>,
     ...args: OrderInput<M, CN>
   ): QueryOrder<M, CN> | undefined => {
-    if (!args[0]) return undefined;
+    if (!args[0]) return q.order ?? [];
     let newOrder: QueryOrder<M, CN> = [];
     /**
      * E.g. order("id", "ASC")

@@ -4,11 +4,25 @@ import { serverRequesterMiddleware } from '../../middleware/add-server-requester
 import { logSchemaChangeViolations, schemaToJSON } from '@triplit/db';
 import ora from 'ora';
 import { projectSchemaMiddleware } from '../../middleware/project-schema.js';
+import * as Flag from '../../flags.js';
 
 export default Command({
   description: 'Apply the local schema to the server',
   middleware: [serverRequesterMiddleware, projectSchemaMiddleware],
-  run: async ({ ctx }) => {
+  flags: {
+    failOnBackwardsIncompatibleChange: Flag.Boolean({
+      description: 'Fail if there is a backwards incompatible change',
+      required: false,
+      default: false,
+    }),
+    printIssues: Flag.Boolean({
+      description: 'Print issues even if successful',
+      char: 'p',
+      required: false,
+      default: false,
+    }),
+  },
+  run: async ({ ctx, flags }) => {
     const localSchema = schemaToJSON({
       roles: ctx.roles,
       collections: ctx.schema,
@@ -19,6 +33,8 @@ export default Command({
     try {
       data = await ctx.requestServer('POST', '/override-schema', {
         schema: localSchema,
+        failOnBackwardsIncompatibleChange:
+          flags.failOnBackwardsIncompatibleChange,
       });
       pushSpinner.succeed('Schema pushed to server');
     } catch (e) {
@@ -30,11 +46,16 @@ export default Command({
       process.exit(1);
     }
     logSchemaChangeViolations(data.successful, data.issues, {
-      warn: (message, ...args) => console.log(Colors.yellow(message), ...args),
-      info: (message, ...args) => console.log(Colors.blue(message), ...args),
-      error: (message, ...args) => console.log(Colors.red(message), ...args),
-      debug: () => {},
-      scope: () => this,
+      forcePrintIssues:
+        flags.failOnBackwardsIncompatibleChange || flags.printIssues,
+      logger: {
+        warn: (message, ...args) =>
+          console.log(Colors.yellow(message), ...args),
+        info: (message, ...args) => console.log(Colors.blue(message), ...args),
+        error: (message, ...args) => console.log(Colors.red(message), ...args),
+        debug: () => {},
+        scope: () => this,
+      },
     });
     if (!data.successful) {
       process.exit(1);

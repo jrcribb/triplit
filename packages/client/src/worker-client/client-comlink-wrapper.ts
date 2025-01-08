@@ -2,22 +2,26 @@ import * as ComLink from 'comlink';
 import {
   TriplitClient as Client,
   ClientOptions,
-  SubscriptionOptions,
 } from '../client/triplit-client.js';
 import {
   Attribute,
   CollectionNameFromModels,
   JSONToSchema,
-  ModelFromModels,
   UpdateTypeFromModel,
   TupleValue,
   CollectionQuery,
   TransactionResult,
   ClearOptions,
 } from '@triplit/db';
-import { LogLevel } from '@triplit/types/logger';
+import { LogLevel } from '../@triplit/types/logger.js';
 import { DefaultLogger } from '../client-logger.js';
 import { WorkerInternalClientNotInitializedError } from '../errors.js';
+import {
+  SchemaClientQueries,
+  ClientSchema,
+  SubscribeBackgroundOptions,
+  SubscriptionOptions,
+} from '../client/types';
 
 interface ClientWorker extends Client {
   init: (options: ClientOptions, logger: any) => void;
@@ -37,9 +41,10 @@ export class ClientComlinkWrapper implements ClientWorker {
   constructor() {}
   init(options: ClientOptions, logger: any) {
     if (this.client != undefined) return;
-    const { schema } = options;
+    const { schema, logLevel, token, autoConnect, ...remainingOptions } =
+      options;
     const workerLogger = new DefaultLogger({
-      level: options.logLevel,
+      level: logLevel,
       onLog: (log) => {
         if (!logger) return;
         if (log.scope == undefined) {
@@ -62,7 +67,7 @@ export class ClientComlinkWrapper implements ClientWorker {
       },
     });
     this.client = new Client({
-      ...options,
+      ...remainingOptions,
       // TODO - Is the schema in a json format here? Its not typed that way...
       schema: JSONToSchema(schema as any)?.collections,
       logger: workerLogger,
@@ -139,6 +144,14 @@ export class ClientComlinkWrapper implements ClientWorker {
     return ComLink.proxy(this.client.subscribe(...args));
   }
   // @ts-expect-error
+  async subscribeBackground<CQ extends SchemaClientQueries<ClientSchema>>(
+    query: CQ,
+    options: SubscribeBackgroundOptions = {}
+  ) {
+    if (!this.client) throw new WorkerInternalClientNotInitializedError();
+    return ComLink.proxy(this.client.subscribeBackground(query, options));
+  }
+  // @ts-expect-error
   async subscribeWithPagination(
     ...args: Parameters<NonNullableClient['subscribe']>
   ) {
@@ -158,16 +171,38 @@ export class ClientComlinkWrapper implements ClientWorker {
     if (!this.client) throw new WorkerInternalClientNotInitializedError();
     return ComLink.proxy(this.client.subscribeWithExpand(...args));
   }
-  updateOptions(...args: Parameters<NonNullableClient['updateOptions']>): void {
-    if (!this.client) throw new WorkerInternalClientNotInitializedError();
 
-    this.client.updateOptions(...args);
-  }
-  updateToken(...args: Parameters<NonNullableClient['updateToken']>): void {
+  async startSession(...args: Parameters<NonNullableClient['startSession']>) {
     if (!this.client) throw new WorkerInternalClientNotInitializedError();
-
-    this.client.updateToken(...args);
+    const normalizedOptions = await normalizeStartSessionOptions(
+      args[2] as ComLink.Remote<(typeof args)[2]>
+    );
+    const unsubCallback = await this.client.startSession(
+      args[0],
+      args[1],
+      normalizedOptions
+    );
+    if (unsubCallback == undefined) return;
+    return ComLink.proxy(unsubCallback);
   }
+
+  async endSession(...args: Parameters<NonNullableClient['endSession']>) {
+    if (!this.client) throw new WorkerInternalClientNotInitializedError();
+    return await this.client.endSession(...args);
+  }
+
+  updateSessionToken(
+    ...args: Parameters<NonNullableClient['updateSessionToken']>
+  ) {
+    if (!this.client) throw new WorkerInternalClientNotInitializedError();
+    return this.client.updateSessionToken(...args);
+  }
+
+  onSessionError(...args: Parameters<NonNullableClient['onSessionError']>) {
+    if (!this.client) throw new WorkerInternalClientNotInitializedError();
+    return ComLink.proxy(this.client.onSessionError(...args));
+  }
+
   updateServerUrl(
     ...args: Parameters<NonNullableClient['updateServerUrl']>
   ): void {
@@ -238,5 +273,15 @@ async function normalizeSubscriptionOptions(
     noCache: await options.noCache,
     // @ts-expect-error
     onRemoteFulfilled: options.onRemoteFulfilled,
+  };
+}
+
+async function normalizeStartSessionOptions(
+  options: ComLink.Remote<Parameters<NonNullableClient['startSession']>[2]>
+): Promise<Parameters<NonNullableClient['startSession']>[2]> {
+  if (options == undefined) return undefined;
+  return {
+    interval: await options.interval,
+    refreshHandler: options.refreshHandler,
   };
 }

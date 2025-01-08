@@ -17,9 +17,18 @@ import { TriplitError } from '@triplit/db';
 
 const TriplitJWTType = ['test', 'anon', 'secret'] as const;
 export type TriplitJWTType = (typeof TriplitJWTType)[number];
+
+export type StandardJWTClaims = Partial<{
+  iss: string;
+  sub: string;
+  aud: string;
+  exp: number;
+  iat: number;
+}>;
+
 export type TriplitJWT = {
   'x-triplit-token-type'?: 'test' | 'anon' | 'secret';
-};
+} & StandardJWTClaims;
 
 export type ProjectJWT = TriplitJWT;
 
@@ -80,7 +89,7 @@ export async function parseAndValidateToken(
 
   // tokens from gateway will not have triplit claims, so will seem external, but should be validated with master jwt secret
   const secretKey = isExternal
-    ? options.externalSecret ?? triplitSecret
+    ? (options.externalSecret ?? triplitSecret)
     : triplitSecret;
   if (!secretKey) {
     return {

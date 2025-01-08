@@ -8,6 +8,8 @@ import {
   appendCollectionToId,
   EntityId,
   JSONToSchema,
+  Models,
+  Model,
 } from '@triplit/db';
 import { RouteNotFoundError, ServiceKeyRequiredError } from './errors.js';
 import { isTriplitError } from './utils.js';
@@ -15,12 +17,7 @@ import { Server as TriplitServer } from './triplit-server.js';
 import { ProjectJWT } from './token.js';
 import { genToArr } from '@triplit/db';
 import { SyncConnection } from './sync-connection.js';
-
-export interface ConnectionOptions {
-  clientId: string;
-  clientSchemaHash: number | undefined;
-  syncSchema?: boolean | undefined;
-}
+import { WebhookJSONDefinition } from './webhooks-manager.js';
 
 export function isChunkedMessageComplete(message: string[], total: number) {
   if (message.length !== total) return false;
@@ -58,15 +55,14 @@ export function hasAdminAccess(token: ProjectJWT) {
 
 export class Session {
   db: TriplitDB<any>;
-  constructor(public server: TriplitServer, public token: ProjectJWT) {
+  constructor(
+    public server: TriplitServer,
+    public token: ProjectJWT
+  ) {
     if (!token) throw new TriplitError('Token is required');
     // TODO: figure out admin middleware
 
     this.db = server.db.withSessionVars(token);
-  }
-
-  createConnection(connectionParams: ConnectionOptions) {
-    return new SyncConnection(this, connectionParams);
   }
 
   // TODO: ensure data that we store in memory is invalidated when the db is "cleared"
@@ -76,8 +72,8 @@ export class Session {
       await this.db.clear({ full });
       return ServerResponse(200);
     } catch (e) {
-      if (isTriplitError(e)) return errorResponse(e);
-      return errorResponse(e, {
+      if (isTriplitError(e)) return this.errorResponse(e);
+      return this.errorResponse(e, {
         fallbackMessage: 'An unknown error occurred clearing the database.',
       });
     }
@@ -117,15 +113,23 @@ export class Session {
     // TODO: better message (maybe error about invalid parameters?)
     return ServerResponse(400, new TriplitError('Invalid format').toJSON());
   }
-  async overrideSchema(params: { schema: any }) {
+  async overrideSchema(
+    params: { schema: any } & Parameters<
+      typeof TriplitDB.prototype.overrideSchema
+    >[1]
+  ) {
     if (!hasAdminAccess(this.token)) return NotAdminResponse();
-    const result = await this.db.overrideSchema(JSONToSchema(params.schema));
+    const { schema, ...options } = params;
+    const result = await this.db.overrideSchema(
+      JSONToSchema(params.schema),
+      options
+    );
     return ServerResponse(result.successful ? 200 : 409, result);
   }
 
   async queryTriples({ query }: { query: CollectionQuery }) {
     if (!query)
-      return errorResponse(
+      return this.errorResponse(
         new TriplitError('{ query: CollectionQuery } missing from request body')
       );
     try {
@@ -136,7 +140,7 @@ export class Session {
         })
       );
     } catch (e) {
-      return errorResponse(e as Error);
+      return this.errorResponse(e as Error);
     }
   }
 
@@ -159,7 +163,8 @@ export class Session {
       const collectionSchema = schema?.[collectionName]?.schema;
       const data = result.map((entity) => {
         const jsonEntity = collectionSchema
-          ? collectionSchema.convertJSToJSON(entity, schema)
+          ? // Based on select, you may not have a full entity
+            convertPartialToJSON(entity, collectionSchema, schema)
           : entity;
         const entityId = jsonEntity.id;
         if (hasSelectWithoutId && jsonEntity.id) {
@@ -172,7 +177,7 @@ export class Session {
         result: data,
       });
     } catch (e) {
-      return errorResponse(e as Error);
+      return this.errorResponse(e as Error);
     }
   }
 
@@ -194,7 +199,7 @@ export class Session {
       };
       return ServerResponse(200, serializableResult);
     } catch (e) {
-      return errorResponse(e, {
+      return this.errorResponse(e, {
         fallbackMessage: 'Could not insert entity. An unknown error occurred.',
       });
     }
@@ -235,7 +240,7 @@ export class Session {
       };
       return ServerResponse(200, serializableResult);
     } catch (e) {
-      return errorResponse(e, {
+      return this.errorResponse(e, {
         fallbackMessage: 'Could not insert entity. An unknown error occurred.',
       });
     }
@@ -247,7 +252,7 @@ export class Session {
       await this.db.tripleStore.insertTriples(triples);
       return ServerResponse(200, {});
     } catch (e) {
-      return errorResponse(e, {
+      return this.errorResponse(e, {
         fallbackMessage: 'Could not insert triples. An unknown error occurred.',
       });
     }
@@ -265,7 +270,7 @@ export class Session {
       });
       return ServerResponse(200, {});
     } catch (e) {
-      return errorResponse(e, {
+      return this.errorResponse(e, {
         fallbackMessage: 'Could not delete triples. An unknown error occurred.',
       });
     }
@@ -283,7 +288,7 @@ export class Session {
           const timestamp = await tx.storeTx.getTransactionTimestamp();
           for (const patch of patches) {
             if (patch[0] === 'delete') {
-              tx.storeTx.insertTriple({
+              await tx.storeTx.insertTriple({
                 id,
                 attribute: [collectionName, ...patch[1]],
                 value: null,
@@ -291,7 +296,7 @@ export class Session {
                 expired: true,
               });
             } else if (patch[0] === 'set') {
-              tx.storeTx.insertTriple({
+              await tx.storeTx.insertTriple({
                 id,
                 attribute: [collectionName, ...patch[1]],
                 value: patch[2],
@@ -305,7 +310,7 @@ export class Session {
       );
       return ServerResponse(200, txResult);
     } catch (e) {
-      return errorResponse(e, {
+      return this.errorResponse(e, {
         fallbackMessage: 'Could not update entity. An unknown error occurred.',
       });
     }
@@ -318,23 +323,93 @@ export class Session {
       });
       return ServerResponse(200, txResult);
     } catch (e) {
-      return errorResponse(e, {
+      return this.errorResponse(e, {
         fallbackMessage: 'Could not delete entity. An unknown error occurred.',
+      });
+    }
+  }
+
+  async deleteAll(collectionName: string) {
+    if (!hasAdminAccess(this.token)) return NotAdminResponse();
+    try {
+      const txResult = await this.db.transact(async (tx) => {
+        const allEntities = await tx.fetch({ collectionName, select: ['id'] });
+        for (const entity of allEntities) {
+          // @ts-expect-error
+          await tx.delete(collectionName, entity.id);
+        }
+      });
+      return ServerResponse(200, txResult);
+    } catch (e) {
+      return this.errorResponse(e, {
+        fallbackMessage: `Could not delete all entities in '${collectionName}'. An unknown error occurred.`,
+      });
+    }
+  }
+
+  errorResponse(e: unknown, options?: { fallbackMessage?: string }) {
+    if (isTriplitError(e)) {
+      return ServerResponse(e.status, e.toJSON());
+    }
+    this.server.exceptionReporter(e);
+    const generalError = new TriplitError(
+      options?.fallbackMessage ??
+        'An unknown error occurred processing your request.'
+    );
+    console.log(e);
+    return ServerResponse(generalError.status, generalError.toJSON());
+  }
+  async handleWebhooksJSONPush({
+    webhooks,
+  }: {
+    webhooks: WebhookJSONDefinition;
+  }) {
+    if (!hasAdminAccess(this.token)) return NotAdminResponse();
+    try {
+      this.server.webhooksManager.addAndStoreWebhooks(webhooks);
+      return ServerResponse(200, {});
+    } catch (e) {
+      return this.errorResponse(e, {
+        fallbackMessage: 'Could not add webhooks.',
+      });
+    }
+  }
+  async handleWebhooksClear() {
+    if (!hasAdminAccess(this.token)) return NotAdminResponse();
+    try {
+      this.server.webhooksManager.clearWebhooks();
+      return ServerResponse(200, {});
+    } catch (e) {
+      return this.errorResponse(e, {
+        fallbackMessage: 'Could not clear webhooks.',
+      });
+    }
+  }
+  async handleWebhooksGet() {
+    if (!hasAdminAccess(this.token)) return NotAdminResponse();
+    try {
+      const webhooks = await this.server.webhooksManager.getWebhooks();
+      return ServerResponse(200, webhooks);
+    } catch (e) {
+      return this.errorResponse(e, {
+        fallbackMessage: 'Could not fetch webhooks.',
       });
     }
   }
 }
 
-function errorResponse(e: unknown, options?: { fallbackMessage?: string }) {
-  if (isTriplitError(e)) {
-    return ServerResponse(e.status, e.toJSON());
-  }
-  const generalError = new TriplitError(
-    options?.fallbackMessage ??
-      'An unknown error occurred processing your request.'
+// A query result may be partial due to select
+function convertPartialToJSON<T>(
+  partial: any,
+  collectionSchema: Model,
+  schema: Models
+): any {
+  return Object.fromEntries(
+    Object.entries(partial).map(([k, v]) => {
+      const propDef = collectionSchema.properties[k];
+      return [k, propDef ? propDef.convertJSToJSON(v, schema) : v];
+    })
   );
-  console.log(e);
-  return ServerResponse(generalError.status, generalError.toJSON());
 }
 
 export function throttle(callback: () => void, delay: number) {

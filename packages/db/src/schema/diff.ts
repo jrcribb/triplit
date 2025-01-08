@@ -1,5 +1,5 @@
 import { Model, Models, StoreSchema } from './types/index.js';
-import { Value as TBValue, ValuePointer, Diff } from '@sinclair/typebox/value';
+import { Value as TBValue } from '@sinclair/typebox/value';
 import { UserTypeOptions } from '../data-types/types/index.js';
 import { DBTransaction } from '../db-transaction.js';
 
@@ -218,15 +218,18 @@ export function diffSchemas(
       }))
     );
     // Diff rules
-    const isRuleDiff = Diff(collectionA?.rules, collectionB?.rules).length > 0;
+    const isRuleDiff = areDifferent(collectionA?.rules, collectionB?.rules);
     if (isRuleDiff)
       diff.push({
         _diff: 'collectionRules',
         collection,
       });
     // Diff permissions
-    const isPermissionDiff =
-      Diff(collectionA?.permissions, collectionB?.permissions).length > 0;
+    const isPermissionDiff = areDifferent(
+      collectionA?.permissions,
+      collectionB?.permissions
+    );
+
     if (isPermissionDiff)
       diff.push({
         _diff: 'collectionPermissions',
@@ -235,7 +238,7 @@ export function diffSchemas(
   }
 
   // Diff roles
-  const isRoleDiff = Diff(schemaA.roles, schemaB.roles).length > 0;
+  const isRoleDiff = areDifferent(schemaA.roles, schemaB.roles);
   if (isRoleDiff)
     diff.push({
       _diff: 'roles',
@@ -244,7 +247,17 @@ export function diffSchemas(
   return diff;
 }
 
+function areDifferent(a: any, b: any): boolean {
+  // Both undefined, no diff
+  if (!a && !b) return false;
+  // One is undefined, diff
+  if (!a || !b) return true;
+  // Diff requires both to be objects
+  return TBValue.Diff(a, b).length > 0;
+}
+
 type ALLOWABLE_DATA_CONSTRAINTS =
+  | 'none'
   | 'never'
   | 'collection_is_empty'
   | 'attribute_is_empty' // undefined
@@ -254,7 +267,7 @@ type ALLOWABLE_DATA_CONSTRAINTS =
 
 type BackwardsIncompatibleEdits = {
   issue: string;
-  allowedIf: ALLOWABLE_DATA_CONSTRAINTS;
+  dataConstraint: ALLOWABLE_DATA_CONSTRAINTS;
   context: CollectionAttributeDiff;
   attributeCure: (
     collection: string,
@@ -272,7 +285,7 @@ export function getBackwardsIncompatibleEdits(schemaDiff: Diff[]) {
     if (maybeDangerousEdit) {
       acc.push({
         issue: maybeDangerousEdit.description,
-        allowedIf: maybeDangerousEdit.allowedIf,
+        dataConstraint: maybeDangerousEdit.dataConstraint,
         context: curr,
         attributeCure: maybeDangerousEdit.attributeCure,
       });
@@ -285,17 +298,29 @@ const DANGEROUS_EDITS = [
   {
     description: 'removed an optional attribute',
     matchesDiff: (diff: CollectionAttributeDiff) => {
-      return diff.type === 'delete' && diff.metadata.optional === true;
+      return (
+        diff.type === 'delete' &&
+        diff.metadata.type !== 'query' &&
+        diff.metadata.optional === true
+      );
     },
-    allowedIf: 'attribute_is_empty',
+    dataConstraint: 'attribute_is_empty',
     attributeCure: () => null,
   },
   {
-    description: 'removed a non-optional attribute',
+    description: 'removed an relational attribute',
     matchesDiff: (diff: CollectionAttributeDiff) => {
-      return diff.type === 'delete';
+      return diff.type === 'delete' && diff.metadata.type === 'query';
     },
-    allowedIf: 'collection_is_empty',
+    dataConstraint: 'none',
+    attributeCure: () => null,
+  },
+  {
+    description: 'removed a non-relational attribute',
+    matchesDiff: (diff: CollectionAttributeDiff) => {
+      return diff.type === 'delete' && diff.metadata.type !== 'query';
+    },
+    dataConstraint: 'collection_is_empty',
     attributeCure: (_collection, attribute) =>
       `make '${attribute.join('.')}' optional`,
   },
@@ -307,7 +332,7 @@ const DANGEROUS_EDITS = [
       }
       return false;
     },
-    allowedIf: 'attribute_has_no_undefined',
+    dataConstraint: 'attribute_has_no_undefined',
     attributeCure: () => null,
   },
   {
@@ -318,7 +343,7 @@ const DANGEROUS_EDITS = [
       }
       return false;
     },
-    allowedIf: 'attribute_is_empty',
+    dataConstraint: 'attribute_is_empty',
     attributeCure: (_collection, attribute) =>
       `revert the change to '${attribute.join(
         '.'
@@ -332,7 +357,7 @@ const DANGEROUS_EDITS = [
       }
       return false;
     },
-    allowedIf: 'attribute_is_empty',
+    dataConstraint: 'attribute_is_empty',
     attributeCure: (_collection, attribute) =>
       `revert the change to '${attribute.join(
         '.'
@@ -350,7 +375,7 @@ const DANGEROUS_EDITS = [
         return true;
       return false;
     },
-    allowedIf: 'collection_is_empty',
+    dataConstraint: 'collection_is_empty',
     attributeCure: (_collection, attribute) =>
       `make '${attribute.join('.')}' optional`,
   },
@@ -362,7 +387,7 @@ const DANGEROUS_EDITS = [
       }
       return false;
     },
-    allowedIf: 'attribute_has_no_null',
+    dataConstraint: 'attribute_has_no_null',
     attributeCure: () => null,
   },
   {
@@ -374,7 +399,7 @@ const DANGEROUS_EDITS = [
       }
       return false;
     },
-    allowedIf: 'attribute_satisfies_enum',
+    dataConstraint: 'attribute_satisfies_enum',
     attributeCure: (_collection, attribute, enumArray) =>
       `revert the change to '${attribute.join(
         '.'
@@ -383,7 +408,7 @@ const DANGEROUS_EDITS = [
       )} are in the new enum: ${enumArray}`,
   },
 ] satisfies {
-  allowedIf: ALLOWABLE_DATA_CONSTRAINTS;
+  dataConstraint: ALLOWABLE_DATA_CONSTRAINTS;
   description: string;
   matchesDiff: (diff: CollectionAttributeDiff) => boolean;
   attributeCure: (
@@ -423,12 +448,14 @@ export async function getSchemaDiffIssues(
       const violatesExistingData = !(await isEditSafeWithExistingData(
         tx,
         edit.context,
-        edit.allowedIf
+        edit.dataConstraint
       ));
-      const dataCure = DATA_CHANGE_CURES[edit.allowedIf](
-        edit.context.collection,
-        edit.context.attribute
-      );
+      const dataCure =
+        edit.dataConstraint &&
+        DATA_CHANGE_CURES[edit.dataConstraint](
+          edit.context.collection,
+          edit.context.attribute
+        );
       const attributeCure = edit.attributeCure(
         edit.context.collection,
         edit.context.attribute
@@ -436,7 +463,10 @@ export async function getSchemaDiffIssues(
       return {
         ...edit,
         violatesExistingData,
-        cure: attributeCure ? attributeCure + ' or ' + dataCure : dataCure,
+        cure:
+          attributeCure && dataCure
+            ? attributeCure + ' or ' + dataCure
+            : dataCure,
       };
     })
   );
@@ -453,6 +483,7 @@ const DATA_CONSTRAINT_CHECKS: Record<
   ) => Promise<boolean>
 > = {
   never: async () => false,
+  none: async () => true,
   collection_is_empty: detectCollectionIsEmpty,
   attribute_is_empty: detectAttributeIsEmpty,
   attribute_has_no_undefined: detectAttributeHasNoUndefined,
@@ -465,6 +496,8 @@ const DATA_CHANGE_CURES: Record<
   (collection: string, attribute: string[]) => string
 > = {
   never: () => 'This edit is never allowed',
+  none: () =>
+    'This edit does not violate any data constraints but can cause existing queries that reference this attribute to fail',
   collection_is_empty: (collection) =>
     `delete all entities in '${collection}' to allow this edit`,
   attribute_is_empty: (_collection, attribute) =>
@@ -494,8 +527,8 @@ async function detectAttributeSatisfiesEnum(
   const allEntities = await tx.fetch(
     tx.db
       .query(collectionName)
-      .select([attribute.join('.')])
       .where(attribute.join('.'), 'nin', enumArray)
+      .limit(1)
       .build(),
     { skipRules: true }
   );
@@ -510,14 +543,12 @@ async function detectAttributeHasNoUndefined(
   const allEntities = await tx.fetch(
     tx.db
       .query(collectionName)
-      .select([attribute.join('.')])
+      .where(attribute.join('.'), 'isDefined', false)
+      .limit(1)
       .build(),
     { skipRules: true }
   );
-  return !Array.from(allEntities.values()).some(
-    (entity) =>
-      ValuePointer.Get(entity, '/' + attribute.join('/')) === undefined
-  );
+  return allEntities.length === 0;
 }
 
 async function detectAttributeIsEmpty(
@@ -528,13 +559,12 @@ async function detectAttributeIsEmpty(
   const allEntities = await tx.fetch(
     tx.db
       .query(collectionName)
-      .select([attribute.join('.')])
+      .where(attribute.join('.'), 'isDefined', true)
+      .limit(1)
       .build(),
     { skipRules: true }
   );
-  return Array.from(allEntities.values()).every((entity) => {
-    return ValuePointer.Get(entity, '/' + attribute.join('/')) === undefined;
-  });
+  return allEntities.length === 0;
 }
 
 async function detectAttributeHasNoNull(
@@ -545,7 +575,6 @@ async function detectAttributeHasNoNull(
   const allEntities = await tx.fetch(
     tx.db
       .query(collectionName)
-      .select([attribute.join('.')])
       .where(attribute.join('.'), '=', null)
       .limit(1)
       .build(),
@@ -559,7 +588,7 @@ async function detectCollectionIsEmpty(
   collectionName: string
 ) {
   const allEntities = await tx.fetch(
-    tx.db.query(collectionName).select([]).limit(1).build(),
+    tx.db.query(collectionName).select(['id']).limit(1).build(),
     { skipRules: true }
   );
   return allEntities.length === 0;
