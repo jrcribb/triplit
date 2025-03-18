@@ -1,41 +1,39 @@
 import * as ComLink from 'comlink';
-import type {
-  TriplitClient as Client,
-  ClientOptions,
-  SimpleClientStorageOptions,
-} from '../client/triplit-client.js';
+import type { TriplitClient as Client } from '../client/triplit-client.js';
 import {
-  ChangeTracker,
-  ClearOptions,
-  CollectionNameFromModels,
-  CollectionQuery,
-  DBTransaction,
-  FetchResult,
-  FetchResultEntity,
-  FetchResultEntityFromParts,
-  InsertTypeFromModel,
-  JSONToSchema,
-  ModelFromModels,
-  ToQuery,
-  TransactionResult,
-  Unalias,
-  UpdateTypeFromModel,
-  createUpdateProxy,
-  schemaToJSON,
-} from '@triplit/db';
-import { ConnectionStatus } from '../transport/transport.js';
-import {
-  ClientQueryDefault,
-  ClientSchema,
-  SchemaClientQueries,
   SubscribeBackgroundOptions,
-  FetchOptions,
+  ClientFetchOptions,
   InfiniteSubscription,
   PaginatedSubscription,
   SubscriptionOptions,
+  SubscriptionSignalPayload,
 } from '../client/types';
-import { clientQueryBuilder } from '../client/query-builder.js';
 import SuperJSON from 'superjson';
+import {
+  ClearOptions,
+  CollectionNameFromModels,
+  CollectionQuery,
+  createUpdateProxyAndTrackChanges,
+  EntityNotFoundError,
+  FetchResult,
+  InvalidCollectionNameError,
+  Models,
+  queryBuilder,
+  SchemaQuery,
+  SubscriptionResultsCallback,
+  TransactCallback,
+  Type,
+  Unalias,
+  UpdatePayload,
+  WriteModel,
+} from '@triplit/db';
+import { ClientComlinkWrapper } from './client-comlink-wrapper.js';
+import {
+  ClientOptions,
+  ClientTransactOptions,
+  SimpleClientStorageOptions,
+} from '../client/types/client.js';
+import { ConnectionStatus } from '../types.js';
 
 export function getTriplitWorkerEndpoint(workerUrl?: string): ComLink.Endpoint {
   const url =
@@ -79,11 +77,9 @@ class WorkerLogger {
   }
 }
 
-export class WorkerClient<M extends ClientSchema = ClientSchema> {
+export class WorkerClient<M extends Models<M> = Models> implements Client<M> {
   initialized: Promise<void>;
-  clientWorker: ComLink.Remote<Client<M>>;
-  db: { updateGlobalVariables: (variables: Record<string, any>) => void } =
-    {} as any;
+  clientWorker: ClientComlinkWrapper<M>; //ComLink.Remote<Client<M>>;
   private _connectionStatus: ConnectionStatus;
   constructor(
     options?: Omit<ClientOptions<M>, 'storage'> & {
@@ -97,7 +93,8 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
       workerEndpoint ??
       sharedWorkerPort ??
       getTriplitWorkerEndpoint(options?.workerUrl);
-    this.clientWorker = ComLink.wrap<Client<M>>(workerEndpoint);
+    // @ts-expect-error
+    this.clientWorker = ComLink.wrap(workerEndpoint) as ClientComlinkWrapper<M>;
     const {
       schema,
       onSessionError,
@@ -120,7 +117,7 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
     this.initialized = this.clientWorker.init(
       {
         ...remainingOptions,
-        schema: schema && schemaToJSON({ collections: schema, version: 0 }),
+        schema: schema,
       },
       ComLink.proxy(new WorkerLogger())
     );
@@ -129,74 +126,48 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
     this.onConnectionStatusChange((status) => {
       this._connectionStatus = status;
     }, true);
-    this.db.updateGlobalVariables = (variables) => {
-      //@ts-expect-error
-      this.clientWorker.updateGlobalVariables(variables);
-    };
   }
 
   get connectionStatus() {
     return this._connectionStatus;
   }
 
-  query<CN extends CollectionNameFromModels<M>>(
-    collectionName: CN
-  ): ReturnType<typeof clientQueryBuilder<M, CN>> {
-    return clientQueryBuilder<M, CN>(collectionName);
+  query<CN extends CollectionNameFromModels<M>>(collectionName: CN) {
+    return queryBuilder<M, CN>(collectionName);
   }
 
-  async fetch<CQ extends SchemaClientQueries<M>>(
-    query: CQ,
-    options?: Partial<FetchOptions>
-  ): Promise<Unalias<FetchResult<M, ToQuery<M, CQ>>>> {
+  async fetch<Q extends SchemaQuery<M>>(
+    query: Q,
+    options?: Partial<ClientFetchOptions>
+  ) {
     await this.initialized;
-    // @ts-expect-error
     return this.clientWorker.fetch(query, options);
   }
 
-  async transact<Output>(
-    callback: (tx: DBTransaction<M>) => Promise<Output>
-  ): Promise<TransactionResult<Output>> {
+  async transact<CN extends CollectionNameFromModels<M>, Output>(
+    callback: TransactCallback<M, Output>,
+    options: Partial<ClientTransactOptions> = {}
+  ): Promise<Output> {
     await this.initialized;
-    const wrappedTxCallback = async (tx: DBTransaction<M>) => {
+    const client = this;
+    const wrappedTxCallback: TransactCallback<M, Output> = async (tx) => {
       // create a proxy wrapper around TX that intercepts calls to tx.update that
       // normally takes a callback so instead we wrap with ComLink.proxy
       const proxiedTx = new Proxy(tx, {
         get(target, prop) {
           if (prop === 'update') {
             return async (
-              collectionName: any,
-              entityId: string,
-              updater: any
+              collectionName: CN,
+              id: string,
+              update: UpdatePayload<M>
             ) => {
-              const schemaJSON = await tx.getSchemaJson();
-              const schema =
-                schemaJSON && JSONToSchema(schemaJSON)?.collections;
-
-              await tx.updateRaw(
+              const changes = await client.getChangesFromUpdatePayload(
                 collectionName,
-                entityId,
-                ComLink.proxy(async (entity) => {
-                  const changes = new ChangeTracker(entity);
-                  const updateProxy =
-                    collectionName === '_metadata'
-                      ? createUpdateProxy(changes, entity)
-                      : createUpdateProxy(
-                          changes,
-                          entity,
-                          schema,
-                          collectionName
-                        );
-                  await updater(
-                    updateProxy as Unalias<
-                      // @ts-expect-error
-                      UpdateTypeFromModel<ModelFromModels<M, CN>>
-                    >
-                  );
-                  const changedTuples = changes.getTuples();
-                  return changedTuples;
-                })
+                id,
+                update,
+                tx.fetchById.bind(tx)
               );
+              return await tx.update(collectionName, id, changes);
             };
           }
           // @ts-expect-error
@@ -206,85 +177,88 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
       return await callback(proxiedTx);
     };
     return this.clientWorker.transact(
-      ComLink.proxy(wrappedTxCallback)
-    ) as Promise<TransactionResult<Output>>;
+      ComLink.proxy(wrappedTxCallback),
+      options
+    ) as Promise<Output>;
   }
+
+  // this takes all the requisite info to mock
+  // a proxy on the client side that can be used
+  // to update an entity and then pass the changes
+  // to the worker
+  private async getChangesFromUpdatePayload<
+    CN extends CollectionNameFromModels<M>,
+  >(
+    collectionName: CN,
+    id: string,
+    update: UpdatePayload<M>,
+    fetchById: (
+      collectionName: CN,
+      id: string
+    ) => Promise<any | null> = this.fetchById.bind(this)
+  ) {
+    if (!collectionName) {
+      throw new InvalidCollectionNameError(collectionName);
+    }
+    let changes = undefined;
+    const collectionSchema = (await this.getSchema())?.collections[
+      collectionName
+    ].schema;
+    if (typeof update === 'function') {
+      const existingEntity = structuredClone(
+        await fetchById(collectionName, id)
+      );
+      if (!existingEntity) {
+        throw new EntityNotFoundError(id, collectionName);
+      }
+      changes = {};
+      await update(
+        createUpdateProxyAndTrackChanges(
+          existingEntity,
+          changes,
+          collectionSchema
+        )
+      );
+    } else {
+      changes = update;
+    }
+    return changes;
+  }
+
   async fetchById<CN extends CollectionNameFromModels<M>>(
     collectionName: CN,
     id: string,
-    options?: Partial<FetchOptions>
-  ): Promise<Unalias<
-    FetchResultEntity<M, ToQuery<M, ClientQueryDefault<M, CN>>>
-  > | null> {
+    options?: Partial<ClientFetchOptions>
+  ) {
     await this.initialized;
-    return this.clientWorker.fetchById(
-      // @ts-expect-error
-      collectionName,
-      id,
-      options
-    ) as Unalias<
-      FetchResultEntity<M, ToQuery<M, ClientQueryDefault<M, CN>>>
-    > | null;
+    return this.clientWorker.fetchById(collectionName, id, options);
   }
-  async fetchOne<CQ extends SchemaClientQueries<M>>(
-    query: CQ,
-    options?: Partial<FetchOptions>
-  ): Promise<Unalias<FetchResultEntity<M, ToQuery<M, CQ>>> | null> {
+  async fetchOne<Q extends SchemaQuery<M>>(
+    query: Q,
+    options?: Partial<ClientFetchOptions>
+  ) {
     await this.initialized;
-    return this.clientWorker.fetchOne(
-      // @ts-expect-error
-      query,
-      options
-    ) as Unalias<FetchResultEntity<M, ToQuery<M, CQ>>> | null;
+    return this.clientWorker.fetchOne(query, options);
   }
   async insert<CN extends CollectionNameFromModels<M>>(
     collectionName: CN,
-    entity: Unalias<InsertTypeFromModel<ModelFromModels<M, CN>>>
-  ): Promise<TransactionResult<Unalias<FetchResultEntityFromParts<M, CN>>>> {
+    object: WriteModel<M, CN>
+  ) {
     await this.initialized;
-    return this.clientWorker.insert(
-      // @ts-expect-error
-      collectionName,
-      entity
-    );
+    return this.clientWorker.insert(collectionName, object);
   }
   async update<CN extends CollectionNameFromModels<M>>(
     collectionName: CN,
     entityId: string,
-    updater: (
-      entity: Unalias<UpdateTypeFromModel<ModelFromModels<M, CN>>>
-    ) => void | Promise<void>
+    data: UpdatePayload<M, CN>
   ) {
     await this.initialized;
-
-    const schemaJSON = await this.clientWorker.getSchemaJson();
-    const schema = schemaJSON && JSONToSchema(schemaJSON)?.collections;
-
-    return this.updateRaw(collectionName, entityId, async (entity) => {
-      const changes = new ChangeTracker(entity);
-      const updateProxy =
-        collectionName === '_metadata'
-          ? createUpdateProxy(changes, entity)
-          : createUpdateProxy(changes, entity, schema, collectionName);
-      await updater(
-        updateProxy as Unalias<UpdateTypeFromModel<ModelFromModels<M, CN>>>
-      );
-      return changes.getTuples();
-    });
-  }
-
-  async updateRaw<CN extends CollectionNameFromModels<M>>(
-    collectionName: CN,
-    entityId: string,
-    updater: (entity: any) => any
-  ) {
-    await this.initialized;
-    return this.clientWorker.updateRaw(
-      // @ts-expect-error
+    const changes = await this.getChangesFromUpdatePayload(
       collectionName,
       entityId,
-      ComLink.proxy(updater)
+      data
     );
+    return await this.clientWorker.update(collectionName, entityId, changes);
   }
 
   async delete<CN extends CollectionNameFromModels<M>>(
@@ -292,25 +266,17 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
     entityId: string
   ) {
     await this.initialized;
-    return this.clientWorker.delete(
-      // @ts-expect-error
-      collectionName,
-      entityId
-    );
+    return this.clientWorker.delete(collectionName, entityId);
   }
-  subscribe<CQ extends SchemaClientQueries<M>>(
-    query: CQ,
-    onResults: (
-      results: Unalias<FetchResult<M, ToQuery<M, CQ>>>,
-      info: { hasRemoteFulfilled: boolean }
-    ) => void | Promise<void>,
+  subscribe<Q extends SchemaQuery<M>>(
+    query: Q,
+    onResults: SubscriptionResultsCallback<M, Q>,
     onError?: (error: any) => void | Promise<void>,
     options?: Partial<SubscriptionOptions>
   ) {
     const unsubPromise = (async () => {
       await this.initialized;
       return this.clientWorker.subscribe(
-        // @ts-expect-error
         query,
         ComLink.proxy(onResults),
         onError && ComLink.proxy(onError),
@@ -325,14 +291,31 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
     };
   }
 
-  subscribeBackground<CQ extends SchemaClientQueries<M>>(
-    query: CQ,
+  subscribeWithStatus<Q extends SchemaQuery<M>>(
+    query: Q,
+    callback: (state: SubscriptionSignalPayload<M, Q>) => void,
+    options?: Partial<SubscriptionOptions>
+  ): () => void {
+    const unsubPromise = (async () => {
+      await this.initialized;
+      return this.clientWorker.subscribeWithStatus(
+        query,
+        ComLink.proxy(callback),
+        options && ComLink.proxy(options)
+      );
+    })();
+    return () => {
+      unsubPromise.then((unsub) => unsub());
+    };
+  }
+
+  subscribeBackground<Q extends SchemaQuery<M>>(
+    query: Q,
     options: SubscribeBackgroundOptions = {}
   ) {
     const unsubPromise = (async () => {
       await this.initialized;
       return this.clientWorker.subscribeBackground(
-        // @ts-expect-error
         query,
         ComLink.proxy(options)
       );
@@ -350,12 +333,11 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
    *
    * The pagination will also do its best to always return full pages
    */
-  subscribeWithPagination<CQ extends SchemaClientQueries<M>>(
-    query: CQ,
+  subscribeWithPagination<Q extends SchemaQuery<M>>(
+    query: Q,
     onResults: (
-      results: Unalias<FetchResult<M, ToQuery<M, CQ>>>,
+      results: FetchResult<M, Q, 'many'>,
       info: {
-        hasRemoteFulfilled: boolean;
         hasNextPage: boolean;
         hasPreviousPage: boolean;
       }
@@ -363,17 +345,25 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
     onError?: (error: any) => void | Promise<void>,
     options?: Partial<SubscriptionOptions>
   ): PaginatedSubscription {
+    let unsubscribed = false;
+    // @ts-expect-error
+    const onRes = async (results, info) => {
+      if (unsubscribed) return;
+      onResults(results, info);
+    };
     const subscriptionPromise = this.initialized.then(() =>
       this.clientWorker.subscribeWithPagination(
-        // @ts-expect-error
         query,
-        ComLink.proxy(onResults),
+        ComLink.proxy(onRes),
         onError && ComLink.proxy(onError),
         options && ComLink.proxy(options)
       )
     );
     const unsubscribe = () => {
-      subscriptionPromise.then((sub) => sub.unsubscribe());
+      unsubscribed = true;
+      subscriptionPromise.then((sub) => {
+        sub.unsubscribe();
+      });
     };
     const nextPage = () => {
       subscriptionPromise.then((sub) => sub.nextPage());
@@ -385,12 +375,11 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
     return { unsubscribe, nextPage, prevPage };
   }
 
-  subscribeWithExpand<CQ extends SchemaClientQueries<M>>(
-    query: CQ,
+  subscribeWithExpand<Q extends SchemaQuery<M>>(
+    query: Q,
     onResults: (
-      results: Unalias<FetchResult<M, ToQuery<M, CQ>>>,
+      results: FetchResult<M, Q, 'many'>,
       info: {
-        hasRemoteFulfilled: boolean;
         hasMore: boolean;
       }
     ) => void | Promise<void>,
@@ -399,7 +388,6 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
   ): InfiniteSubscription {
     const subscriptionPromise = this.initialized.then(() =>
       this.clientWorker.subscribeWithExpand(
-        // @ts-expect-error
         query,
         ComLink.proxy(onResults),
         onError && ComLink.proxy(onError),
@@ -415,14 +403,9 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
     return { loadMore, unsubscribe };
   }
 
-  async getSchemaJson() {
-    await this.initialized;
-    return await this.clientWorker.getSchemaJson();
-  }
-
   async getSchema() {
     await this.initialized;
-    return JSONToSchema(await this.clientWorker.getSchemaJson());
+    return this.clientWorker.getSchema();
   }
 
   async updateServerUrl(serverUrl: string) {
@@ -441,6 +424,7 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
     return this.clientWorker.endSession(...args);
   }
 
+  // @ts-expect-error TODO
   async onSessionError(...args: Parameters<Client<M>['onSessionError']>) {
     await this.initialized;
     return this.clientWorker.onSessionError(ComLink.proxy(args[0]));
@@ -453,26 +437,62 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
     return this.clientWorker.updateSessionToken(...args);
   }
 
-  async isFirstTimeFetchingQuery(
-    query: CollectionQuery<any, any>
-  ): Promise<boolean> {
+  async updateGlobalVariables(vars: Record<string, any>): Promise<void> {
+    await this.initialized;
+    return this.clientWorker.updateGlobalVariables(vars);
+  }
+
+  async isFirstTimeFetchingQuery(query: CollectionQuery): Promise<boolean> {
     await this.initialized;
     return this.clientWorker.isFirstTimeFetchingQuery(query);
   }
 
-  onTxCommitRemote(txId: string, callback: () => void) {
-    const asyncUnsub = this.clientWorker.onTxCommitRemote(
-      txId,
-      ComLink.proxy(callback)
+  onSyncMessageReceived(
+    ...args: Parameters<typeof this.clientWorker.onSyncMessageReceived>
+  ) {
+    const unSubPromise = this.initialized.then(() =>
+      this.clientWorker.onSyncMessageReceived(ComLink.proxy(args[0]))
     );
-    return () => asyncUnsub.then((unsub) => unsub());
+    return () => unSubPromise.then((unsub) => unsub());
+  }
+  onSyncMessageSent(
+    ...args: Parameters<typeof this.clientWorker.onSyncMessageSent>
+  ) {
+    const unSubPromise = this.initialized.then(() =>
+      this.clientWorker.onSyncMessageSent(ComLink.proxy(args[0]))
+    );
+    return () => unSubPromise.then((unsub) => unsub());
+  }
+  onEntitySyncSuccess(
+    ...args: Parameters<typeof this.clientWorker.onEntitySyncSuccess>
+  ) {
+    const unSubPromise = this.initialized.then(() =>
+      this.clientWorker.onEntitySyncSuccess(
+        args[0],
+        args[1],
+        ComLink.proxy(args[2])
+      )
+    );
+    return () => unSubPromise.then((unsub) => unsub());
+  }
+  onEntitySyncError(
+    ...args: Parameters<typeof this.clientWorker.onEntitySyncError>
+  ) {
+    const unSubPromise = this.initialized.then(() =>
+      this.clientWorker.onEntitySyncError(
+        args[0],
+        args[1],
+        ComLink.proxy(args[2])
+      )
+    );
+    return () => unSubPromise.then((unsub) => unsub());
   }
 
-  onTxFailureRemote(txId: string, callback: () => void) {
-    const asyncUnsub = this.initialized.then(() =>
-      this.clientWorker.onTxFailureRemote(txId, ComLink.proxy(callback))
+  onFailureToSyncWrites(callback: (e: unknown) => void): () => void {
+    const unSubPromise = this.initialized.then(() =>
+      this.clientWorker.onFailureToSyncWrites(ComLink.proxy(callback))
     );
-    return () => asyncUnsub.then((unsub) => unsub());
+    return () => unSubPromise.then((unsub) => unsub());
   }
 
   onConnectionStatusChange(
@@ -496,13 +516,9 @@ export class WorkerClient<M extends ClientSchema = ClientSchema> {
     await this.initialized;
     return this.clientWorker.disconnect();
   }
-  async retry(txId: string) {
+  async syncWrites() {
     await this.initialized;
-    return this.clientWorker.retry(txId);
-  }
-  async rollback(txIds: string | string[]) {
-    await this.initialized;
-    return this.clientWorker.rollback(txIds);
+    return this.clientWorker.syncWrites();
   }
 
   async clear(options: ClearOptions = {}) {

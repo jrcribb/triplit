@@ -1,5 +1,113 @@
 # @triplit/server
 
+## 1.0.9
+
+### Patch Changes
+
+- Updated dependencies [c4cdb1ec]
+- Updated dependencies [0e9ae548]
+  - @triplit/db@1.0.8
+  - @triplit/client@1.0.9
+  - @triplit/server-core@1.0.9
+
+## 1.0.8
+
+### Patch Changes
+
+- Updated dependencies [1891580f]
+  - @triplit/db@1.0.7
+  - @triplit/client@1.0.8
+  - @triplit/server-core@1.0.8
+
+## 1.0.7
+
+### Patch Changes
+
+- Updated dependencies [a5b5c5fe]
+- Updated dependencies [017b22bb]
+  - @triplit/db@1.0.6
+  - @triplit/client@1.0.7
+  - @triplit/server-core@1.0.7
+
+## 1.0.6
+
+### Patch Changes
+
+- Updated dependencies [4005a4bf]
+- Updated dependencies [431fb8d4]
+  - @triplit/db@1.0.5
+  - @triplit/client@1.0.6
+  - @triplit/server-core@1.0.6
+
+## 1.0.5
+
+### Patch Changes
+
+- Updated dependencies [a6ceef0b]
+- Updated dependencies [a6ceef0b]
+  - @triplit/server-core@1.0.5
+  - @triplit/client@1.0.5
+
+## 1.0.4
+
+### Patch Changes
+
+- Updated dependencies [9e7be963]
+- Updated dependencies [f6fecc85]
+  - @triplit/client@1.0.4
+  - @triplit/db@1.0.4
+  - @triplit/server-core@1.0.4
+
+## 1.0.3
+
+### Patch Changes
+
+- eac92f24: remove extra pragma statements
+- Updated dependencies [4fe2bc9c]
+- Updated dependencies [eb08f761]
+- Updated dependencies [593238e5]
+- Updated dependencies [eb08f761]
+- Updated dependencies [bc014aa3]
+  - @triplit/client@1.0.3
+  - @triplit/db@1.0.3
+  - @triplit/server-core@1.0.3
+
+## 1.0.2
+
+### Patch Changes
+
+- Updated dependencies [88df6b96]
+- Updated dependencies [d6a7e7c0]
+- Updated dependencies [b19cbb14]
+  - @triplit/db@1.0.2
+  - @triplit/server-core@1.0.2
+  - @triplit/client@1.0.2
+
+## 1.0.1
+
+### Patch Changes
+
+- Updated dependencies [05053ede]
+  - @triplit/logger@0.0.1
+  - @triplit/client@1.0.1
+  - @triplit/db@1.0.1
+  - @triplit/server-core@1.0.1
+
+## 1.0.0
+
+### Major Changes
+
+- aa25e64d: Triplit 1.0
+
+### Patch Changes
+
+- Updated dependencies [aa25e64d]
+- Updated dependencies [70ea2813]
+- Updated dependencies [44f9ed5b]
+  - @triplit/server-core@1.0.0
+  - @triplit/client@1.0.0
+  - @triplit/db@1.0.0
+
 ## 0.5.13
 
 ### Patch Changes

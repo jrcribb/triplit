@@ -6,13 +6,14 @@
     "module": "ESNext",
     "outDir": "./dist",
     "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "strict": true,
     "esModuleInterop": true,
     "declaration": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "rootDir": "./src/"
+    "rootDir": "./src/",
+    "sourceMap": true
   },
   "references": [
     {

@@ -1,14 +1,14 @@
-import { useSession } from "next-auth/react"
-
 import {
   addUserToConversation,
   removeUserFromConversation,
 } from "@/lib/triplit-mutations.js"
 import {
   Conversation,
+  UseConversationResult,
   useUsersNotInConversationList,
 } from "@/hooks/triplit-hooks.js"
 
+import { useCurrentUser } from "./client-auth-provider.jsx"
 import { Button } from "./ui/button.jsx"
 import {
   CommandDialog,
@@ -26,14 +26,13 @@ export function SearchUsers({
 }: {
   open: boolean
   setOpen: (open: boolean) => void
-  conversation: Conversation
+  conversation: UseConversationResult
 }) {
-  const { data: session } = useSession()
-  const currentUserId = session?.user?.id
+  const _currentUser = useCurrentUser()
+  const currentUserId = _currentUser.id
   const members = conversation?.membersInfo
   const { nonMembers } = useUsersNotInConversationList(conversation)
 
-  // @ts-ignore
   const currentUser = members.find(({ id }) => id === currentUserId)
   const membersExCurrentUser =
     members?.filter(({ id }) => id !== currentUserId) ?? []

@@ -1,5 +1,90 @@
 # @triplit/client
 
+## 1.0.9
+
+### Patch Changes
+
+- Updated dependencies [c4cdb1ec]
+- Updated dependencies [0e9ae548]
+  - @triplit/db@1.0.8
+
+## 1.0.8
+
+### Patch Changes
+
+- Updated dependencies [1891580f]
+  - @triplit/db@1.0.7
+
+## 1.0.7
+
+### Patch Changes
+
+- Updated dependencies [a5b5c5fe]
+- Updated dependencies [017b22bb]
+  - @triplit/db@1.0.6
+
+## 1.0.6
+
+### Patch Changes
+
+- 431fb8d4: Add sourcemaps to db and client
+- Updated dependencies [4005a4bf]
+- Updated dependencies [431fb8d4]
+  - @triplit/db@1.0.5
+
+## 1.0.5
+
+### Patch Changes
+
+- a6ceef0b: update http response parsing
+
+## 1.0.4
+
+### Patch Changes
+
+- 9e7be963: WorkerClient fixups
+- Updated dependencies [f6fecc85]
+  - @triplit/db@1.0.4
+
+## 1.0.3
+
+### Patch Changes
+
+- 4fe2bc9c: git commit -m "remove deprecated apis"
+- eb08f761: properly pass schema to http client
+- 593238e5: add onFailureToSyncWrites callback
+- Updated dependencies [eb08f761]
+- Updated dependencies [bc014aa3]
+  - @triplit/db@1.0.3
+
+## 1.0.2
+
+### Patch Changes
+
+- Updated dependencies [88df6b96]
+- Updated dependencies [b19cbb14]
+  - @triplit/db@1.0.2
+
+## 1.0.1
+
+### Patch Changes
+
+- Updated dependencies [05053ede]
+  - @triplit/logger@0.0.1
+  - @triplit/db@1.0.1
+
+## 1.0.0
+
+### Major Changes
+
+- aa25e64d: Triplit 1.0
+
+### Patch Changes
+
+- 70ea2813: more gracefully handle starting session when one is already active
+- Updated dependencies [44f9ed5b]
+  - @triplit/db@1.0.0
+
 ## 0.6.14
 
 ### Patch Changes

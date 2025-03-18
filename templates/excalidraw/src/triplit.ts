@@ -1,17 +1,20 @@
-import { TriplitClient } from '@triplit/client';
 import { useQuery } from '@triplit/react';
 import { usePageId } from './use-query-params.js';
 import { useMemo } from 'react';
+import { WorkerClient } from '@triplit/client/worker-client';
+import workerUrl from '@triplit/client/worker-client-operator?url';
 
-export const client = new TriplitClient({
-  storage: 'indexeddb',
+export const client = new WorkerClient({
+  storage: 'memory',
   serverUrl: import.meta.env.VITE_TRIPLIT_SERVER_URL,
   token: import.meta.env.VITE_TRIPLIT_TOKEN,
+  workerUrl,
 });
+
 window.triplit = client;
 
 export function usePages() {
-  return useQuery(client, client.query('pages').order(['createdAt', 'DESC']));
+  return useQuery(client, client.query('pages').Order(['createdAt', 'DESC']));
 }
 export function useExcalidrawElements() {
   const [currentPageId] = usePageId();
@@ -19,8 +22,8 @@ export function useExcalidrawElements() {
     client,
     client
       .query('elements')
-      .order('_fracIndex', 'ASC')
-      .where('pageId', '=', currentPageId)
+      .Order('_fracIndex', 'ASC')
+      .Where('pageId', '=', currentPageId)
   );
 }
 
@@ -28,10 +31,10 @@ export function useUnsyncedElements() {
   const [currentPageId] = usePageId();
   return useQuery(
     client,
-    client
-      .query('elements')
-      .where('pageId', '=', currentPageId)
-      .syncStatus('pending')
+    client.query('elements').Where('pageId', '=', currentPageId),
+    {
+      syncStatus: 'pending',
+    }
   );
 }
 

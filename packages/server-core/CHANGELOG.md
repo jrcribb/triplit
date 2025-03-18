@@ -1,5 +1,85 @@
 # @triplit/server-core
 
+## 1.0.9
+
+### Patch Changes
+
+- Updated dependencies [c4cdb1ec]
+- Updated dependencies [0e9ae548]
+  - @triplit/db@1.0.8
+
+## 1.0.8
+
+### Patch Changes
+
+- Updated dependencies [1891580f]
+  - @triplit/db@1.0.7
+
+## 1.0.7
+
+### Patch Changes
+
+- Updated dependencies [a5b5c5fe]
+- Updated dependencies [017b22bb]
+  - @triplit/db@1.0.6
+
+## 1.0.6
+
+### Patch Changes
+
+- Updated dependencies [4005a4bf]
+- Updated dependencies [431fb8d4]
+  - @triplit/db@1.0.5
+
+## 1.0.5
+
+### Patch Changes
+
+- a6ceef0b: fixup fetch return values not entires
+
+## 1.0.4
+
+### Patch Changes
+
+- Updated dependencies [f6fecc85]
+  - @triplit/db@1.0.4
+
+## 1.0.3
+
+### Patch Changes
+
+- Updated dependencies [eb08f761]
+- Updated dependencies [bc014aa3]
+  - @triplit/db@1.0.3
+
+## 1.0.2
+
+### Patch Changes
+
+- d6a7e7c0: Properly deserialize bulk inserts
+- Updated dependencies [88df6b96]
+- Updated dependencies [b19cbb14]
+  - @triplit/db@1.0.2
+
+## 1.0.1
+
+### Patch Changes
+
+- Updated dependencies [05053ede]
+  - @triplit/logger@0.0.1
+  - @triplit/db@1.0.1
+
+## 1.0.0
+
+### Major Changes
+
+- aa25e64d: Triplit 1.0
+
+### Patch Changes
+
+- Updated dependencies [44f9ed5b]
+  - @triplit/db@1.0.0
+
 ## 0.5.24
 
 ### Patch Changes

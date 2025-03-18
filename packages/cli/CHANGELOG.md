@@ -1,5 +1,63 @@
 # @triplit/cli
 
+## 1.0.8
+
+### Patch Changes
+
+- c4cdb1ec: Manual version bump for CLI dependencies
+
+## 1.0.7
+
+### Patch Changes
+
+- 1891580f: Manual version bump for CLI dependencies
+
+## 1.0.6
+
+### Patch Changes
+
+- 017b22bb: Manual version bump for CLI dependencies
+
+## 1.0.5
+
+### Patch Changes
+
+- 4005a4bf: Manual version bump for CLI dependencies
+
+## 1.0.4
+
+### Patch Changes
+
+- a6ceef0b: Manual version bump for CLI dependencies
+
+## 1.0.3
+
+### Patch Changes
+
+- 9e7be963: Manual version bump for CLI dependencies
+
+## 1.0.2
+
+### Patch Changes
+
+- 4fe2bc9c: Manual version bump for CLI dependencies
+
+## 1.0.1
+
+### Patch Changes
+
+- d6a7e7c0: Manual version bump for CLI dependencies
+
+## 1.0.0
+
+### Major Changes
+
+- aa25e64d: Triplit 1.0
+
+### Patch Changes
+
+- 70ea2813: Manual version bump for CLI dependencies
+
 ## 0.6.36
 
 ### Patch Changes

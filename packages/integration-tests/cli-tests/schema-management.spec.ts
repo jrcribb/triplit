@@ -31,10 +31,9 @@ const projectPath = path.join(__dirname, 'project');
 const triplitPath = path.join(projectPath, 'triplit');
 const $shell = $({ cwd: projectPath, env, reject: true });
 
-async function writeLocalSchema(collections: Models<any, any>, path?: string) {
+async function writeLocalSchema(collections: Models, path?: string) {
   const schema = {
     collections,
-    version: 0,
   };
   const schemaFileContent = schemaFileContentFromSchema(schema);
   await writeSchemaFile(schemaFileContent, { path });
@@ -127,8 +126,10 @@ describe('schema push', () => {
             schema: S.Schema({
               id: S.Id(),
               attr: S.String(),
-              relation: S.RelationById('relatedCollection', '$attr'),
             }),
+            relationships: {
+              relation: S.RelationById('relatedCollection', '$attr'),
+            },
           },
           relatedCollection: {
             schema: S.Schema({
@@ -151,8 +152,8 @@ describe('schema push', () => {
         {
           const { schema: collections } = await readRemoteSchema();
           expect(Object.keys(collections)).toEqual([
-            'relatedCollection',
             'test',
+            'relatedCollection',
           ]);
         }
         await writeLocalSchema({

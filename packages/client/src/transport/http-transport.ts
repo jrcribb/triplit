@@ -3,7 +3,7 @@ import {
   ConnectionStatus,
   SyncTransport,
   TransportConnectParams,
-} from './transport.js';
+} from '../types.js';
 
 export class HttpTransport implements SyncTransport {
   private eventSource: EventSource | undefined;
@@ -32,9 +32,9 @@ export class HttpTransport implements SyncTransport {
     if (!this.transportOptions) return false;
     if (!this.isOpen) return false;
 
-    const { token, clientId, server, secure } = this.transportOptions;
+    const { token, server } = this.transportOptions;
 
-    const uri = `${secure ? 'https' : 'http'}://${server}/message`;
+    const uri = `${server}/message`;
     fetch(uri, {
       method: 'POST',
       headers: {
@@ -43,7 +43,7 @@ export class HttpTransport implements SyncTransport {
       },
       body: JSON.stringify({
         message,
-        options: { clientId },
+        options: {},
       }),
     }).catch((err) => {
       console.error(err);
@@ -63,31 +63,14 @@ export class HttpTransport implements SyncTransport {
   // Set up a server sent event stream
   connect(params: TransportConnectParams): void {
     if (this.eventSource) this.close();
-
-    const { token, clientId, schema, syncSchema, server, secure } = params;
-    const missingParams = [];
-    if (!token || !clientId || !server) {
-      if (!token) missingParams.push('token');
-      if (!clientId) missingParams.push('clientId');
-      if (!server) missingParams.push('server');
-      console.warn(
-        `Missing required params: [${missingParams.join(
-          ', '
-        )}]. Skipping sync connection.`
-      );
-      return;
-    }
-
+    const { token, schema, syncSchema, server } = params;
     const eventSourceOptions = new URLSearchParams();
     if (schema) {
       eventSourceOptions.set('schema', schema.toString());
     }
     eventSourceOptions.set('sync-schema', String(syncSchema));
-    eventSourceOptions.set('client', clientId);
     eventSourceOptions.set('token', token);
-    const eventSourceUri = `${
-      secure ? 'https' : 'http'
-    }://${server}/message-events?${eventSourceOptions.toString()}`;
+    const eventSourceUri = `${server}/message-events?${eventSourceOptions.toString()}`;
     this.eventSource = new EventSource(eventSourceUri);
     this.transportOptions = params;
   }

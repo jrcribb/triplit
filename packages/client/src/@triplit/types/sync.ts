@@ -1,15 +1,16 @@
-// TODO: add these types back
-// import type { CollectionQuery, Timestamp, TripleRow } from '@triplit/db';
-
 import { ITriplitError } from './errors.js';
 
 type CollectionQuery<T, U> = any;
-type Timestamp = [sequence: number, client: string];
-type TripleRow = any;
+export type SyncTimestamp = [number, number, string];
 
 type SyncMessage<Type extends string, Payload extends any> = {
   type: Type;
   payload: Payload;
+};
+
+export type QueryState = {
+  timestamp: SyncTimestamp;
+  entityIds: { [collection: string]: string[] };
 };
 
 export type ServerCloseReason = {
@@ -41,15 +42,14 @@ export type CloseReason = {
   retry: boolean;
 };
 
-export type ServerTriplesAckMessage = SyncMessage<
-  'TRIPLES_ACK',
-  { txIds: string[]; failedTxIds: string[] }
+export type ServerEntityDataMessage = SyncMessage<
+  'ENTITY_DATA',
+  { changes: any; timestamp: any; forQueries: string[] }
 >;
-export type ServerTriplesMessage = SyncMessage<
-  'TRIPLES',
-  { triples: TripleRow[]; forQueries: string[] }
+export type ServerChangesAckMessage = SyncMessage<
+  'CHANGES_ACK',
+  { timestamp: any }
 >;
-export type ServrTriplesRequestMessage = SyncMessage<'TRIPLES_REQUEST', {}>;
 export type ServerErrorMessage = SyncMessage<
   'ERROR',
   {
@@ -65,48 +65,52 @@ export type ServerErrorMessage = SyncMessage<
   }
 >;
 export type ServerCloseMessage = SyncMessage<'CLOSE', ServerCloseReason>;
+export type ServerSchemaRequestMessage = SyncMessage<'SCHEMA_REQUEST', {}>;
+export type ServerReadyMessage = SyncMessage<'READY', {}>;
 
 export type ServerSyncMessage =
-  | ServerTriplesAckMessage
-  | ServerTriplesMessage
-  | ServrTriplesRequestMessage
   | ServerErrorMessage
-  | ServerCloseMessage;
+  | ServerCloseMessage
+  | ServerEntityDataMessage
+  | ServerChangesAckMessage
+  | ServerSchemaRequestMessage
+  | ServerReadyMessage;
 
 export type ClientConnectQueryMessage = SyncMessage<
   'CONNECT_QUERY',
   {
     id: string;
     params: CollectionQuery<any, any>;
-    state?: Timestamp[];
+    state?: QueryState;
   }
 >;
 export type ClientDisconnectQueryMessage = SyncMessage<
   'DISCONNECT_QUERY',
   { id: string }
 >;
-export type ClientTriplesPendingMessage = SyncMessage<'TRIPLES_PENDING', {}>;
-export type ClientTriplesMessage = SyncMessage<
-  'TRIPLES',
-  { triples: TripleRow[] }
->;
+
 export type ClientChunkMessage = SyncMessage<
   'CHUNK',
   { data: string; total: number; index: number; id: string }
 >;
+export type ClientChangesMessage = SyncMessage<'CHANGES', { changes: any }>;
 
 export type ClientUpdateTokenMessage = SyncMessage<
   'UPDATE_TOKEN',
   { token: string }
 >;
+export type ClientSchemaResponseMessage = SyncMessage<
+  'SCHEMA_RESPONSE',
+  { schema: any }
+>;
 
 export type ClientSyncMessage =
   | ClientConnectQueryMessage
   | ClientDisconnectQueryMessage
-  | ClientTriplesPendingMessage
-  | ClientTriplesMessage
   | ClientChunkMessage
-  | ClientUpdateTokenMessage;
+  | ClientUpdateTokenMessage
+  | ClientChangesMessage
+  | ClientSchemaResponseMessage;
 
 type SuccessResult<T> = { data: T; error?: undefined };
 type ErrorResult<E> = { data?: undefined; error: E };

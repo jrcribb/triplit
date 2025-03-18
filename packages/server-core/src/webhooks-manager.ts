@@ -1,3 +1,4 @@
+// @ts-nocheck TODO: update webhooks to next gen
 import {
   DBTransaction,
   DB as TriplitDB,
@@ -208,6 +209,7 @@ export class WebhooksManager {
   }
 }
 
+export type WebhookAction = keyof WebhookJSONDefinition[string][string];
 export type WebhookJSONDefinition = {
   [url: string]: {
     [collectionName: string]: {

@@ -1,10 +1,10 @@
 import { ClientSyncMessage, CloseReason } from '../@triplit/types/sync.js';
+import { WebSocketsUnavailableError } from '../errors.js';
 import {
   ConnectionStatus,
   SyncTransport,
   TransportConnectParams,
-} from './transport.js';
-import { WebSocketsUnavailableError } from '../errors.js';
+} from '../types.js';
 
 const DEFAULT_PAYLOAD_SIZE_LIMIT = (1024 * 1024) / 2;
 
@@ -31,7 +31,8 @@ export class WebSocketTransport implements SyncTransport {
     return !!this.ws && this.ws.readyState === this.ws.OPEN;
   }
   get connectionStatus(): ConnectionStatus {
-    return this.ws ? friendlyReadyState(this.ws) : 'CLOSED';
+    // @ts-expect-error
+    return this.ws ? friendlyReadyState(this.ws) : 'UNINITIALIZED';
   }
   onOpen(callback: (ev: any) => void): void {
     if (this.ws) this.ws.onopen = callback;
@@ -75,38 +76,34 @@ export class WebSocketTransport implements SyncTransport {
     return true;
   }
   connect(params: TransportConnectParams): void {
-    if (this.ws && this.isOpen) this.close();
-    const { token, clientId, schema, syncSchema, server, secure } = params;
-    const missingParams = [];
-    if (!token || !clientId || !server) {
-      if (!token) missingParams.push('token');
-      if (!clientId) missingParams.push('clientId');
-      if (!server) missingParams.push('server');
-      console.warn(
-        `Missing required params: [${missingParams.join(
-          ', '
-        )}]. Skipping sync connection.`
-      );
-      return;
-    }
+    // Close any existing connection
+    this.close();
+
+    // Setup connection URL
+    const { token, schema, syncSchema, server } = params;
     const wsOptions = new URLSearchParams();
     if (schema) {
       wsOptions.set('schema', schema.toString());
     }
-    wsOptions.set('sync-schema', String(syncSchema));
-    wsOptions.set('client', clientId);
+    wsOptions.set('sync-schema', String(!!syncSchema));
     wsOptions.set('token', token);
+    const secure = server.startsWith('https://');
+    const domain = server.slice(secure ? 8 : 7); // remove protocol
     const wsUri = `${
       secure ? 'wss' : 'ws'
-    }://${server}?${wsOptions.toString()}`;
+    }://${domain}?${wsOptions.toString()}`;
     if (!webSocketsAreAvailable()) {
       throw new WebSocketsUnavailableError();
     }
+
+    // Create a new WebSocket connection and set up event listeners
     this.ws = new WebSocket(wsUri);
     this.ws.onconnectionchange = (status) => {
       this.connectionListeners.forEach((listener) => listener(status));
     };
   }
+
+  // TODO: feels a bit awkward that these have to be set up after connect()
   onMessage(callback: (message: any) => void): void {
     if (this.ws) this.ws.onmessage = callback;
   }
@@ -115,7 +112,23 @@ export class WebSocketTransport implements SyncTransport {
   }
   close(reason?: CloseReason): void {
     // Assuming normal close for now (1000), possibly map reasons to codes later
-    this.ws && this.ws.close(1000, JSON.stringify(reason));
+    if (!this.ws) return;
+
+    // If socket is open, close
+    if (this.ws.readyState === this.ws.OPEN) {
+      return this.ws.close(1000, JSON.stringify(reason));
+    }
+
+    // If socket is connecting, close once open
+    if (this.ws.readyState === this.ws.CONNECTING) {
+      return this.ws.addEventListener(
+        'open',
+        () => {
+          this.ws?.close(1000, JSON.stringify(reason));
+        },
+        { once: true }
+      );
+    }
   }
   onClose(callback: (ev: any) => void): void {
     if (this.ws) this.ws.onclose = callback;
@@ -167,18 +180,11 @@ function friendlyReadyState(conn: WebSocket): ConnectionStatus {
   }
 }
 
-if (
-  typeof WebSocket !== 'undefined' &&
-  typeof self !== 'undefined' &&
-  !!Object.getOwnPropertyDescriptor(self, 'WebSocket')?.writable
-) {
-  // Add any changes to the WebSocket type here (ex more event handlers)
-  var WebSocketProxy = new Proxy(WebSocket, {
+if (typeof globalThis !== 'undefined' && globalThis.WebSocket) {
+  var WebSocketProxy = new Proxy(globalThis.WebSocket, {
     construct: function (target, args) {
-      const instance = new target(
-        // @ts-ignore
-        ...args
-      );
+      //@ts-expect-error
+      const instance = new target(...args);
 
       function dispatchConnectionChangeEvent() {
         instance.dispatchEvent(new Event('connectionchange'));
@@ -190,15 +196,14 @@ if (
         }
       }
 
-      // Capture the connecting state after the constructor is called
-      setTimeout(function () {
+      // Handle connecting state after constructor
+      setTimeout(() => {
         dispatchConnectionChangeEvent();
       }, 0);
 
       const openHandler = () => {
         dispatchConnectionChangeEvent();
       };
-
       const closeHandler = () => {
         dispatchConnectionChangeEvent();
         instance.removeEventListener('open', openHandler);
@@ -212,6 +217,6 @@ if (
     },
   });
 
-  // replace the native WebSocket with the proxy
-  WebSocket = WebSocketProxy;
+  // Replace native/global WebSocket with the proxy
+  globalThis.WebSocket = WebSocketProxy;
 }

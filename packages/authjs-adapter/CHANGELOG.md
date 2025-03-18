@@ -1,5 +1,230 @@
 # @triplit/authjs-adapter
 
+## 1.0.9
+
+### Patch Changes
+
+- @triplit/client@1.0.9
+
+## 1.0.8
+
+### Patch Changes
+
+- @triplit/client@1.0.8
+
+## 1.0.7
+
+### Patch Changes
+
+- @triplit/client@1.0.7
+
+## 1.0.6
+
+### Patch Changes
+
+- Updated dependencies [431fb8d4]
+  - @triplit/client@1.0.6
+
+## 1.0.5
+
+### Patch Changes
+
+- Updated dependencies [a6ceef0b]
+  - @triplit/client@1.0.5
+
+## 1.0.4
+
+### Patch Changes
+
+- Updated dependencies [9e7be963]
+  - @triplit/client@1.0.4
+
+## 1.0.3
+
+### Patch Changes
+
+- Updated dependencies [4fe2bc9c]
+- Updated dependencies [eb08f761]
+- Updated dependencies [593238e5]
+  - @triplit/client@1.0.3
+
+## 1.0.2
+
+### Patch Changes
+
+- @triplit/client@1.0.2
+
+## 1.0.1
+
+### Patch Changes
+
+- @triplit/client@1.0.1
+
+## 1.0.0
+
+### Minor Changes
+
+- aa25e64d: Triplit 1.0
+
+### Patch Changes
+
+- Updated dependencies [aa25e64d]
+- Updated dependencies [70ea2813]
+  - @triplit/client@1.0.0
+
+## 4.0.0-canary-20250310223455
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250310223455
+
+## 4.0.0-canary-20250308203743
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250308203743
+
+## 4.0.0-canary-20250306235641
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250306235641
+
+## 4.0.0-canary-20250306191454
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250306191454
+
+## 4.0.0-canary-20250228214718
+
+### Patch Changes
+
+- Updated dependencies [2156db26]
+  - @triplit/client@0.7.0-canary-20250228214718
+
+## 4.0.0-canary-20250225192824
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250225192824
+
+## 4.0.0-canary-20250225002127
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250225002127
+
+## 4.0.0-canary-20250224214952
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250224214952
+
+## 4.0.0-canary-20250224192505
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250224192505
+
+## 4.0.0-canary-20250221232228
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250221232228
+
+## 4.0.0-canary-20250218050211
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250218050211
+
+## 4.0.0-canary-20250217185840
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250217185840
+
+## 4.0.0-canary-20250217180655
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250217180655
+
+## 4.0.0-canary-20250207224403
+
+### Patch Changes
+
+- Updated dependencies [a24fa92c]
+  - @triplit/client@0.7.0-canary-20250207224403
+
+## 4.0.0-canary-20250206062549
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250206062549
+
+## 4.0.0-canary-20250205191258
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250205191258
+
+## 4.0.0-canary-20250204212628
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250204212628
+
+## 4.0.0-canary-20250204182912
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250204182912
+
+## 4.0.0-canary-20250204165459
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250204165459
+
+## 4.0.0-canary-20250204062109
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250204062109
+
+## 4.0.0-canary-20250204060424
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250204060424
+
+## 4.0.0-canary-20250204055631
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250204055631
+
+## 4.0.0-canary-20250204042452
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250204042452
+
+## 4.0.0-canary-20250204035012
+
+### Patch Changes
+
+- @triplit/client@0.7.0-canary-20250204035012
+
+## 4.0.0-canary-20250204025207
+
+### Patch Changes
+
+- Updated dependencies [4866105f]
+  - @triplit/client@0.7.0-canary-20250204025207
+
 ## 3.0.0
 
 ### Patch Changes
