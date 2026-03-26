@@ -1,11 +1,7 @@
-// TODO: add these types back
-// import type { CollectionQuery, Timestamp, TripleRow } from '@triplit/db';
-
 import { ITriplitError } from './errors.js';
 
 type CollectionQuery<T, U> = any;
-export type Timestamp = [number, number, string];
-type TripleRow = any;
+export type SyncTimestamp = [number, number, string];
 
 type SyncMessage<Type extends string, Payload extends any> = {
   type: Type;
@@ -13,7 +9,7 @@ type SyncMessage<Type extends string, Payload extends any> = {
 };
 
 export type QueryState = {
-  timestamp: Timestamp;
+  timestamp: SyncTimestamp;
   entityIds: { [collection: string]: string[] };
 };
 
@@ -70,7 +66,16 @@ export type ServerErrorMessage = SyncMessage<
 >;
 export type ServerCloseMessage = SyncMessage<'CLOSE', ServerCloseReason>;
 export type ServerSchemaRequestMessage = SyncMessage<'SCHEMA_REQUEST', {}>;
-export type ServerReadyMessage = SyncMessage<'READY', {}>;
+export type ServerReadyMessage = SyncMessage<
+  'READY',
+  {
+    clientId: string;
+  }
+>;
+export type ServerPongMessage = SyncMessage<
+  'PONG',
+  { clientTimestamp?: number; serverTimestamp?: number }
+>;
 
 export type ServerSyncMessage =
   | ServerErrorMessage
@@ -78,7 +83,8 @@ export type ServerSyncMessage =
   | ServerEntityDataMessage
   | ServerChangesAckMessage
   | ServerSchemaRequestMessage
-  | ServerReadyMessage;
+  | ServerReadyMessage
+  | ServerPongMessage;
 
 export type ClientConnectQueryMessage = SyncMessage<
   'CONNECT_QUERY',
@@ -108,13 +114,19 @@ export type ClientSchemaResponseMessage = SyncMessage<
   { schema: any }
 >;
 
+export type ClientPingMessage = SyncMessage<
+  'PING',
+  { clientTimestamp?: number }
+>;
+
 export type ClientSyncMessage =
   | ClientConnectQueryMessage
   | ClientDisconnectQueryMessage
   | ClientChunkMessage
   | ClientUpdateTokenMessage
   | ClientChangesMessage
-  | ClientSchemaResponseMessage;
+  | ClientSchemaResponseMessage
+  | ClientPingMessage;
 
 type SuccessResult<T> = { data: T; error?: undefined };
 type ErrorResult<E> = { data?: undefined; error: E };

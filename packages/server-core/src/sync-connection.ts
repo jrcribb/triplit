@@ -1,9 +1,14 @@
 import {
+  CollectionNameFromModels,
+  CollectionQuery,
   DB,
   DBChanges,
+  HybridLogicalClock,
+  PreparedQuery,
   TriplitError,
   diffSchemas,
   getBackwardsIncompatibleEdits,
+  prepareQuery,
 } from '@triplit/db';
 import { QuerySyncError, UnrecognizedMessageTypeError } from './errors.js';
 import { isTriplitError } from './utils.js';
@@ -15,6 +20,8 @@ import {
   ClientDisconnectQueryMessage,
   ClientChangesMessage,
   ClientSchemaResponseMessage,
+  QueryState,
+  ClientPingMessage,
 } from '@triplit/types/sync';
 import {
   hasAdminAccess,
@@ -26,10 +33,17 @@ import { logger } from '@triplit/logger';
 import SuperJSON from 'superjson';
 import { mergeDBChanges } from '@triplit/db/changes-buffer';
 import { COMPATIBILITY_LIST_KEY } from './constants.js';
+import {
+  createQueryWithExistsAddedToIncludes,
+  createQueryWithRelationalOrderAddedToIncludes,
+  diffChanges,
+  queryResultsToChanges,
+} from '@triplit/db/ivm';
 
 export interface ConnectionOptions {
   clientSchemaHash: number | undefined;
   syncSchema?: boolean | undefined;
+  clientId: string;
 }
 
 const INCOMPATIBLE_SCHEMA_PAYLOAD = {
@@ -48,12 +62,18 @@ export class SyncConnection {
       unsubscribe: () => void;
       serverHasRespondedOnce: boolean;
       externalQueryId: string;
+      // TODO: This works with existing types, but evaluate if this is accurate
+      externalQuery: PreparedQuery;
+      checkpoint?: QueryState;
     }
   >;
   listeners: Set<(messageType: string, payload: {}) => void>;
   chunkedMessages: Map<string, string[]> = new Map();
-  subscriptionDataBuffer: { changedQueries: Set<string>; changes: DBChanges } =
-    { changedQueries: new Set(), changes: {} };
+  subscriptionDataBuffer: {
+    changedQueries: Set<string>;
+    changes: DBChanges;
+    queryEntities: Map<string, DBChanges>;
+  } = { changedQueries: new Set(), changes: {}, queryEntities: new Map() };
   // querySyncer: ReturnType<DB['createQuerySyncer']>;
   private started = false;
   private canSync = false;
@@ -68,13 +88,19 @@ export class SyncConnection {
     this.listeners = new Set();
   }
 
+  sendReadyMsg() {
+    return this.sendMessage('READY', {
+      clientId: this.options.clientId,
+    });
+  }
+
   async start() {
     if (this.started) return;
     // If the client is schemaless, we will allow the connection and safe use of data is up to the client
     // Client writes may be rejected based on server schema
     if (this.options.clientSchemaHash === undefined) {
       this.canSync = true;
-      return this.sendMessage('READY', {});
+      return this.sendReadyMsg();
     }
 
     // If the server is schemaless and the client is not, we should not sync
@@ -95,7 +121,7 @@ export class SyncConnection {
     // If we recognize the client schema hash as compatible, we can sync
     if (compatibilityList.includes(this.options.clientSchemaHash)) {
       this.canSync = true;
-      return this.sendMessage('READY', {});
+      return this.sendReadyMsg();
     }
 
     // If we don't recognize the client schema hash, request more information
@@ -139,14 +165,129 @@ export class SyncConnection {
     this.sendMessage('ERROR', payload);
   }
 
-  private bufferEntityData(changes: DBChanges, queryId?: string) {
-    this.subscriptionDataBuffer.changes = mergeDBChanges(
-      this.subscriptionDataBuffer.changes,
-      changes
-    );
+  // TODO handle the async nature of this
+  private async bufferEntityData(results: any[], queryId?: string) {
     if (!queryId) {
       throw new Error('queryId is required to bufferEntityData');
     }
+    const queryInfo = this.connectedQueries.get(queryId)!;
+    const changes = queryResultsToChanges(results, queryInfo.externalQuery);
+    let unionOfChangesBefore = {};
+    let unionOfChangesAfter = {};
+    for (const [qId, qEntities] of this.subscriptionDataBuffer.queryEntities) {
+      unionOfChangesBefore = mergeDBChanges(
+        unionOfChangesBefore,
+        structuredClone(qEntities)
+      );
+      if (qId === queryId) {
+        unionOfChangesAfter = mergeDBChanges(
+          unionOfChangesAfter,
+          structuredClone(changes)
+        );
+      } else {
+        unionOfChangesAfter = mergeDBChanges(
+          unionOfChangesAfter,
+          structuredClone(qEntities)
+        );
+      }
+    }
+    this.subscriptionDataBuffer.queryEntities.set(
+      queryId!,
+      structuredClone(changes)
+    );
+    let changeDiff = diffChanges(unionOfChangesBefore, unionOfChangesAfter);
+
+    if (!queryInfo.serverHasRespondedOnce && queryInfo.checkpoint) {
+      const entitiesThatHaveNotChanged: Record<string, Set<string>> = {};
+      const entitiesThatAreNoLongerInTheResultSet: Record<
+        string,
+        Set<string>
+      > = {};
+
+      for (const [collection, entityIds] of Object.entries(
+        queryInfo.checkpoint.entityIds
+      )) {
+        for (const entityId of entityIds) {
+          if (!entityIsInChangeset(changes, collection, entityId)) {
+            if (!entitiesThatAreNoLongerInTheResultSet[collection]) {
+              entitiesThatAreNoLongerInTheResultSet[collection] = new Set();
+            }
+            entitiesThatAreNoLongerInTheResultSet[collection].add(entityId);
+            // out of the results and in the results but unchanged
+            // are mutually exclusive categories so we can skip
+            // timestamp checking
+            continue;
+          }
+          const timestamp =
+            await this.db.entityStore.metadataStore.getTimestampForEntity(
+              this.db.kv,
+              collection,
+              entityId
+            );
+          if (
+            // TODO: determine if timestamp can ever be undefined
+            // I think the only case could be if the entity was optimistically inserted
+            // on the client but never synced to the server
+            // assuming that we don't delete metadata when we delete entities
+            timestamp &&
+            HybridLogicalClock.compare(
+              timestamp,
+              queryInfo.checkpoint.timestamp
+            ) < 0
+          ) {
+            if (!entitiesThatHaveNotChanged[collection]) {
+              entitiesThatHaveNotChanged[collection] = new Set();
+            }
+            entitiesThatHaveNotChanged[collection].add(entityId);
+          }
+        }
+      }
+
+      // step 2: filter out unchanged entities from the new changeset
+      changeDiff = {};
+      for (const collection in changes) {
+        changeDiff[collection] = {
+          sets: new Map(),
+          deletes: changes[collection].deletes,
+        };
+        for (const [id, patch] of changes[collection].sets) {
+          if (entitiesThatHaveNotChanged[collection]?.has(id)) {
+            continue;
+          }
+          changeDiff[collection].sets.set(id, patch);
+        }
+      }
+
+      // step 3: for any entities that are no longer in the result set,
+      // get any updates or deletes and add them to the changeset
+      for (const [collectionName, entityIds] of Object.entries(
+        entitiesThatAreNoLongerInTheResultSet
+      )) {
+        const stillMissingEntityIds = new Set(entityIds);
+        if (!changeDiff[collectionName]) {
+          changeDiff[collectionName] = {
+            sets: new Map(),
+            deletes: new Set(),
+          };
+        }
+        const addedChanges = await this.db.fetchChanges({
+          collectionName: collectionName as CollectionNameFromModels<any>,
+          where: [['id', 'in', Array.from(entityIds)]],
+        });
+        for (const [id, addedChange] of addedChanges[collectionName].sets) {
+          stillMissingEntityIds.delete(id);
+          changeDiff[collectionName].sets.set(id, addedChange);
+        }
+        for (const entityId of stillMissingEntityIds) {
+          changeDiff[collectionName].deletes.add(entityId);
+        }
+      }
+    }
+    queryInfo.serverHasRespondedOnce = true;
+    this.subscriptionDataBuffer.changes = mergeDBChanges(
+      this.subscriptionDataBuffer.changes,
+      changeDiff
+    );
     this.subscriptionDataBuffer.changedQueries.add(queryId!);
   }
 
@@ -157,10 +298,10 @@ export class SyncConnection {
       timestamp: this.db.clock.current(),
       forQueries: Array.from(this.subscriptionDataBuffer.changedQueries),
     });
-    this.subscriptionDataBuffer = {
-      changedQueries: new Set(),
-      changes: {},
-    };
+
+    // Flush subscription data state excluding the entities for the queries
+    this.subscriptionDataBuffer.changes = {};
+    this.subscriptionDataBuffer.changedQueries = new Set();
   }
 
   async handleConnectQueryMessage(
@@ -168,18 +309,34 @@ export class SyncConnection {
   ) {
     const { id: queryKey, params: query, state } = msgParams;
     try {
-      // TODO: handle this more centrally so a ENTITY_DATA message can be sent for multiple
-      // subscribed queries at once
-      const unsubscribe = this.db.subscribeChanges(
-        query,
+      // TODO figure out better way to manage this especially on unsubscribe
+      // and when there are multiple subs to the same query
+      this.subscriptionDataBuffer.queryEntities.set(queryKey, {});
+      const queryWithRelationalInclusions =
+        createQueryWithRelationalOrderAddedToIncludes(
+          createQueryWithExistsAddedToIncludes(
+            prepareQuery(
+              query,
+              this.db.schema?.collections,
+              this.db.systemVars,
+              this.db.session,
+              {
+                applyPermission: hasAdminAccess(this.token)
+                  ? undefined
+                  : 'read',
+              }
+            )
+          )
+        );
+      const unsubscribe = this.db.subscribeRaw(
+        queryWithRelationalInclusions,
         this.bufferEntityData.bind(this),
+        (err) => {
+          throw err;
+        },
         {
           queryState: state,
-          skipRules: hasAdminAccess(this.token),
           queryKey,
-          errorCallback: (error) => {
-            throw error;
-          },
         }
       );
 
@@ -192,12 +349,14 @@ export class SyncConnection {
         unsubscribe,
         serverHasRespondedOnce: false,
         externalQueryId: queryKey,
+        externalQuery: queryWithRelationalInclusions,
+        checkpoint: state,
       });
 
       await this.db.updateQueryViews();
       this.db.broadcastToQuerySubscribers();
     } catch (e) {
-      logger.error('Connect query error', e as Error);
+      logger.error('Error while processing message CONNECT_QUERY', e as Error);
       const innerError = isTriplitError(e)
         ? e
         : new TriplitError(
@@ -221,6 +380,7 @@ export class SyncConnection {
     // this.querySyncer.unregisterQuery(internalQueryId);
     if (this.connectedQueries.has(queryKey)) {
       this.connectedQueries.get(queryKey)?.unsubscribe();
+      this.subscriptionDataBuffer.queryEntities.delete(queryKey);
       this.connectedQueries.delete(queryKey);
     }
   }
@@ -237,14 +397,14 @@ export class SyncConnection {
       await this.db.updateQueryViews();
       this.db.broadcastToQuerySubscribers();
     } catch (e) {
-      logger.error('Changes error', e as Error);
+      logger.error('Error while processing message CHANGES', e as Error);
       const error = isTriplitError(e)
         ? e
         : new TriplitError(
             'An unknown error occurred while processing your request.'
           );
       // TODO: test error payloads
-      this.sendErrorResponse('CHANGES', new TriplitError(), {
+      this.sendErrorResponse('CHANGES', error, {
         failures: Object.keys(changes).map((collection) => ({
           txId: JSON.stringify(timestamp),
           collection,
@@ -281,7 +441,7 @@ export class SyncConnection {
     // If client is schemaless, we can sync but will reject invalid changes on server
     if (!clientSchema) {
       this.canSync = true;
-      return this.sendMessage('READY', {});
+      return this.sendReadyMsg();
     }
 
     const serverSchema = this.db.getSchema();
@@ -303,7 +463,7 @@ export class SyncConnection {
         ]);
       }
       this.canSync = true;
-      this.sendMessage('READY', {});
+      this.sendReadyMsg();
     };
 
     // Schemas are identical, we can sync
@@ -313,7 +473,6 @@ export class SyncConnection {
 
     const incompatibleEdits = getBackwardsIncompatibleEdits(diff);
     const isSchemaCompatible = incompatibleEdits.length === 0;
-    console.dir(incompatibleEdits, { depth: null });
 
     // If schema is incompatible, we shouldnt sync
     if (!isSchemaCompatible) {
@@ -323,6 +482,13 @@ export class SyncConnection {
 
     // If schema is compatible, we can sync
     await allowClientToSync();
+  }
+
+  handlePingMessage(msgParams: ClientPingMessage['payload']) {
+    this.sendMessage('PONG', {
+      clientTimestamp: msgParams.clientTimestamp,
+      serverTimestamp: Date.now(),
+    });
   }
 
   dispatchCommand(message: ClientSyncMessage) {
@@ -346,6 +512,8 @@ export class SyncConnection {
           return this.handleChangesMessage(message.payload);
         case 'CHUNK':
           return this.handleChunkMessage(message.payload);
+        case 'PING':
+          return this.handlePingMessage(message.payload);
         default:
           return this.sendErrorResponse(
             // @ts-ignore
@@ -376,4 +544,16 @@ export class SyncConnection {
   async isClientSchemaCompatible(): Promise<ServerCloseReason | undefined> {
     throw new Error('NOT IMPLEMENTED');
   }
+}
+
+function entityIsInChangeset(
+  changes: DBChanges,
+  collection: string,
+  entityId: string
+) {
+  return (
+    changes[collection] &&
+    (changes[collection].sets.has(entityId) ||
+      changes[collection].deletes.has(entityId))
+  );
 }

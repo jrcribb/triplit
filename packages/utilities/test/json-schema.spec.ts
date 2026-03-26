@@ -38,7 +38,7 @@ describe('Full JSON Compliance Test', () => {
       type: 'object',
       properties: {
         id: {
-          default: 'uuid',
+          default: 'nanoid',
           type: 'string',
         },
         boolean: {
@@ -54,6 +54,7 @@ describe('Full JSON Compliance Test', () => {
           type: 'string',
           format: 'date-time',
         },
+        json: {},
         set_string: {
           type: 'array',
           items: {
@@ -87,7 +88,7 @@ describe('Full JSON Compliance Test', () => {
           type: 'object',
           properties: {
             id: {
-              default: 'uuid',
+              default: 'nanoid',
               type: 'string',
             },
             boolean: {
@@ -103,6 +104,7 @@ describe('Full JSON Compliance Test', () => {
               type: 'string',
               format: 'date-time',
             },
+            json: {},
             set_string: {
               type: 'array',
               items: {
@@ -137,6 +139,7 @@ describe('Full JSON Compliance Test', () => {
             'boolean',
             'date',
             'id',
+            'json',
             'number',
             'set_boolean',
             'set_date',
@@ -150,6 +153,7 @@ describe('Full JSON Compliance Test', () => {
         'boolean',
         'date',
         'id',
+        'json',
         'number',
         'object',
         'set_boolean',

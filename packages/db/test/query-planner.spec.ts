@@ -1,15 +1,11 @@
 import { describe, expect, test } from 'vitest';
-import {
-  compileQuery,
-  compileRelationalPlan,
-  extractViews,
-} from '../src/query-planner/query-compiler.js';
-import { CollectionQuery } from '../src/query.js';
+import { compileQuery } from '../src/query-planner/query-compiler.js';
+import { PreparedQuery } from '../src/query/types/index.js';
 
 describe('query planning', async () => {
   const queries: {
     description: string;
-    query: CollectionQuery;
+    query: PreparedQuery;
   }[] = [
     {
       description: "Posts authored by user with username 'Bob99'",
@@ -185,6 +181,23 @@ describe('query planning', async () => {
               cardinality: 'one',
             },
           ],
+        ],
+      },
+    },
+    {
+      description: 'subquery with two filters with variables',
+      query: {
+        collectionName: 'messages',
+        where: [
+          {
+            exists: {
+              collectionName: 'users',
+              where: [
+                ['id', '=', '$1.senderId'],
+                ['name', '=', '$1.text'],
+              ],
+            },
+          },
         ],
       },
     },

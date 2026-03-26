@@ -1,5 +1,331 @@
 # @triplit/client
 
+## 1.0.50
+
+### Patch Changes
+
+- 040e2caf: Ensure schema failures log for users without need for a callback
+- Updated dependencies [3c9d9ed6]
+  - @triplit/db@1.1.10
+
+## 1.0.49
+
+### Patch Changes
+
+- Updated dependencies [2a4b5fda]
+  - @triplit/db@1.1.9
+
+## 1.0.48
+
+### Patch Changes
+
+- 0c92a165: Add enabled parameter to subscriptions
+
+## 1.0.47
+
+### Patch Changes
+
+- Updated dependencies [f5983616]
+  - @triplit/db@1.1.8
+
+## 1.0.46
+
+### Patch Changes
+
+- Updated dependencies [bf954205]
+  - @triplit/db@1.1.7
+
+## 1.0.45
+
+### Patch Changes
+
+- 2aa7a8c8: Fixup patch update to handle sets and other serialized data
+- Updated dependencies [ca79a3e9]
+- Updated dependencies [e2a8f9ca]
+- Updated dependencies [2aa7a8c8]
+- Updated dependencies [662dbd18]
+  - @triplit/db@1.1.6
+
+## 1.0.44
+
+### Patch Changes
+
+- 3e8c0083: apply timestamp to ping and allow manual ping send
+- da1ae46f: cleanup remote fetching states on connection close
+
+## 1.0.43
+
+### Patch Changes
+
+- 543f746f: fix issue causing reconnection attempts to halt
+- Updated dependencies [2a4a6bde]
+  - @triplit/db@1.1.5
+
+## 1.0.42
+
+### Patch Changes
+
+- d9ec4b1d: refactor connectionStatus changes to fire with more control, add more manual state handling of sync sessions
+- Updated dependencies [d637845a]
+  - @triplit/db@1.1.4
+
+## 1.0.41
+
+### Patch Changes
+
+- Updated dependencies [592ee3b2]
+  - @triplit/db@1.1.3
+
+## 1.0.40
+
+### Patch Changes
+
+- Updated dependencies [c0138d32]
+  - @triplit/db@1.1.2
+
+## 1.0.39
+
+### Patch Changes
+
+- Updated dependencies [1573c075]
+  - @triplit/db@1.1.1
+
+## 1.0.38
+
+### Patch Changes
+
+- e2fe796f: fixup bug with fetchingRemote
+- ba6e9973: relax schema compat checks
+- Updated dependencies [0cea41b7]
+- Updated dependencies [bada3067]
+- Updated dependencies [3237065b]
+- Updated dependencies [ba6e9973]
+- Updated dependencies [00c2dd14]
+  - @triplit/db@1.1.0
+
+## 1.0.37
+
+### Patch Changes
+
+- Updated dependencies [75a5cc62]
+  - @triplit/db@1.0.35
+
+## 1.0.36
+
+### Patch Changes
+
+- 4f5e4662: add context to invalid server url error
+- Updated dependencies [c6c4031d]
+- Updated dependencies [1c9827c1]
+  - @triplit/db@1.0.34
+
+## 1.0.35
+
+### Patch Changes
+
+- Updated dependencies [c3319981]
+- Updated dependencies [4240590a]
+  - @triplit/db@1.0.33
+
+## 1.0.34
+
+### Patch Changes
+
+- Updated dependencies [304532b1]
+  - @triplit/db@1.0.32
+
+## 1.0.33
+
+### Patch Changes
+
+- 683d8d9e: fixup fetching state heuristic
+
+## 1.0.32
+
+### Patch Changes
+
+- Updated dependencies [36f11d23]
+- Updated dependencies [2bd3e281]
+  - @triplit/db@1.0.31
+
+## 1.0.31
+
+### Patch Changes
+
+- Updated dependencies [9308b204]
+  - @triplit/db@1.0.30
+
+## 1.0.30
+
+### Patch Changes
+
+- d8023d03: More safely decode jwts and ensure bad jwts get picked up by onSessionError as unauthorized
+- 461d1813: Use HTTP to refresh tokens to better support token validation at edge
+- Updated dependencies [d8023d03]
+- Updated dependencies [552d8d2b]
+  - @triplit/db@1.0.29
+
+## 1.0.29
+
+### Patch Changes
+
+- Updated dependencies [981dc430]
+  - @triplit/db@1.0.28
+
+## 1.0.28
+
+### Patch Changes
+
+- Updated dependencies [9db8a8a3]
+  - @triplit/db@1.0.27
+
+## 1.0.27
+
+### Patch Changes
+
+- 5bfe7a65: fixup unref guard
+- Updated dependencies [5bfe7a65]
+  - @triplit/db@1.0.26
+
+## 1.0.26
+
+### Patch Changes
+
+- 945061c8: Add default for ping interval
+- 9ee08435: add guard for unref() usage
+- Updated dependencies [9ee08435]
+  - @triplit/db@1.0.25
+
+## 1.0.25
+
+### Patch Changes
+
+- Updated dependencies [75f3bb64]
+- Updated dependencies [112aed9c]
+  - @triplit/db@1.0.24
+
+## 1.0.24
+
+### Patch Changes
+
+- 8cd8d2a4: add ping message
+- Updated dependencies [8cd8d2a4]
+  - @triplit/db@1.0.23
+
+## 1.0.23
+
+### Patch Changes
+
+- Updated dependencies [4a65e1c3]
+  - @triplit/db@1.0.22
+
+## 1.0.22
+
+### Patch Changes
+
+- cef9da5e: Only read cache data during checkpointed fetch
+- aebc50bc: fixup bug causing outbox thrashing during sync
+- Updated dependencies [9695cde2]
+- Updated dependencies [706871a0]
+- Updated dependencies [07abaca1]
+- Updated dependencies [2bb158b8]
+  - @triplit/db@1.0.21
+
+## 1.0.21
+
+### Patch Changes
+
+- Updated dependencies [3cf25c56]
+- Updated dependencies [93beece6]
+  - @triplit/db@1.0.20
+
+## 1.0.20
+
+### Patch Changes
+
+- Updated dependencies [893dcb0a]
+  - @triplit/db@1.0.19
+
+## 1.0.19
+
+### Patch Changes
+
+- Updated dependencies [0c0e6c61]
+- Updated dependencies [da14a7ed]
+- Updated dependencies [50572a01]
+- Updated dependencies [97a72c5e]
+  - @triplit/db@1.0.18
+
+## 1.0.18
+
+### Patch Changes
+
+- Updated dependencies [caa6b418]
+  - @triplit/db@1.0.17
+
+## 1.0.17
+
+### Patch Changes
+
+- 23f52af2: Allow connection attempt to flow through even if no token to ensure logs inform user of state
+- a4a9c4ec: move client to use @triplit/logger
+- Updated dependencies [a4a9c4ec]
+  - @triplit/logger@0.0.3
+  - @triplit/db@1.0.16
+
+## 1.0.16
+
+### Patch Changes
+
+- Updated dependencies [74736c3f]
+  - @triplit/db@1.0.15
+
+## 1.0.15
+
+### Patch Changes
+
+- Updated dependencies [69c8efe7]
+  - @triplit/db@1.0.14
+
+## 1.0.14
+
+### Patch Changes
+
+- Updated dependencies [ee4dc5c1]
+  - @triplit/logger@0.0.2
+  - @triplit/db@1.0.13
+
+## 1.0.13
+
+### Patch Changes
+
+- Updated dependencies [5fea17c0]
+  - @triplit/db@1.0.12
+
+## 1.0.12
+
+### Patch Changes
+
+- ad6618dd: separate out client transport exports
+- Updated dependencies [b37e241f]
+  - @triplit/db@1.0.11
+
+## 1.0.11
+
+### Patch Changes
+
+- e9395371: add a few more specific return types
+- Updated dependencies [e9395371]
+  - @triplit/db@1.0.10
+
+## 1.0.10
+
+### Patch Changes
+
+- Updated dependencies [0f8a4a4a]
+- Updated dependencies [a7c98bcd]
+  - @triplit/db@1.0.9
+
 ## 1.0.9
 
 ### Patch Changes

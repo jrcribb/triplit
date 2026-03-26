@@ -1,6 +1,6 @@
 import { DBTransaction } from '../db-transaction.js';
 import { DBSchema } from '../db.js';
-import { IVM, IVMOptions } from '../ivm.js';
+import { IVM } from '../ivm/index.js';
 import {
   CollectionNameFromModels,
   Decoded,
@@ -39,7 +39,6 @@ export interface DBOptions<
   schema?: DBSchema<M>;
   ivm?: IVM;
   variables?: Record<string, any>;
-  ivmOptions?: IVMOptions;
   experimental?: {};
 }
 export type FetchOptions = { skipRules?: boolean };
@@ -64,7 +63,7 @@ export type EntityWriteOptions = {
 export type SubscriptionResultsCallback<
   M extends Models<M> = Models,
   Q extends SchemaQuery<M> = SchemaQuery<M>,
-> = (results: FetchResult<M, Q, 'many'>) => void;
+> = (results: FetchResult<M, Q, 'many'>, queryKey?: string) => void;
 export type OnCommitCallback = (changes: DBChanges) => Promise<void>;
 export type SchemaChangeListener = (
   change: SchemaChange

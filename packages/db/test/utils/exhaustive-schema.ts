@@ -19,6 +19,12 @@ export const EXHAUSTIVE_SCHEMA = {
         optionalDate: S.Optional(S.Date()),
         defaultDate: S.Date({ default: S.Default.now() }),
 
+        // json
+        json: S.Json(),
+        nullableJson: S.Json({ nullable: true }),
+        optionalJson: S.Optional(S.Json()),
+        defaultJson: S.Json({ default: { a: 1 } }),
+
         // number
         number: S.Number(),
         nullableNumber: S.Number({ nullable: true }),
@@ -68,6 +74,9 @@ export const EXHAUSTIVE_SCHEMA = {
           enum: ['a', 'b', 'c'],
           nullable: true,
         }),
+
+        // Numeric key
+        42: S.String(),
       }),
       relationships: {
         subquery: {

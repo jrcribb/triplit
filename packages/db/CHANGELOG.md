@@ -1,5 +1,258 @@
 # @triplit/entity-db
 
+## 1.1.10
+
+### Patch Changes
+
+- 3c9d9ed6: Relax numeric attribute constraints
+
+## 1.1.9
+
+### Patch Changes
+
+- 2a4b5fda: Properly handle nested paths in relational filters
+
+## 1.1.8
+
+### Patch Changes
+
+- f5983616: Include property on serialization and deserialization error messages
+
+## 1.1.7
+
+### Patch Changes
+
+- bf954205: Handle undefined in VAC comps
+
+## 1.1.6
+
+### Patch Changes
+
+- ca79a3e9: Fixup VAC comparisons to handle optional values
+- e2a8f9ca: Handle various environemnts with optional dep loading
+- 2aa7a8c8: Fixup patch update to handle sets and other serialized data
+- 662dbd18: Fixup type inference on delete
+
+## 1.1.5
+
+### Patch Changes
+
+- 2a4a6bde: export applyChange from db
+
+## 1.1.4
+
+### Patch Changes
+
+- d637845a: relax missing variable check
+
+## 1.1.3
+
+### Patch Changes
+
+- 592ee3b2: prevent possible data merging when overriding schema
+
+## 1.1.2
+
+### Patch Changes
+
+- c0138d32: remove direct better-sqlite3 import from sqlite kv store
+
+## 1.1.1
+
+### Patch Changes
+
+- 1573c075: Fix bundling issue in Expo / React Native / Metro
+
+## 1.1.0
+
+### Minor Changes
+
+- 0cea41b7: Add uuidv4 and uuidv7 default formats for IDs
+
+### Patch Changes
+
+- bada3067: Include failed property in serialization error message
+- 3237065b: fix bug in default application for optional attrs
+- ba6e9973: relax schema compat checks
+- 00c2dd14: fixup expo-sqlite row parsing
+
+## 1.0.35
+
+### Patch Changes
+
+- 75a5cc62: add $prev variable prefixing for postUpdate permissions
+
+## 1.0.34
+
+### Patch Changes
+
+- c6c4031d: add results-have-already-been initialized invariant to ivm
+- 1c9827c1: Add handling for filter view paths into sets
+
+## 1.0.33
+
+### Patch Changes
+
+- c3319981: implement relationship diffing
+- 4240590a: improve default value validation for schemas
+
+## 1.0.32
+
+### Patch Changes
+
+- 304532b1: remove fs import from expo-sqlite
+
+## 1.0.31
+
+### Patch Changes
+
+- 36f11d23: fixup
+- 2bd3e281: hotfix: defer tx permissions
+
+## 1.0.30
+
+### Patch Changes
+
+- 9308b204: bump
+
+## 1.0.29
+
+### Patch Changes
+
+- d8023d03: fixup typing of createDB
+- 552d8d2b: restart subscriptions on a db clearance
+
+## 1.0.28
+
+### Patch Changes
+
+- 981dc430: Add type S.Json
+
+## 1.0.27
+
+### Patch Changes
+
+- 9db8a8a3: Fixup: remove extra variable processing on hot path
+
+## 1.0.26
+
+### Patch Changes
+
+- 5bfe7a65: fixup unref guard
+
+## 1.0.25
+
+### Patch Changes
+
+- 9ee08435: add guard for unref() usage
+
+## 1.0.24
+
+### Patch Changes
+
+- 75f3bb64: Add wal maintenance to sqlite providers, add additional sqlite configuration
+- 112aed9c: Prepare filters with missing variables to falsy
+
+## 1.0.23
+
+### Patch Changes
+
+- 8cd8d2a4: small type refactor
+
+## 1.0.22
+
+### Patch Changes
+
+- 4a65e1c3: Use more modern url format for sqlite worker
+
+## 1.0.21
+
+### Patch Changes
+
+- 9695cde2: Make set op transformation in query preparation idempotent
+- 706871a0: More consistently overlay outbox data into changes
+- 07abaca1: properly merge updates on deleted data
+- 2bb158b8: add polyfill for Array.fromAsync
+
+## 1.0.20
+
+### Patch Changes
+
+- 3cf25c56: properly type external inputs to permissions filters in schema
+- 93beece6: add useCache option to indexeddb provider
+
+## 1.0.19
+
+### Patch Changes
+
+- 893dcb0a: simplify worker deps
+
+## 1.0.18
+
+### Patch Changes
+
+- 0c0e6c61: Add type definitions for PreparedQuery
+- da14a7ed: bug fix in set filtering
+- 50572a01: Fixup enum type to accept external readonly array
+- 97a72c5e: Improve subscription stability under rapid disconnections
+
+## 1.0.17
+
+### Patch Changes
+
+- caa6b418: handle more ivm corner cases for complex queries
+
+## 1.0.16
+
+### Patch Changes
+
+- Updated dependencies [a4a9c4ec]
+  - @triplit/logger@0.0.3
+
+## 1.0.15
+
+### Patch Changes
+
+- 74736c3f: BUG FIX: handle possible accessor on undefined
+
+## 1.0.14
+
+### Patch Changes
+
+- 69c8efe7: Fix syncing bug with certain inserts
+
+## 1.0.13
+
+### Patch Changes
+
+- Updated dependencies [ee4dc5c1]
+  - @triplit/logger@0.0.2
+
+## 1.0.12
+
+### Patch Changes
+
+- 5fea17c0: Rm console logs
+
+## 1.0.11
+
+### Patch Changes
+
+- b37e241f: simplify order and include clauses with subqueries
+
+## 1.0.10
+
+### Patch Changes
+
+- e9395371: add a few more specific return types
+
+## 1.0.9
+
+### Patch Changes
+
+- 0f8a4a4a: simplify subquery filters during preparation
+- a7c98bcd: Fix nested relational filters in fitler groups like AND and OR (usually in permissions) failing in subscriptions
+
 ## 1.0.8
 
 ### Patch Changes

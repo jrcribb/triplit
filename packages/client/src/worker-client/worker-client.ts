@@ -1,5 +1,8 @@
 import * as ComLink from 'comlink';
-import type { TriplitClient as Client } from '../client/triplit-client.js';
+import {
+  TriplitClient,
+  type TriplitClient as Client,
+} from '../client/triplit-client.js';
 import {
   SubscribeBackgroundOptions,
   ClientFetchOptions,
@@ -8,7 +11,6 @@ import {
   SubscriptionOptions,
   SubscriptionSignalPayload,
 } from '../client/types';
-import SuperJSON from 'superjson';
 import {
   ClearOptions,
   CollectionNameFromModels,
@@ -18,12 +20,12 @@ import {
   FetchResult,
   InvalidCollectionNameError,
   Models,
+  normalizeSessionVars,
   queryBuilder,
+  ReadModel,
   SchemaQuery,
   SubscriptionResultsCallback,
   TransactCallback,
-  Type,
-  Unalias,
   UpdatePayload,
   WriteModel,
 } from '@triplit/db';
@@ -31,9 +33,11 @@ import { ClientComlinkWrapper } from './client-comlink-wrapper.js';
 import {
   ClientOptions,
   ClientTransactOptions,
-  SimpleClientStorageOptions,
+  SerializableStorageOptions,
 } from '../client/types/client.js';
 import { ConnectionStatus } from '../types.js';
+import { clientLogHandler } from '../client-logger.js';
+import { decodeToken } from '../token.js';
 
 export function getTriplitWorkerEndpoint(workerUrl?: string): ComLink.Endpoint {
   const url =
@@ -55,36 +59,15 @@ export function getTriplitSharedWorkerPort(
   return new SharedWorker(url, options).port;
 }
 
-function logObjToMessage(lobObj: any) {
-  const message = lobObj.scope
-    ? [`%c${lobObj.scope}`, 'color: #888', lobObj.message]
-    : [lobObj.message];
-  return [...message, ...lobObj.args.map(SuperJSON.deserialize)];
-}
-
-class WorkerLogger {
-  error(log: any) {
-    console.error(...logObjToMessage(log));
-  }
-  warn(log: any) {
-    console.warn(...logObjToMessage(log));
-  }
-  info(log: any) {
-    console.info(...logObjToMessage(log));
-  }
-  debug(log: any) {
-    console.debug(...logObjToMessage(log));
-  }
-}
-
 export class WorkerClient<M extends Models<M> = Models> implements Client<M> {
   initialized: Promise<void>;
   clientWorker: ClientComlinkWrapper<M>; //ComLink.Remote<Client<M>>;
   private _connectionStatus: ConnectionStatus;
+  private _vars: typeof TriplitClient.prototype.vars;
   constructor(
     options?: Omit<ClientOptions<M>, 'storage'> & {
       workerUrl?: string;
-      storage?: SimpleClientStorageOptions;
+      storage?: SerializableStorageOptions;
     },
     workerEndpoint?: ComLink.Endpoint,
     sharedWorkerPort?: MessagePort
@@ -96,17 +79,17 @@ export class WorkerClient<M extends Models<M> = Models> implements Client<M> {
     // @ts-expect-error
     this.clientWorker = ComLink.wrap(workerEndpoint) as ClientComlinkWrapper<M>;
     const {
-      schema,
       onSessionError,
       token,
       refreshOptions,
       autoConnect,
       ...remainingOptions
     } = options || {};
+    const connectOnInitialization = autoConnect ?? true;
     if (token) {
       this.startSession(
         token,
-        autoConnect,
+        connectOnInitialization,
         refreshOptions && ComLink.proxy(refreshOptions)
       );
     }
@@ -115,17 +98,25 @@ export class WorkerClient<M extends Models<M> = Models> implements Client<M> {
     }
     // @ts-expect-error
     this.initialized = this.clientWorker.init(
-      {
-        ...remainingOptions,
-        schema: schema,
-      },
-      ComLink.proxy(new WorkerLogger())
+      remainingOptions,
+      ComLink.proxy(clientLogHandler())
     );
-    this._connectionStatus =
-      options?.autoConnect === false ? 'CLOSED' : 'CONNECTING';
+    this._connectionStatus = 'UNINITIALIZED';
     this.onConnectionStatusChange((status) => {
       this._connectionStatus = status;
     }, true);
+    const decoded = decodeToken(token);
+    const sessionVars = decoded ? normalizeSessionVars(decoded) : {};
+    this._vars = {
+      $global: remainingOptions?.variables ?? {},
+      $session: sessionVars,
+      $token: sessionVars,
+    };
+    this.clientWorker.onVariablesChange(
+      ComLink.proxy((vars) => {
+        this._vars = vars;
+      })
+    );
   }
 
   get connectionStatus() {
@@ -139,7 +130,7 @@ export class WorkerClient<M extends Models<M> = Models> implements Client<M> {
   async fetch<Q extends SchemaQuery<M>>(
     query: Q,
     options?: Partial<ClientFetchOptions>
-  ) {
+  ): Promise<FetchResult<M, Q, 'many'>> {
     await this.initialized;
     return this.clientWorker.fetch(query, options);
   }
@@ -229,21 +220,21 @@ export class WorkerClient<M extends Models<M> = Models> implements Client<M> {
     collectionName: CN,
     id: string,
     options?: Partial<ClientFetchOptions>
-  ) {
+  ): Promise<FetchResult<M, { collectionName: CN }, 'one'>> {
     await this.initialized;
     return this.clientWorker.fetchById(collectionName, id, options);
   }
   async fetchOne<Q extends SchemaQuery<M>>(
     query: Q,
     options?: Partial<ClientFetchOptions>
-  ) {
+  ): Promise<FetchResult<M, Q, 'one'>> {
     await this.initialized;
     return this.clientWorker.fetchOne(query, options);
   }
   async insert<CN extends CollectionNameFromModels<M>>(
     collectionName: CN,
     object: WriteModel<M, CN>
-  ) {
+  ): Promise<ReadModel<M, CN>> {
     await this.initialized;
     return this.clientWorker.insert(collectionName, object);
   }
@@ -251,7 +242,7 @@ export class WorkerClient<M extends Models<M> = Models> implements Client<M> {
     collectionName: CN,
     entityId: string,
     data: UpdatePayload<M, CN>
-  ) {
+  ): Promise<void> {
     await this.initialized;
     const changes = await this.getChangesFromUpdatePayload(
       collectionName,
@@ -264,7 +255,7 @@ export class WorkerClient<M extends Models<M> = Models> implements Client<M> {
   async delete<CN extends CollectionNameFromModels<M>>(
     collectionName: CN,
     entityId: string
-  ) {
+  ): Promise<void> {
     await this.initialized;
     return this.clientWorker.delete(collectionName, entityId);
   }
@@ -508,6 +499,9 @@ export class WorkerClient<M extends Models<M> = Models> implements Client<M> {
     return () => unSubPromise.then((unsub) => unsub());
   }
 
+  get vars() {
+    return this._vars;
+  }
   async connect() {
     await this.initialized;
     return this.clientWorker.connect();

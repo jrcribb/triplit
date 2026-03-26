@@ -54,12 +54,12 @@ it('onConnectionStatusChange should reflect the correct connection status', asyn
   client.onConnectionStatusChange((status) => {
     statuses.push(status);
   }, true);
-  expect(statuses).toEqual(['UNINITIALIZED']);
+  expect(statuses).toEqual(['CONNECTING']);
   await pause(60);
-  expect(statuses).toEqual(['UNINITIALIZED', 'CONNECTING', 'OPEN']);
+  expect(statuses).toEqual(['CONNECTING', 'OPEN']);
   client.disconnect();
   await pause(60);
-  expect(statuses).toEqual(['UNINITIALIZED', 'CONNECTING', 'OPEN', 'CLOSED']);
+  expect(statuses).toEqual(['CONNECTING', 'OPEN', 'CLOSING', 'CLOSED']);
 });
 
 it("if the query hasn't been seen before, subscribeWithStatus.fetching should turn false after a response from the server has occurred", async () => {
@@ -301,5 +301,91 @@ it('should have the correct state for a client has autoconnect:false but then co
         fetchingRemote: false,
       },
     ],
+  ]);
+});
+it('should reset all loading states when the client calls .clear()', async () => {
+  await using server = await tempTriplitServer();
+  const { port } = server;
+  const client = new TriplitClient({
+    serverUrl: `http://localhost:${port}`,
+    token: serviceToken,
+  });
+  await pause(20);
+  const query = client.query('users');
+  await client.insert('users', { id: '1', name: 'John' });
+  await pause(20);
+
+  let states: any[] = [];
+
+  client.subscribeWithStatus(query, (state) => {
+    states.push(state);
+  });
+  await pause(20);
+  expect(states).toEqual([
+    // immediate initial result
+    {
+      results: undefined,
+      error: undefined,
+      fetching: true,
+      fetchingLocal: true,
+      fetchingRemote: false,
+    },
+    // local result returns
+    {
+      results: [{ id: '1', name: 'John' }],
+      error: undefined,
+      fetching: true,
+      fetchingLocal: false,
+      fetchingRemote: false,
+    },
+    {
+      results: [{ id: '1', name: 'John' }],
+      error: undefined,
+      fetching: true,
+      fetchingLocal: false,
+      fetchingRemote: true,
+    },
+    {
+      results: [{ id: '1', name: 'John' }],
+      error: undefined,
+      fetching: false,
+      fetchingLocal: false,
+      fetchingRemote: false,
+    },
+  ]);
+  states = [];
+  await client.clear();
+  await pause(30);
+  expect(states).toEqual([
+    // immediate initial result
+    {
+      results: undefined,
+      error: undefined,
+      fetching: true,
+      fetchingLocal: true,
+      fetchingRemote: false,
+    },
+    // local result returns
+    {
+      results: [],
+      error: undefined,
+      fetching: true,
+      fetchingLocal: false,
+      fetchingRemote: false,
+    },
+    {
+      results: [],
+      error: undefined,
+      fetching: true,
+      fetchingLocal: false,
+      fetchingRemote: true,
+    },
+    {
+      results: [{ id: '1', name: 'John' }],
+      error: undefined,
+      fetching: false,
+      fetchingLocal: false,
+      fetchingRemote: false,
+    },
   ]);
 });

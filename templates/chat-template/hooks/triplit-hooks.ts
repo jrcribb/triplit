@@ -2,7 +2,7 @@ import { useMemo } from "react"
 import { Entity } from "@triplit/client"
 import { useInfiniteQuery, useQuery, useQueryOne } from "@triplit/react"
 
-import { client } from "@/lib/triplit.js"
+import { Query, client } from "@/lib/triplit.js"
 
 import { schema } from "../triplit/schema.js"
 
@@ -20,7 +20,9 @@ export function useFilteredConversations(query: string) {
     error,
   } = useQuery(
     client,
-    client.query("conversations").Where("name", "like", `%${query}%`)
+    Query("conversations")
+      .Where("name", "like", `%${query}%`)
+      .Order("latestMessage.created_at", "DESC")
   )
   return { conversations, fetchingRemote, fetching, error }
 }
@@ -36,7 +38,7 @@ export function useConversation(convoId: string) {
     error,
   } = useQueryOne(
     client,
-    client.query("conversations").Id(convoId).Include("membersInfo")
+    Query("conversations").Id(convoId).Include("membersInfo")
   )
   return { conversation, fetching, fetchingRemote, error }
 }
@@ -44,10 +46,9 @@ export type UseConversationResult = NonNullable<
   ReturnType<typeof useConversation>["conversation"]
 >
 
-// Populate the conversation cards on the sidebar with the last recieved message
+// Populate the conversation cards on the sidebar with the last received message
 export function useConversationSnippet(convoId: string) {
-  const messagesQuery = client
-    .query("messages")
+  const messagesQuery = Query("messages")
     .Where("conversationId", "=", convoId)
     .Order("created_at", "DESC")
   const { result: message } = useQueryOne(client, messagesQuery)
@@ -60,8 +61,7 @@ export function useConversationSnippet(convoId: string) {
 export function useMessages(convoId: string) {
   const messagesQuery = useMemo(
     () =>
-      client
-        .query("messages")
+      Query("messages")
         .Where("conversationId", "=", convoId)
         .Order("created_at", "DESC")
         .Limit(30)
@@ -110,9 +110,7 @@ export function useUsersNotInConversationList(conversation: Conversation) {
     error,
   } = useQuery(
     client,
-    client
-      .query("users")
-      .Where("id", "nin", Array.from(conversation?.members ?? []))
+    Query("users").Where("id", "nin", Array.from(conversation?.members ?? []))
   )
   return { nonMembers, fetching, fetchingRemote, error }
 }

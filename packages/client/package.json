@@ -15,7 +15,7 @@
     "sqlite"
   ],
   "packageManager": "yarn@3.4.1",
-  "version": "1.0.9",
+  "version": "1.0.50",
   "source": "./src/index.ts",
   "main": "./dist/index.js",
   "type": "module",
@@ -46,6 +46,11 @@
       "types": "./dist/storage/*.d.ts",
       "import": "./dist/storage/*.js",
       "default": "./dist/storage/*.js"
+    },
+    "./transport/*": {
+      "types": "./dist/transport/*.d.ts",
+      "import": "./dist/transport/*.js",
+      "default": "./dist/transport/*.js"
     }
   },
   "scripts": {
@@ -53,8 +58,7 @@
     "build:watch": "tsc -w",
     "lint:build": "npx publint",
     "lint": "tsc --noEmit",
-    "test": "yarn test:unit && yarn typecheck",
-    "test:unit": "vitest run",
+    "test": "vitest run",
     "typecheck": "vitest --typecheck.only --no-watch",
     "publish-pkg": "node ../../scripts/npm-check-version-and-publish.js",
     "build-worker": "esbuild ./src/worker-client/worker-client-operator.ts --bundle --minify --external:better-sqlite3 --external:lmdb --external:expo-sqlite --platform=browser --outfile=./dist/worker-client/worker-client-operator.js --format=esm",
@@ -75,9 +79,10 @@
     "@types/node": "^20.4.0",
     "@vitest/web-worker": "^2.0.5",
     "esbuild": "^0.21.3",
+    "jose": "^5.9.6",
     "tinybench": "^2.9.0",
-    "typescript": "^5.2.2",
-    "vitest": "^2.0.5"
+    "typescript": "^5.8.3",
+    "vitest": "^3.0.6"
   },
   "engines": {
     "node": ">=18.0.0"

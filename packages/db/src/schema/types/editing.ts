@@ -1,14 +1,13 @@
 import { DBSchema } from '../../db.js';
-import { DataType } from './index.js';
+import { DataType, TypeConfig } from './index.js';
 
 export type ChangeToAttribute =
   | {
       type: 'update';
       changes: {
+        config?: TypeConfig;
         items?: { type: string };
         type?: string;
-        options?: any;
-        optional?: boolean;
       };
     }
   | {
@@ -46,6 +45,7 @@ export type RolesDiff = {
 
 export type Diff =
   | CollectionAttributeDiff
+  | CollectionRelationshipsDiff
   | CollectionPermissionsDiff
   | RolesDiff;
 
@@ -74,11 +74,23 @@ export type PossibleDataViolation = {
   cure: string;
 } & BackwardsIncompatibleEdit;
 
-export type SchemaChange = {
-  successful: boolean;
-  invalid: string | undefined;
+type SchemaChangeBase = {
+  message: string;
   diff: Diff[];
   issues: PossibleDataViolation[];
   oldSchema: DBSchema | undefined;
   newSchema: DBSchema;
 };
+export type SuccessfulSchemaChange = SchemaChangeBase & {
+  successful: true;
+  code: 'SUCCESS';
+};
+export type FailedSchemaChange = SchemaChangeBase & {
+  successful: false;
+  code:
+    | 'SCHEMA_INVALID'
+    | 'SCHEMA_COMPATIBILITY_MISMATCH'
+    | 'EXISTING_DATA_MISMATCH'
+    | 'ERROR';
+};
+export type SchemaChange = SuccessfulSchemaChange | FailedSchemaChange;

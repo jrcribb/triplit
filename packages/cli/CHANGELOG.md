@@ -1,5 +1,349 @@
 # @triplit/cli
 
+## 1.0.61
+
+### Patch Changes
+
+- 3c9d9ed6: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.60
+
+### Patch Changes
+
+- 2a4b5fda: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.59
+
+### Patch Changes
+
+- 0c92a165: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.58
+
+### Patch Changes
+
+- f5983616: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.57
+
+### Patch Changes
+
+- bf954205: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.56
+
+### Patch Changes
+
+- 662dbd18: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.55
+
+### Patch Changes
+
+- da1ae46f: Automated version bump for @triplit/cli after dependency changes
+- 3e8c0083: ignore pong logs
+
+## 1.0.54
+
+### Patch Changes
+
+- 2a4a6bde: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.53
+
+### Patch Changes
+
+- d637845a: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.52
+
+### Patch Changes
+
+- 5bd5181a: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.51
+
+### Patch Changes
+
+- c9878f2a: Automated version bump for @triplit/cli after dependency changes
+- b468432a: Hide timestamps from excluded logs
+
+## 1.0.50
+
+### Patch Changes
+
+- c0138d32: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.49
+
+### Patch Changes
+
+- 1573c075: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.48
+
+### Patch Changes
+
+- e2fe796f: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.47
+
+### Patch Changes
+
+- 75a5cc62: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.46
+
+### Patch Changes
+
+- 4f5e4662: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.45
+
+### Patch Changes
+
+- 263a50b8: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.44
+
+### Patch Changes
+
+- 3871b1f8: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.43
+
+### Patch Changes
+
+- 304532b1: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.42
+
+### Patch Changes
+
+- 683d8d9e: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.41
+
+### Patch Changes
+
+- 2bd3e281: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.40
+
+### Patch Changes
+
+- 6e9eac7f: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.39
+
+### Patch Changes
+
+- 461d1813: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.38
+
+### Patch Changes
+
+- b6982233: Automated version bump for @triplit/cli after dependency changes
+- b6982233: upgrade dev server
+
+## 1.0.37
+
+### Patch Changes
+
+- 981dc430: Automated version bump for @triplit/cli after dependency changes
+- 556e1587: Remove PINGs from dev server logs
+
+## 1.0.36
+
+### Patch Changes
+
+- 9db8a8a3: Automated version bump for @triplit/cli after dependency changes
+- cb91170d: Make max body size configurable via env var
+
+## 1.0.35
+
+### Patch Changes
+
+- 5bfe7a65: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.34
+
+### Patch Changes
+
+- 945061c8: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.33
+
+### Patch Changes
+
+- ba85711f: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.32
+
+### Patch Changes
+
+- 8cd8d2a4: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.31
+
+### Patch Changes
+
+- 4a65e1c3: Automated version bump for @triplit/cli after dependency changes
+- 4a65e1c3: Fixup sqlite worker build
+
+## 1.0.30
+
+### Patch Changes
+
+- c5b3b67a: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.29
+
+### Patch Changes
+
+- 10010075: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.28
+
+### Patch Changes
+
+- 0f4e5786: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.27
+
+### Patch Changes
+
+- 9695cde2: Automated version bump for @triplit/cli after dependency changes
+- Updated dependencies [9695cde2]
+- Updated dependencies [706871a0]
+- Updated dependencies [07abaca1]
+- Updated dependencies [2bb158b8]
+  - @triplit/db@1.0.21
+
+## 1.0.26
+
+### Patch Changes
+
+- 3cf25c56: Automated version bump for @triplit/cli after dependency changes
+- Updated dependencies [3cf25c56]
+- Updated dependencies [93beece6]
+  - @triplit/db@1.0.20
+
+## 1.0.25
+
+### Patch Changes
+
+- 893dcb0a: Automated version bump for @triplit/cli after dependency changes
+- 893dcb0a: simplify worker deps
+- Updated dependencies [893dcb0a]
+  - @triplit/db@1.0.19
+
+## 1.0.24
+
+### Patch Changes
+
+- 378fa02c: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.23
+
+### Patch Changes
+
+- c69d89fc: Automated version bump for @triplit/cli after dependency changes
+- c69d89fc: fixup deps
+
+## 1.0.22
+
+### Patch Changes
+
+- 97a72c5e: Automated version bump for @triplit/cli after dependency changes
+- Updated dependencies [0c0e6c61]
+- Updated dependencies [da14a7ed]
+- Updated dependencies [50572a01]
+- Updated dependencies [97a72c5e]
+  - @triplit/db@1.0.18
+
+## 1.0.21
+
+### Patch Changes
+
+- caa6b418: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.20
+
+### Patch Changes
+
+- 23f52af2: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.19
+
+### Patch Changes
+
+- 1a528a5e: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.18
+
+### Patch Changes
+
+- 8eb2eb35: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.17
+
+### Patch Changes
+
+- 0d0d7595: Automated version bump for @triplit/cli after dependency changes
+- da23bcbe: Minor clean up of logging
+- 74736c3f: add snapshot create and snapshot push commands
+
+## 1.0.16
+
+### Patch Changes
+
+- b873c68d: Automated version bump for @triplit/cli after dependency changes
+- b873c68d: Manually bump CLI to get latest server
+
+## 1.0.15
+
+### Patch Changes
+
+- ee4dc5c1: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.14
+
+### Patch Changes
+
+- a4c00766: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.13
+
+### Patch Changes
+
+- 8fc1e28c: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.12
+
+### Patch Changes
+
+- b37e241f: Automated version bump for @triplit/cli after dependency changes
+
+## 1.0.11
+
+### Patch Changes
+
+- e9395371: Manual version bump for CLI dependencies
+
+## 1.0.10
+
+### Patch Changes
+
+- 92fb3808: Improve error logging between CLI and dev server
+
+## 1.0.9
+
+### Patch Changes
+
+- 0f8a4a4a: Manual version bump for CLI dependencies
+
 ## 1.0.8
 
 ### Patch Changes

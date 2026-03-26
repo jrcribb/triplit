@@ -1,3 +1,5 @@
+import { TriplitError } from './errors.js';
+import { isEmpty } from './memory-write-buffer.js';
 import {
   CollectionName,
   DBChanges,
@@ -6,6 +8,8 @@ import {
   KVStoreOrTransaction,
   EntityStore,
   ApplyChangesOptions,
+  Change,
+  Delta,
 } from './types.js';
 import { deepObjectAssign } from './utils/deep-merge.js';
 
@@ -42,7 +46,6 @@ export class EntityDataStore implements EntityStore {
         );
       }
     }
-
     return stats;
   }
 
@@ -53,87 +56,122 @@ export class EntityDataStore implements EntityStore {
   ): Promise<DBChanges> {
     const prefixedTx = tx.scope(this.storagePrefix);
     const appliedChanges: DBChanges = {};
+    const deltas: Delta[] = [];
+    const getInsertChangeset = async (
+      collection: string,
+      id: string,
+      change: Change
+    ): Promise<Delta> => {
+      const current = await this.getEntity(tx, collection, id);
+      const isUpsert = !!current;
+      if (options.entityChangeValidator) {
+        options.entityChangeValidator(collection, change, {
+          ignoreRequiredProperties: isUpsert,
+        });
+      }
+      return {
+        collection,
+        id,
+        ...applyChange(current, change),
+        operation: isUpsert ? 'upsert' : 'insert',
+      };
+    };
+
+    const getUpdateChangeset = async (
+      collection: string,
+      id: string,
+      change: Change
+    ): Promise<Delta | undefined> => {
+      const current = await this.getEntity(tx, collection, id);
+      if (!current) return;
+      if (options.entityChangeValidator) {
+        options.entityChangeValidator(collection, change, {
+          ignoreRequiredProperties: true,
+        });
+      }
+      const changeset = applyChange(current, change);
+      return { collection, id, ...changeset, operation: 'update' };
+    };
+
+    const getDeleteChangeset = async (
+      collection: string,
+      id: string
+    ): Promise<Delta> => {
+      // Small optimization to not load entity unless we need it
+      if (options.checkWritePermission) {
+        // If we're checking permissions, fetch the deleted entity and check
+        const current = await this.getEntity(tx, collection, id);
+        return {
+          collection,
+          id,
+          prev: current,
+          next: undefined,
+          change: undefined,
+          operation: 'delete',
+        };
+      }
+      return {
+        collection,
+        id,
+        prev: undefined,
+        next: undefined,
+        change: undefined,
+        operation: 'delete',
+      };
+    };
+
     for (const [collection, collectionChanges] of Object.entries(changes)) {
       for (const id of collectionChanges.deletes) {
-        if (options.checkWritePermission) {
-          // If we're checking permissions, fetch the deleted entity and check
-          const current = await this.getEntity(tx, collection, id);
-          await options.checkWritePermission(tx, collection, current, 'delete');
-        }
+        const changeset = await getDeleteChangeset(collection, id);
         await prefixedTx.delete([collection, id]);
-        // TODO check if entity actually exists
-        if (!appliedChanges[collection]) {
-          appliedChanges[collection] = { deletes: new Set(), sets: new Map() };
-        }
-        appliedChanges[collection].deletes.add(id);
+        deltas.push(changeset);
       }
       for (const [id, change] of collectionChanges.sets.entries()) {
         const changeIsInsert = !!change.id;
-        if (changeIsInsert) {
-          // Check insert permissions for new entity
-          if (options.checkWritePermission) {
-            await options.checkWritePermission(
-              tx,
-              collection,
-              change,
-              'insert'
-            );
-          }
-        }
+        const changeset = changeIsInsert
+          ? await getInsertChangeset(collection, id, change)
+          : await getUpdateChangeset(collection, id, change);
+        if (!changeset) continue;
+        const { prev, next, change: sets } = changeset;
+        // Apply changes to the transaction
+        await prefixedTx.set([collection, id], next);
+        deltas.push(changeset);
+      }
+    }
 
-        const current = await this.getEntity(tx, collection, id);
-
-        if (options.entityChangeValidator) {
-          options.entityChangeValidator(collection, change, {
-            // todo: does this same logic need to apply to write permissions
-            ignoreRequiredProperties: !changeIsInsert && !!current,
-          });
-        }
-
-        if (current && changeIsInsert) {
-          // throw new Error(
-          //   `Inserting entity that already exists: ${collection}/${id}`
-          // );
-        }
-
-        if (current && !changeIsInsert) {
-          // Check that the current value can be updated
-          if (options.checkWritePermission) {
-            await options.checkWritePermission(
-              tx,
-              collection,
-              current,
-              'update'
-            );
-          }
-        }
-
-        const [merged, sets] = applyChange(current, change);
-
-        // Check that the updated value is valid
-        if (!changeIsInsert && options.checkWritePermission) {
-          await options.checkWritePermission(
-            tx,
-            collection,
-            merged,
-            'postUpdate'
-          );
-        }
-
-        // All permissions checked, can write
-        await prefixedTx.set([collection, id], merged);
-        if (!appliedChanges[collection]) {
-          appliedChanges[collection] = { deletes: new Set(), sets: new Map() };
-        }
-        if (Object.keys(sets).length > 0) {
-          appliedChanges[collection].sets.set(
-            id,
-            // @ts-expect-error - Fixup types for Insert vs Change
-            sets
+    // Check permissions based on deltas
+    for (const delta of deltas) {
+      if (options.checkWritePermission) {
+        if (delta.operation === 'insert') {
+          await options.checkWritePermission(tx, delta, 'insert');
+        } else if (
+          delta.operation === 'update' ||
+          delta.operation === 'upsert'
+        ) {
+          await options.checkWritePermission(tx, delta, 'update');
+          await options.checkWritePermission(tx, delta, 'postUpdate');
+        } else if (delta.operation === 'delete') {
+          await options.checkWritePermission(tx, delta, 'delete');
+        } else {
+          throw new TriplitError(
+            `An invalid delta was created and could not finish permission checks.`
           );
         }
       }
+      if (!appliedChanges[delta.collection]) {
+        appliedChanges[delta.collection] = {
+          deletes: new Set(),
+          sets: new Map(),
+        };
+      }
+      if (delta.operation === 'delete') {
+        appliedChanges[delta.collection].deletes.add(delta.id);
+      } else {
+        if (isEmpty(delta.change)) continue;
+        appliedChanges[delta.collection].sets.set(delta.id, delta.change);
+      }
     }
+
     return appliedChanges;
   }
 
@@ -155,12 +193,17 @@ export class EntityDataStore implements EntityStore {
  *
  * @returns [new value, sets that were applied]
  */
-function applyChange<T extends Record<string, any> | undefined>(
+export function applyChange<T extends Record<string, any> | undefined>(
   curr: T,
-  sets: Partial<T>
-): [T, Partial<T>] {
-  if (!curr) return [sets as T, sets];
-  const updated = structuredClone(curr);
+  sets: Partial<NonNullable<T>>,
+  options: {
+    // clone: false used in ivm, kinda as a hack
+    // Note clone: false will keep prev and next ref the same
+    clone?: boolean;
+  } = { clone: true }
+): { prev: T; next: NonNullable<T>; change: Partial<NonNullable<T>> } {
+  if (!curr) return { prev: curr, next: sets as NonNullable<T>, change: sets };
+  const updated = options.clone ? structuredClone(curr) : curr;
   const appliedSets: any = {};
   for (const [key, value] of Object.entries(sets)) {
     const existingValue = updated[key];
@@ -168,10 +211,15 @@ function applyChange<T extends Record<string, any> | undefined>(
       typeof existingValue === 'object' &&
       existingValue != null &&
       typeof value === 'object' &&
-      value != null
+      value != null &&
+      !Array.isArray(value)
     ) {
-      const [newValue, newSets] = applyChange(existingValue, value);
-      if (Object.keys(newSets).length > 0) {
+      const { next: newValue, change: newSets } = applyChange(
+        existingValue,
+        value,
+        options
+      );
+      if (!isEmpty(newSets)) {
         appliedSets[key] = deepObjectAssign(appliedSets[key] ?? {}, newSets);
         updated[key] = newValue;
       }
@@ -180,5 +228,5 @@ function applyChange<T extends Record<string, any> | undefined>(
       updated[key] = value;
     }
   }
-  return [updated, appliedSets];
+  return { prev: curr, next: updated, change: appliedSets };
 }

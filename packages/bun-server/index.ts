@@ -1,36 +1,23 @@
-import { createBunWebSocket } from 'hono/bun';
-import { createTriplitHonoServer } from '@triplit/server/hono';
-import { createTriplitStorageProvider } from '@triplit/server';
-const { upgradeWebSocket, websocket } = createBunWebSocket();
-
-const honoServer = await createTriplitHonoServer(
-  {
-    storage: createTriplitStorageProvider('bun-sqlite'),
-    jwtSecret: process.env.JWT_SECRET!,
-    externalJwtSecret: process.env.EXTERNAL_JWT_SECRET,
-    projectId: process.env.PROJECT_ID,
-    dbOptions:
-      process.env.ENTITY_CACHE_ENABLED === 'true'
-        ? {
-            experimental: {
-              entityCache: {
-                capacity: process.env.ENTITY_CACHE_CAPACITY
-                  ? parseInt(process.env.ENTITY_CACHE_CAPACITY)
-                  : 100000,
-              },
-            },
-          }
-        : {},
-  },
-  upgradeWebSocket
-);
+import { createBunServer } from '@triplit/server/bun';
+import { createTriplitStorageProvider } from '@triplit/server/storage';
 
 const port = +(process.env.PORT || 8080);
 
-const bunServer = Bun.serve({
-  fetch: honoServer.fetch,
-  websocket,
-  port,
+const startServer = await createBunServer({
+  storage: await createTriplitStorageProvider('sqlite'),
+  verboseLogs: !!process.env.VERBOSE_LOGS,
+  jwtSecret: process.env.JWT_SECRET!,
+  projectId: process.env.PROJECT_ID,
+  externalJwtSecret: process.env.EXTERNAL_JWT_SECRET,
+  maxPayloadMb: process.env.MAX_BODY_SIZE,
 });
 
-console.log(`Listening on http://localhost:${bunServer.port} ...`);
+const dbServer = startServer(port);
+
+console.log('running on port', port);
+process.on('SIGINT', function () {
+  dbServer.close(() => {
+    console.log('Shutting down server... ');
+    process.exit();
+  });
+});

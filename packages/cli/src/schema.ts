@@ -13,6 +13,8 @@ import {
   Relationship,
   isIdFilter,
   CollectionQuery,
+  isDefaultFunction,
+  DEFAULT_FUNCTIONS,
 } from '@triplit/db';
 import { blue } from 'ansis/colors';
 
@@ -182,6 +184,9 @@ function schemaItemToString(attribute: DataType): string {
     case 'date':
       result = `S.Date(${typeConfigToString(attribute)})`;
       break;
+    case 'json':
+      result = `S.Json(${typeConfigToString(attribute)})`;
+      break;
     case 'set':
       result = `S.Set(${schemaItemToString(
         attribute.items
@@ -226,13 +231,12 @@ function parseStringOptions(options: StringTypeOptions<any>) {
 }
 
 function defaultValueToString(defaultValue: TypeConfig['default']): string {
-  if (typeof defaultValue === 'object' && defaultValue !== null) {
+  if (isDefaultFunction(defaultValue)) {
     const { func, args } = defaultValue;
-    // TODO: import list from db
-    if (!['now', 'uuid', 'Set.empty'].includes(func))
+    if (!DEFAULT_FUNCTIONS.includes(func))
       throw new Error('Invalid default function name');
     const parsedArgs = args ? args.map(valueToJS).join(', ') : '';
-    return `S.Default.${func}(${parsedArgs})`;
+    return `S.Default.${mapFuncIdToFuncPath(func)}(${parsedArgs})`;
   }
 
   return `${valueToJS(defaultValue)}`;
@@ -258,4 +262,20 @@ function subQueryToString(
     .filter((str) => str)
     .join(', ');
   return `{${cleanedString}}`;
+}
+
+function mapFuncIdToFuncPath(func: (typeof DEFAULT_FUNCTIONS)[number]) {
+  switch (func) {
+    case 'uuidv4':
+      return 'Id.uuidv4';
+    case 'uuidv7':
+      return 'Id.uuidv7';
+    case 'uuid':
+    case 'nanoid':
+      return 'Id.nanoid';
+    case 'now':
+      return 'now';
+    default:
+      return func;
+  }
 }

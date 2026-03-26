@@ -7,14 +7,17 @@ import {
   Diff,
   Models,
   PossibleDataViolation,
+  Relationship,
+  Relationships,
   SchemaChange,
   TypeConfig,
 } from './types/index.js';
 import { Logger } from '@triplit/logger';
 import { DBSchema } from '../db.js';
-import { isOptional, Type } from './index.js';
+import { Type } from './index.js';
 import { permissionsEqual, rolesEqual } from '../permissions.js';
 import { RecordProps, RecordType } from './data-types/index.js';
+import { hashQuery } from '../query/hash-query.js';
 
 function isCollectionAttributeDiff(
   diff: Diff
@@ -163,7 +166,15 @@ export function diffSchemas(
       }))
     );
 
-    // TODO: Diff relationships
+    const isRelationDiff = !relationshipsEqual(
+      collectionA?.relationships,
+      collectionB?.relationships
+    );
+    if (isRelationDiff)
+      diff.push({
+        _diff: 'collectionRelationships',
+        collection,
+      });
 
     // Diff permissions
     const isPermissionDiff = !permissionsEqual(
@@ -186,6 +197,36 @@ export function diffSchemas(
     });
 
   return diff;
+}
+
+function relationshipsEqual(
+  a: Relationships | undefined,
+  b: Relationships | undefined
+) {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+
+  const keysA = Object.keys(a);
+  const keysB = Object.keys(b);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    const relationshipA = a[key];
+    const relationshipB = b[key];
+    if (!relationshipEqual(relationshipA, relationshipB)) return false;
+  }
+  return true;
+}
+
+function relationshipEqual(
+  a: Relationship | undefined,
+  b: Relationship | undefined
+) {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  if (a.cardinality !== b.cardinality) return false;
+  // TODO: implement a better hashQuery for unprepared queries
+  if (hashQuery(a.query) !== hashQuery(b.query)) return false;
+  return true;
 }
 
 // function areDifferent(a: any, b: any): boolean {
@@ -219,7 +260,7 @@ const DANGEROUS_EDITS = [
   {
     description: 'removed an optional attribute',
     matchesDiff: (diff: CollectionAttributeDiff) => {
-      return diff.type === 'delete' && isOptional(diff.dataType);
+      return diff.type === 'delete' && Type.isOptional(diff.dataType);
     },
     dataConstraint: 'attribute_is_empty',
     attributeCure: () => null,
@@ -287,7 +328,7 @@ const DANGEROUS_EDITS = [
       if (
         diff.type === 'insert' &&
         !diff.isNewCollection &&
-        !isOptional(diff.dataType)
+        !Type.isOptional(diff.dataType)
       )
         return true;
       return false;
@@ -312,7 +353,7 @@ const DANGEROUS_EDITS = [
       'added an enum to an attribute or removed an option from an existing enum',
     matchesDiff: (diff: CollectionAttributeDiff) => {
       if (diff.type === 'update') {
-        return diff.changes.config.enum !== undefined;
+        return diff.changes.config?.enum !== undefined;
       }
       return false;
     },
@@ -347,7 +388,7 @@ async function isEditSafeWithExistingData(
     attributeDiff.collection,
     attributeDiff.attribute,
     attributeDiff?.type === 'update'
-      ? attributeDiff.changes.config.enum
+      ? attributeDiff.changes.config?.enum
       : undefined
   );
 }
@@ -510,46 +551,47 @@ export function logSchemaChangeViolations(
 ) {
   const log = logger ?? (console as unknown as Logger);
   if (change.successful) {
-    log.info('Schema update successful');
-  } else {
-    log.error('Schema update failed. Please resolve the following issues:');
+    change.diff.length > 0 && log.info('Schema update successful');
+    return;
   }
-  if (change.invalid) {
-    log.error(change.invalid);
+  const success = 'Schema update failed.';
+
+  if (change.message) {
+    log.error([success, change.message].join('\n'));
     return;
   }
 
-  const compatibleIssuesMessage = `Found ${change.issues.length} backwards incompatible schema changes.`;
-  if (change.issues.length > 0) {
-    log.warn(compatibleIssuesMessage);
-  } else {
-    log.info(compatibleIssuesMessage);
-  }
+  const numberOfIssues = `Please resolve the following [${change.issues.length}] issue(s):`;
 
   if (!change.successful || forcePrintIssues) {
     const problematicIssues = change.issues.filter(
       (issue) => forcePrintIssues || issue.violatesExistingData
     );
-    logSchemaIssues(log, problematicIssues);
+    log.error(
+      [success, numberOfIssues, constructSchemaIssues(problematicIssues)].join(
+        '\n\n'
+      )
+    );
   }
 }
 
-function logSchemaIssues(logger: Logger, issues: PossibleDataViolation[]) {
+function constructSchemaIssues(issues: PossibleDataViolation[]): string {
   const collectionIssueMap = issues.reduce((acc, issue) => {
     const collection = issue.context.collection;
     const existingIssues = acc.get(collection) ?? [];
     acc.set(collection, [...existingIssues, issue]);
     return acc;
   }, new Map<string, PossibleDataViolation[]>());
+  const message: string[] = [];
   collectionIssueMap.forEach((issues, collection) => {
-    logger.error(`\nCollection: '${collection}'`);
+    message.push(`Collection: '${collection}'`);
     issues.forEach(({ issue, context, cure }) => {
-      logger.error(
+      message.push(
         `\t'${context.attribute.join('.')}'
 \t\tIssue: ${issue}
 \t\tFix:   ${cure}`
       );
     });
   });
-  logger.info('');
+  return message.join('\n\n');
 }

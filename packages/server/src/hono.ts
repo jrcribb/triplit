@@ -7,6 +7,8 @@ import {
   ServerEntityStore,
   normalizeSessionVars,
   sessionRolesAreEquivalent,
+  DBSchema,
+  DEFAULT_ROLES,
 } from '@triplit/db';
 import {
   InvalidAuthenticationSchemeError,
@@ -27,23 +29,23 @@ import { logger, LogHandler } from '@triplit/logger';
 import { ConsoleHandler } from '@triplit/logger/console';
 import { parseAndValidateToken, ProjectJWT } from '@triplit/server-core/token';
 import { Context, Hono } from 'hono';
-import { ContentfulStatusCode, StatusCode } from 'hono/utils/http-status';
+import { ContentfulStatusCode } from 'hono/utils/http-status';
+import { randomUUID as getRandomUUID } from 'uncrypto';
 
 import { WSContext, type UpgradeWebSocket, WSMessageReceive } from 'hono/ws';
 
 // import { logger as honoLogger } from 'hono/logger';
 import { cors } from 'hono/cors';
-import { createTriplitStorageProvider, StoreKeys } from './storage.js';
 import { bodyLimit } from 'hono/body-limit';
 
 type Variables = {
   token: ProjectJWT;
 };
 
-const FILE_UPLOAD_BODY_MAX = 1024 * 1024 * 100; // 100MB
+const MB1 = 1024 * 1024;
 
 export type ServerOptions = {
-  storage?: StoreKeys | KVStore | (() => KVStore);
+  storage?: KVStore | (() => KVStore);
   dbOptions?: DBOptions;
   verboseLogs?: boolean;
   upstream?: {
@@ -56,6 +58,7 @@ export type ServerOptions = {
   // do we still need this?
   claimsPath?: string;
   externalJwtSecret?: string;
+  maxPayloadMb?: number | string;
 };
 
 export async function createTriplitHonoServer(
@@ -71,7 +74,18 @@ export async function createTriplitHonoServer(
     : undefined;
   options.logHandler
     ? logger.registerHandler(options.logHandler, { exclusive: true })
-    : logger.registerHandler(new ConsoleHandler());
+    : logger.registerHandler(
+        new ConsoleHandler({
+          formatter: (record) => {
+            const { level, message, timestamp, context, attributes } = record;
+            const timeStr = new Date(timestamp).toISOString();
+            return [
+              `[${timeStr}] [${context ?? '*'}] ${message}`,
+              attributes || '',
+            ];
+          },
+        })
+      );
   // if (options?.verboseLogs) logger.level = true;
   const dbOptions: Partial<DBOptions> = {
     experimental: {},
@@ -97,15 +111,27 @@ export async function createTriplitHonoServer(
   //   const sqlite = require('better-sqlite3');
   // }
 
-  const db = await createDB({
+  // if a schema is provided but no roles, add default roles
+  const schema: DBSchema | undefined =
+    !!dbOptions.schema?.collections && !dbOptions.schema.roles
+      ? {
+          collections: dbOptions.schema.collections,
+          roles: DEFAULT_ROLES,
+        }
+      : dbOptions.schema;
+
+  const { db, event } = await createDB({
     ...dbOptions,
+    schema,
     clientId: 'server',
     entityStore: new ServerEntityStore(),
-    kv:
-      typeof dbSource === 'string'
-        ? createTriplitStorageProvider(dbSource)
-        : dbSource,
+    kv: dbSource,
   });
+
+  if (event.type !== 'SUCCESS') {
+    captureException?.(event);
+    throw new TriplitError(`Failed to initialize database: ${event.type}`);
+  }
 
   const server = new TriplitServer(db, captureException);
 
@@ -117,17 +143,17 @@ export async function createTriplitHonoServer(
   globalThis.showSubscribedQueries = () => {
     console.table(
       [...db.ivm.subscribedQueries.values()].map((val) => ({
-        collection: val.ogQuery.collectionName,
+        collection: val.query.collectionName,
         listeners: val.listeners.size,
-        limit: val.ogQuery.limit,
+        limit: val.query.limit,
         ...Object.fromEntries(
-          (val.ogQuery.order ?? []).map((order, i) => [
+          (val.query.order ?? []).map((order, i) => [
             `order-${i}`,
             JSON.stringify(order),
           ])
         ),
         ...Object.fromEntries(
-          (val.ogQuery.where ?? []).map((filter, i) => [
+          (val.query.where ?? []).map((filter, i) => [
             `where-${i}`,
             JSON.stringify(filter),
           ])
@@ -145,6 +171,10 @@ export async function createTriplitHonoServer(
 
   const app = (honoApp ?? new Hono()) as Hono<{ Variables: Variables }>;
 
+  const syncConnections = new Map<
+    string,
+    { connection: SyncConnection; ws: WSContext<any> }
+  >();
   // app.use(honoLogger());
   app.use(cors());
 
@@ -200,15 +230,19 @@ export async function createTriplitHonoServer(
             return;
           }
           try {
-            const clientHash = c.req.query('schema')
+            const clientSchemaHash = c.req.query('schema')
               ? parseInt(c.req.query('schema') as string)
               : undefined;
             const syncSchema = c.req.query('sync-schema') === 'true';
 
+            const clientId = getRandomUUID();
+
             syncConnection = server.openConnection(token, {
-              clientSchemaHash: clientHash,
+              clientSchemaHash: clientSchemaHash,
               syncSchema,
+              clientId,
             });
+            syncConnections.set(clientId, { connection: syncConnection, ws });
             // @ts-expect-error
             ws.tokenExpiration = token.exp;
             syncConnection!.addListener((messageType, payload) => {
@@ -350,41 +384,100 @@ export async function createTriplitHonoServer(
     }
   });
 
+  app.post('/update-token', async (c) => {
+    const { clientId } = await c.req.json();
+    if (!syncConnections.has(clientId)) {
+      return c.json(new TriplitError('No connection found for clientId'), 400);
+    }
+    const tokenData = c.get('token');
+
+    const { ws, connection: syncConnection } = syncConnections.get(clientId)!;
+    const newTokenRoles = getRolesFromSession(
+      syncConnection?.db.schema,
+      normalizeSessionVars(tokenData)
+    );
+
+    const existingTokenRoles = getRolesFromSession(
+      syncConnection?.db.schema,
+      normalizeSessionVars(syncConnection?.token)
+    );
+    if (!sessionRolesAreEquivalent(newTokenRoles, existingTokenRoles)) {
+      closeSocket(
+        ws,
+        {
+          type: 'ROLES_MISMATCH',
+          message: "Roles for new token don't match the old token.",
+          retry: false,
+        },
+        1008
+      );
+      return c.text('OK', 200);
+    }
+    // @ts-expect-error
+    ws.tokenExpiration = tokenData?.exp;
+
+    return c.text('OK', 200);
+  });
+
   app.get('/version', (c) => {
     return c.text('1.0.0', 200);
   });
 
-  app.post(
-    '/bulk-insert-file',
-    bodyLimit({
-      // NOTE: bun max is 128MB https://hono.dev/docs/middleware/builtin/body-limit#usage-with-bun-for-large-requests
-      // Maybe this can be configurable?
-      maxSize: FILE_UPLOAD_BODY_MAX,
-      onError: (c) => {
-        const error = new TriplitError(
-          `Body too large, max size is ${Math.floor(FILE_UPLOAD_BODY_MAX / 1024 / 1024)} MB`
-        );
-        return c.json(error.toJSON(), 413);
-      },
-    }),
-    async (c) => {
-      const body = await parseMultipartFormData(c);
-      if (!body['data']) {
-        return c.json(
-          new TriplitError('No data provided for file upload'),
-          400
-        );
-      }
-      const data = JSON.parse(body['data'] as string);
-      const token = c.get('token');
-      const { statusCode, payload } = await server.handleRequest(
-        ['bulk-insert'],
-        data,
-        token
+  let parsedMaxPayload =
+    typeof options.maxPayloadMb === 'string'
+      ? parseInt(options.maxPayloadMb)
+      : options.maxPayloadMb;
+  // If invalid number, set to undefined
+  if (typeof parsedMaxPayload !== 'number' || isNaN(parsedMaxPayload))
+    parsedMaxPayload = undefined;
+  // Default to 100MB
+  const maxPayloadBytes = (parsedMaxPayload ?? 100) * MB1;
+  const maxPayloadMiddleware = bodyLimit({
+    // NOTE: bun max is 128MB https://hono.dev/docs/middleware/builtin/body-limit#usage-with-bun-for-large-requests
+    // Maybe this can be configurable?
+    maxSize: maxPayloadBytes,
+    onError: (c) => {
+      const error = new TriplitError(
+        `Body too large, max size is ${Math.floor(maxPayloadBytes / MB1)} MB`
       );
-      return c.json(payload, statusCode as ContentfulStatusCode);
+      return c.json(error.toJSON(), 413);
+    },
+  });
+  app.post('/bulk-insert', maxPayloadMiddleware, async (c) => {
+    const body = await c.req.json();
+    const param_noReturn = c.req.query('noReturn');
+    const noReturn = param_noReturn === 'true';
+    const token = c.get('token');
+    console.log(body);
+    const { statusCode, payload } = await server.handleRequest(
+      ['bulk-insert'],
+      { inserts: body, noReturn },
+      token
+    );
+    return c.json(payload, statusCode as ContentfulStatusCode);
+  });
+  app.post('/bulk-insert-file', maxPayloadMiddleware, async (c) => {
+    // Flag to ignore the return value and just return 200
+    // Would be nice to have this flow into the DB as well and save on work done to prepare a query response
+    // This is fairly innocuous to rename/rethink, so we can refactor as needed
+    const body = await parseMultipartFormData(c);
+    if (!body['data']) {
+      return c.json(new TriplitError('No data provided for file upload'), 400);
     }
-  );
+    const data =
+      typeof body['data'] === 'string'
+        ? JSON.parse(body['data'])
+        : body['data'];
+    const param_noReturn = c.req.query('noReturn');
+    const noReturn = param_noReturn === 'true';
+    const token = c.get('token');
+    const { statusCode, payload } = await server.handleRequest(
+      ['bulk-insert'],
+      { inserts: data, noReturn },
+      token
+    );
+    return c.json(payload, statusCode as ContentfulStatusCode);
+  });
   app.post('*', async (c) => {
     let body;
     try {
@@ -408,7 +501,7 @@ export async function createTriplitHonoServer(
 async function parseMultipartFormData(c: Context) {
   const contentType = c.req.header('content-type') || '';
   if (!contentType.startsWith('multipart/form-data')) {
-    throw new Error('Invalid Content-Type');
+    throw new Error(`Invalid Content-Type: ${contentType}`);
   }
 
   // Extract boundary from `Content-Type: multipart/form-data; boundary=------xyz`
@@ -440,9 +533,18 @@ async function parseMultipartFormData(c: Context) {
     const nameEnd = contentDisposition.indexOf('"', nameStart);
     const fieldName = contentDisposition.slice(nameStart, nameEnd);
 
-    formData[fieldName] = body; // Store the value
-  }
+    // If content header specifies JSON, parse it
+    const contentTypeHeader = headers
+      .split('\r\n')
+      .find((h) => h.toLowerCase().startsWith('content-type'));
+    const isJson = contentTypeHeader?.includes('application/json');
 
+    if (isJson) {
+      formData[fieldName] = JSON.parse(body);
+    } else {
+      formData[fieldName] = body;
+    }
+  }
   return formData;
 }
 

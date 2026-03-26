@@ -1,21 +1,19 @@
 import { VariableAwareCache as VAC } from './variable-aware-cache.js';
-import { getVariableComponents, isValueVariable } from './variables.js';
-import { isFilterGroup, satisfiesNonRelationalFilter } from './filters.js';
+import {
+  bindVariablesInFilters,
+  isValueVariable,
+  resolveVariable,
+} from './variables.js';
+import { satisfiesNonRelationalFilter } from './filters.js';
 import {
   DBEntity,
   EntityStore,
   KVStoreOrTransaction,
-  FilterGroup,
-  type CollectionQuery,
-  type FilterStatement,
+  PreparedQuery,
+  PreparedOrder,
 } from './types.js';
-import {
-  asyncIterFilter,
-  asyncIterMap,
-  asyncIterTake,
-} from './utils/iterators.js';
+import { asyncIterFilter, asyncIterTake } from './utils/iterators.js';
 import { compareValue, MIN } from './codec.js';
-import { DBSchema } from './db.js';
 import { ValuePointer } from './utils/value-pointer.js';
 import { satisfiesAfter } from './after.js';
 import {
@@ -23,18 +21,11 @@ import {
   compileQuery,
   Step,
 } from './query-planner/query-compiler.js';
-import { debugFreeze } from './macros/debug.js';
-
-export interface ExecutionContext {
-  query: CollectionQuery;
-  engine: EntityStoreQueryEngine;
-  candidates?: AsyncIterable<DBEntity> | DBEntity[];
-  results: DBEntity[]; // We'll collect the final results here
-}
+import { InvalidResultCardinalityError, TriplitError } from './errors.js';
 
 export interface ViewEntity {
   data: DBEntity; // Immutable/frozen entity from storage
-  subqueries: Record<string, ViewEntity[]>; // Subquery results for this entity view
+  subqueries: Record<string, null | ViewEntity[] | ViewEntity>; // Subquery results for this entity view
 }
 
 export function createViewEntity(ent: DBEntity): ViewEntity {
@@ -44,7 +35,7 @@ export function createViewEntity(ent: DBEntity): ViewEntity {
   };
 }
 
-export function flattenViewEntity(viewEnt: ViewEntity): any {
+export function flattenViewEntity(viewEnt: ViewEntity | null): any {
   if (!viewEnt) return viewEnt;
   if (!('data' in viewEnt) || !('subqueries' in viewEnt)) {
     throw new Error(
@@ -67,7 +58,7 @@ export function flattenViewEntity(viewEnt: ViewEntity): any {
   };
 }
 
-function flattenViews(views: Record<string, ViewEntity[] | ViewEntity>) {
+export function flattenViews(views: Record<string, ViewEntity[] | ViewEntity>) {
   const flattenedViews = Object.fromEntries(
     Object.entries(views).map(([key, viewResults]) => [
       key,
@@ -80,57 +71,24 @@ function flattenViews(views: Record<string, ViewEntity[] | ViewEntity>) {
 }
 
 export class EntityStoreQueryEngine {
-  private storage: KVStoreOrTransaction;
-  private store: EntityStore;
-  executionStack: {
-    collectionName: string;
-    data: any;
-  }[] = [];
-  schema: DBSchema | undefined;
-
   constructor(
-    storage: KVStoreOrTransaction,
-    store: EntityStore,
-    schema: DBSchema | undefined
-  ) {
-    this.storage = storage;
-    this.store = store;
-    this.schema = schema;
-  }
+    private storage: KVStoreOrTransaction,
+    private store: EntityStore
+  ) {}
 
   /**
-   * This is the plan-based loadQuery. It selects an appropriate plan based on
-   * query characteristics and executes it.
+   * A top-level fetch method that compiles a query and executes it.
    */
-  private async loadQuery(
-    query: CollectionQuery
-  ): Promise<ViewEntity[] | ViewEntity> {
-    return this.executeRelationalQuery(structuredClone(query));
-  }
-
-  /**
-   * Handles relational queries by using the query compiler to extract views
-   * and generate an execution plan
-   */
-  async executeRelationalQuery(
-    query: CollectionQuery,
-    vars: any = {}
-  ): Promise<ViewEntity[] | ViewEntity> {
-    const compiledPlan = compileQuery(query, this.schema?.collections);
-    return this.executeCompiledPlan(compiledPlan, vars);
-  }
-
-  /**
-   * Executes a compiled plan which includes both views and main query steps
-   */
-  private async executeCompiledPlan(
-    compiledPlan: CompiledPlan,
-    vars: any = {}
-  ): Promise<ViewEntity[] | ViewEntity> {
-    return this.executeSteps(compiledPlan.steps, {
+  async fetch(query: PreparedQuery, vars: any = {}): Promise<ViewEntity[]> {
+    const compiledPlan = compileQuery(structuredClone(query));
+    const results = await this.executeSteps(compiledPlan.steps, {
       vars,
       viewPlans: compiledPlan.views,
     });
+    if (Array.isArray(results)) {
+      return results;
+    }
+    throw new InvalidResultCardinalityError('many', 'one');
   }
 
   private async executeSteps(
@@ -149,7 +107,10 @@ export class EntityStoreQueryEngine {
     vars.entityStack = vars.entityStack || [];
     let results: ViewEntity[] = [];
     let collectionName: string | undefined;
-    let candidateIterator: AsyncIterable<ViewEntity> | undefined;
+    let candidateIterator:
+      | Iterable<ViewEntity>
+      | AsyncIterable<ViewEntity>
+      | undefined;
     for (const step of steps) {
       switch (step.type) {
         case 'PREPARE_VIEW': {
@@ -171,18 +132,21 @@ export class EntityStoreQueryEngine {
           const viewKey = `view_${step.viewId}`;
           const view = preparedViews[viewKey];
           if (!view) {
-            throw new Error(`View ${step.viewId} not found in vars`);
+            throw new Error(`View ${step.viewId} not found`);
           }
-          const boundFilters = this.bindVariablesInFilters(step.filter, {
-            ...vars,
-            // TODO solve this in variable lookup
-            //  This sucks to have to do but it works for now
-            ...flattenViews(preparedViews),
-          });
+          if (!Array.isArray(view))
+            throw new InvalidResultCardinalityError('many', 'one');
+          const boundFilters = bindVariablesInFilters(
+            step.filter,
+            // When resolving from a view, there should be no other view variables
+            // If we error here, possibly re-add slow entity flattening
+            vars
+          );
           results = [...view];
           for (const filter of boundFilters) {
             results = VAC.resolveQueryFromView(results, filter);
           }
+          candidateIterator = results;
           break;
         }
         case 'SUBQUERY': {
@@ -219,7 +183,11 @@ export class EntityStoreQueryEngine {
           let ids = step.ids;
           // Check if ids is a variable
           if (typeof ids === 'string') {
-            const varMatch = this.resolveVariable(ids, {
+            if (!isValueVariable(ids))
+              throw new TriplitError(
+                `Invalid ID_LOOK_UP input, expected variable or string[]`
+              );
+            const varMatch = resolveVariable(ids, {
               ...vars,
               // TODO solve this in variable lookup
               //  This sucks to have to do but it works for now
@@ -257,32 +225,33 @@ export class EntityStoreQueryEngine {
           break;
         }
         case 'ITERATOR_FILTER': {
-          const boundFilters = this.bindVariablesInFilters(step.filter, {
+          const boundFilters = bindVariablesInFilters(step.filter, {
             ...vars,
             ...flattenViews(preparedViews),
           });
-          const fitterFuncs = boundFilters.map((filter) => {
-            if (typeof filter === 'object' && 'after' in filter) {
-              return ({ data: entityData }: ViewEntity) => {
-                if (!satisfiesAfter(entityData, filter.after, filter.order)) {
-                  return false;
-                }
-                return true;
-              };
-            }
+          const filterFuncs = boundFilters.map((filter) => {
             return (candidate: ViewEntity) =>
-              satisfiesNonRelationalFilter(
-                collectionName!,
-                candidate.data,
-                filter,
-                this.schema
-              );
+              satisfiesNonRelationalFilter(candidate.data, filter);
           });
+          if (step.after) {
+            filterFuncs.push(({ data: entityData }: ViewEntity) => {
+              if (
+                !satisfiesAfter(
+                  entityData,
+                  step.after!.after,
+                  step.after!.order
+                )
+              ) {
+                return false;
+              }
+              return true;
+            });
+          }
 
           candidateIterator = asyncIterFilter(
             candidateIterator!,
             (candidate) => {
-              for (const filterFunc of fitterFuncs) {
+              for (const filterFunc of filterFuncs) {
                 if (!filterFunc(candidate)) {
                   return false;
                 }
@@ -308,10 +277,11 @@ export class EntityStoreQueryEngine {
                 viewPlans,
                 preparedViews,
               });
-              if (subResults.length === 0) {
-                return false;
+              if (Array.isArray(subResults)) {
+                return subResults.length > 0;
+              } else {
+                return subResults !== null;
               }
-              return true;
             }
           );
           break;
@@ -320,26 +290,29 @@ export class EntityStoreQueryEngine {
           if (collectionName == undefined) {
             throw new Error('No collection name found when trying to FILTER');
           }
-          const boundFilters = this.bindVariablesInFilters(step.filter, {
+          const boundFilters = bindVariablesInFilters(step.filter, {
             ...vars,
             ...preparedViews,
           });
           results = results.filter((candidate) => {
             for (const filter of boundFilters) {
-              if ('after' in filter) {
-                if (!satisfiesAfter(candidate, filter.after, filter.order)) {
-                  return false;
-                }
-                continue;
-              }
               let boundFilter = filter;
               const passesFilter = satisfiesNonRelationalFilter(
-                collectionName!,
-                candidate,
-                boundFilter,
-                this.schema
+                candidate.data,
+                boundFilter
               );
               if (!passesFilter) {
+                return false;
+              }
+            }
+            if (step.after) {
+              if (
+                !satisfiesAfter(
+                  candidate.data,
+                  step.after.after,
+                  step.after.order
+                )
+              ) {
                 return false;
               }
             }
@@ -349,20 +322,7 @@ export class EntityStoreQueryEngine {
         }
 
         case 'SORT': {
-          results.sort((a, b) => {
-            const flattenedA = flattenViewEntity(a);
-            const flattenedB = flattenViewEntity(b);
-            for (const [attr, dir] of step.fields) {
-              const direction = compareValue(
-                ValuePointer.Get(flattenedA, attr) ?? MIN,
-                ValuePointer.Get(flattenedB, attr) ?? MIN
-              );
-              if (direction !== 0) {
-                return dir === 'ASC' ? direction : -direction;
-              }
-            }
-            return 0;
-          });
+          sortViewEntities(results, step.fields);
           break;
         }
 
@@ -372,67 +332,24 @@ export class EntityStoreQueryEngine {
         }
 
         case 'PICK': {
-          results = results[0] ?? null;
-          break;
+          // Return early if cardinality 'one'
+          return results[0] ?? null;
         }
 
         default:
-          throw new Error(`Unknown step type: ${step.type}`);
+          throw new Error(
+            `Unknown step type: ${
+              // @ts-expect-error
+              step.type
+            }`
+          );
       }
     }
     return results;
   }
 
-  private resolveVariable(variable: string, vars: any): any {
-    if (variable in vars) {
-      return vars[variable];
-    }
-    const [relativeDepth, ...path] = getVariableComponents(variable);
-    if (typeof relativeDepth === 'number') {
-      if (!vars.entityStack || vars.entityStack.length < relativeDepth) {
-        throw new Error(
-          `Variable reference is out of bounds. Tried to find ${variable} in stack of size ${vars.entityStack?.length}`
-        );
-      }
-      // Use entityStack: $1 gives last, $2 gives parent's parent, etc.
-      return ValuePointer.Get(
-        vars.entityStack[vars.entityStack.length - relativeDepth],
-        path
-      );
-    }
-    const resolvedVal = ValuePointer.Get(vars, path);
-    // TODO should we throw an error here if undefined?
-    return resolvedVal;
-  }
-
-  private bindVariablesInFilters(
-    filters: (FilterStatement | FilterGroup)[],
-    vars: any
-  ): (FilterStatement | FilterGroup)[] {
-    return filters.map((filter) => {
-      if (isFilterGroup(filter)) {
-        return {
-          ...filter,
-          filters: this.bindVariablesInFilters(filter.filters, vars),
-        };
-      }
-      if (isValueVariable(filter[2])) {
-        const variable = filter[2] as string;
-        return [filter[0], filter[1], this.resolveVariable(variable, vars)];
-      }
-      return filter;
-    });
-  }
-
-  /**
-   * A top-level fetch method, using the (still) private loadQuery internally.
-   */
-  async fetch(query: CollectionQuery) {
-    return this.loadQuery(query);
-  }
-
   async *getCollectionCandidates(
-    query: CollectionQuery
+    query: PreparedQuery
   ): AsyncIterable<ViewEntity> {
     for await (const ent of this.store.getEntitiesInCollection(
       this.storage,
@@ -484,4 +401,46 @@ function resolvedVarToIdArray(varMatch: ResolvedIdLookupVar) {
     }
   }
   return ids;
+}
+
+export function sortViewEntities(entities: ViewEntity[], order: PreparedOrder) {
+  const orderWithViewEntityKeysInterleaved = order.map(
+    ([key, direction, maybeSubquery]) => {
+      const keyPath = key.split('.');
+      if (maybeSubquery) {
+        const subqueryLevel = getLevelOfNestedInclude(maybeSubquery.subquery);
+        return [
+          keyPath
+            .slice(0, subqueryLevel + 1)
+            .flatMap((key) => ['subqueries', key])
+            .concat('data', keyPath.slice(-1)),
+          direction,
+          maybeSubquery,
+        ];
+      }
+      return [['data', ...keyPath], direction];
+    }
+  ) as [string[], 'ASC' | 'DESC'][];
+  entities.sort((a, b) => {
+    for (const [attr, dir] of orderWithViewEntityKeysInterleaved) {
+      const direction = compareValue(
+        ValuePointer.Get(a, attr) ?? MIN,
+        ValuePointer.Get(b, attr) ?? MIN
+      );
+      if (direction !== 0) {
+        return dir === 'ASC' ? direction : -direction;
+      }
+    }
+    return 0;
+  });
+}
+
+function getLevelOfNestedInclude(query: PreparedQuery) {
+  let level = 0;
+  if (!query.include) return level;
+  for (const key in query.include) {
+    const inclusion = query.include[key];
+    level = Math.max(level, getLevelOfNestedInclude(inclusion.subquery) + 1);
+  }
+  return level;
 }

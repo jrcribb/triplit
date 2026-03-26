@@ -48,33 +48,29 @@ export class DevServerLogHandler implements LogHandler {
   log(record: LogRecord): void {
     const { level, message, timestamp, context, attributes } = record;
     if (!this.verbose && level === 'DEBUG') return;
-    process.stdout.write(dim(new Date(timestamp).toLocaleTimeString() + ' '));
+    const logs: any[] = [];
     if (level === 'ERROR' || level === 'FATAL') {
-      console.error(
-        `${red('⚠️  ERROR:')} ${white(message)}\n`,
-        attributes || ''
-      );
-      return;
-    }
-    if (context === 'request') {
+      logs.push(`${red('⚠️  ERROR:')} ${white(message)}\n`, attributes || '');
+    } else if (context === 'request') {
       // @ts-expect-error TODO: dangerously assuming attributes exists
       const { path, body } = attributes;
-      this.#logRequest(path, body);
-      return;
-    }
-    if (context === 'response') {
+      logs.push(...this.#logRequest(path, body));
+    } else if (context === 'response') {
       // @ts-expect-error TODO: dangerously assuming attributes exists
       const { payload, statusCode, path } = attributes;
-      this.#logResponse(path, statusCode, payload);
-      return;
-    }
-    if (context === 'message') {
+      logs.push(...this.#logResponse(path, statusCode, payload));
+    } else if (context === 'message') {
       //   const { action, message } = attributes;
-      this.#logMessage(message as Actions, attributes as unknown as any);
+      logs.push(
+        ...this.#logMessage(message as Actions, attributes as unknown as any)
+      );
+    } else {
+      logs.push('ℹ', white(message));
       return;
     }
-    console.log('ℹ', white(message));
-    return;
+    if (logs.length === 0) return;
+    process.stdout.write(dim(new Date(timestamp).toLocaleTimeString() + ' '));
+    console.log(...logs);
     // const timeStr = new Date(timestamp).toISOString();
     // const logArgs = [
     //   `[${timeStr}] [${context ?? '*'}] ${message}`,
@@ -120,19 +116,19 @@ export class DevServerLogHandler implements LogHandler {
   }
 
   #logRequest(path: string[], body?: any) {
-    console.log(
+    return [
       REQUEST_TYPE_COLOR(RECEIVED_SYMBOL),
       REQUEST_TYPE_COLOR('/' + path.join('/')),
       ...(this.verbose && body
         ? [REQUEST_TYPE_COLOR('\nRequest body: '), formatBody(body)]
-        : [])
-    );
+        : []),
+    ];
   }
 
   #logResponse(path: string[], statusCode: number, body?: any) {
     const isError = isErrorResponse(statusCode);
     const primaryColor = isError ? ERROR_COLOR : SUCCESS_COLOR;
-    console.log(
+    return [
       primaryColor(SENT_SYMBOL),
       dim('/' + path.join('/')),
       isError
@@ -142,14 +138,14 @@ export class DevServerLogHandler implements LogHandler {
 
       ...(this.verbose && body
         ? [SUCCESS_COLOR('\nResponse body: '), formatBody(body)]
-        : [])
-    );
+        : []),
+    ];
   }
   #logRequestAndResponse(request: any, response: any, time: number) {
     const { method, url, body: reqBody } = request;
     const { statusCode, body: resBody } = response;
     const isError = isErrorResponse(statusCode);
-    console.log(
+    return [
       bold(method),
       REQUEST_TYPE_COLOR(url),
       isError
@@ -165,23 +161,30 @@ export class DevServerLogHandler implements LogHandler {
               ? [SUCCESS_COLOR('\nResponse body: '), formatBody(resBody)]
               : []),
           ]
-        : [])
-    );
+        : []),
+    ];
   }
 
   #logMessage(action: Actions, message: ServerSyncMessage | ClientSyncMessage) {
     const { type, payload } = message;
     const symbol = action === 'sent' ? SENT_SYMBOL : RECEIVED_SYMBOL;
+    if (type === 'PING') return [];
+    if (type === 'PONG') return [];
     const isError = isErrorMessage(type);
-    const primaryColor = isError
+    const primaryColor = isDestructiveMessage(type)
       ? ERROR_COLOR
       : action === 'received'
       ? REQUEST_TYPE_COLOR
       : SUCCESS_COLOR;
     const messageBody = isError
-      ? formatErrorPayload(payload)
+      ? formatErrorPayload({
+          // @ts-expect-error
+          type: payload.messageType,
+          // @ts-expect-error
+          message: `${payload.error.name}: ${payload.error.message}`,
+        })
       : formatMessagePayload(action, message, this.verbose);
-    console.log(primaryColor(symbol), primaryColor(type), messageBody);
+    return [primaryColor(symbol), primaryColor(type), messageBody];
   }
 }
 
@@ -250,6 +253,10 @@ function formatConnectQueryPayload(
 }
 
 function isErrorMessage(messageType: string) {
+  return messageType === 'ERROR' || messageType === 'INTERNAL_ERROR';
+}
+
+function isDestructiveMessage(messageType: string) {
   return (
     messageType === 'ERROR' ||
     messageType === 'UNAUTHORIZED' ||

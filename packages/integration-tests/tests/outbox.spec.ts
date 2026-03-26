@@ -1,26 +1,15 @@
 import { expect, it, describe, vi, afterAll, beforeAll } from 'vitest';
 import { tempTriplitServer } from '../utils/server.js';
-import { TriplitClient, Schema as S } from '@triplit/client';
+import { TriplitClient, Schema as S, HttpClient } from '@triplit/client';
 import { pause } from '../utils/async.js';
-import * as jose from 'jose';
-import { schema } from '../triplit/schema.js';
-import { permission } from 'process';
+import { spyMessages } from '../utils/client.js';
+import { encodeToken, generateServiceToken } from '../utils/token.js';
 
 global.WebSocket = WebSocket;
 
 const SECRET = 'test-secret';
 
-const JWT_SECRET = new TextEncoder().encode(SECRET);
-
-async function encodeToken(payload: any, exp?: string) {
-  let token = new jose.SignJWT(payload).setProtectedHeader({ alg: 'HS256' });
-  if (exp) {
-    token = token.setExpirationTime(exp);
-  }
-  return await token.sign(JWT_SECRET);
-}
-
-const serviceToken = await encodeToken({ 'x-triplit-token-type': 'secret' });
+const serviceToken = await generateServiceToken(SECRET);
 
 beforeAll(() => {
   vi.stubEnv('JWT_SECRET', SECRET);
@@ -30,7 +19,11 @@ afterAll(() => {
   vi.unstubAllEnvs();
 });
 
-const DEFAULT_TOKEN = await encodeToken({ sub: 'test' });
+const DEFAULT_TOKEN = await encodeToken({ sub: 'test' }, SECRET);
+const DEFAULT_SERVICE_TOKEN = await encodeToken(
+  { 'x-triplit-token-type': 'secret' },
+  SECRET
+);
 
 const DEFAULT_SCHEMA = {
   collections: {
@@ -121,56 +114,52 @@ it('will clear the outbox after syncing', async () => {
   client.disconnect();
 });
 
-it(
-  'client updates should go into the outbox and clear after syncing',
-  { timeout: 500 },
-  async () => {
-    using server = await tempTriplitServer({
-      serverOptions: {
-        dbOptions: { schema: DEFAULT_SCHEMA },
-        jwtSecret: SECRET,
-      },
-    });
-    const { port } = server;
-    const client = new TriplitClient({
-      serverUrl: `http://localhost:${port}`,
-      token: DEFAULT_TOKEN,
-      schema: DEFAULT_SCHEMA.collections,
-      autoConnect: true,
-    });
+it('client updates should go into the outbox and clear after syncing', async () => {
+  using server = await tempTriplitServer({
+    serverOptions: {
+      dbOptions: { schema: DEFAULT_SCHEMA },
+      jwtSecret: SECRET,
+    },
+  });
+  const { port } = server;
+  const client = new TriplitClient({
+    serverUrl: `http://localhost:${port}`,
+    token: DEFAULT_TOKEN,
+    schema: DEFAULT_SCHEMA.collections,
+    autoConnect: true,
+  });
 
-    await pause();
-    await client.insert('users', { id: '1', name: 'test' });
-    await pause();
-    expect(
-      await client.db.entityStore.doubleBuffer.getChangesForEntity(
-        client.db.kv,
-        'users',
-        '1'
-      )
-    ).toStrictEqual(undefined);
-    client.disconnect();
-    await client.update('users', '1', (e) => {
-      e.name = 'updated';
-    });
-    expect(
-      await client.db.entityStore.doubleBuffer.getChangesForEntity(
-        client.db.kv,
-        'users',
-        '1'
-      )
-    ).toEqual({
-      update: { name: 'updated' },
-      delete: false,
-    });
-    expect(await client.fetch({ collectionName: 'users' })).toEqual([
-      {
-        id: '1',
-        name: 'updated',
-      },
-    ]);
-  }
-);
+  await pause();
+  await client.insert('users', { id: '1', name: 'test' });
+  await pause();
+  expect(
+    await client.db.entityStore.doubleBuffer.getChangesForEntity(
+      client.db.kv,
+      'users',
+      '1'
+    )
+  ).toStrictEqual(undefined);
+  client.disconnect();
+  await client.update('users', '1', (e) => {
+    e.name = 'updated';
+  });
+  expect(
+    await client.db.entityStore.doubleBuffer.getChangesForEntity(
+      client.db.kv,
+      'users',
+      '1'
+    )
+  ).toEqual({
+    update: { name: 'updated' },
+    delete: false,
+  });
+  expect(await client.fetch({ collectionName: 'users' })).toEqual([
+    {
+      id: '1',
+      name: 'updated',
+    },
+  ]);
+});
 
 it('should sync all valid changes made offline', async () => {
   using server = await tempTriplitServer({
@@ -280,7 +269,7 @@ it('should sync deletes after reconnecting', async () => {
   await client.insert('users', { id: '2', name: 'Paul' });
   await client.insert('users', { id: '3', name: 'Mary' });
   await client.connect();
-  await pause(30);
+  await pause();
   expect(await client.http.fetch({ collectionName: 'users' })).toEqual([
     { id: '1', name: 'Peter' },
     { id: '2', name: 'Paul' },
@@ -289,7 +278,7 @@ it('should sync deletes after reconnecting', async () => {
   client.disconnect();
   await client.delete('users', '2');
   await client.connect();
-  await pause(30);
+  await pause();
   expect(await client.http.fetch({ collectionName: 'users' })).toEqual([
     { id: '1', name: 'Peter' },
     { id: '3', name: 'Mary' },
@@ -305,7 +294,7 @@ describe('can remedy rejected sync operations with simple mutations', async () =
         },
       },
     },
-    collections: {
+    collections: S.Collections({
       users: {
         schema: S.Schema({
           id: S.Id(),
@@ -335,7 +324,7 @@ describe('can remedy rejected sync operations with simple mutations', async () =
           },
         },
       },
-    },
+    }),
   };
 
   it('can remedy syncing by deleting', async () => {
@@ -746,4 +735,313 @@ it('will fire an onFailureToSyncWrites callback', async () => {
   await pause(30);
   expect(spy).toHaveBeenCalledTimes(2);
   unsub();
+});
+
+it('Outbox data is always overlaid during in data from subscriptions', async () => {
+  using server = await tempTriplitServer({
+    serverOptions: { jwtSecret: SECRET },
+  });
+  const { port } = server;
+
+  const http = new HttpClient({
+    serverUrl: `http://localhost:${port}`,
+    token: DEFAULT_TOKEN,
+  });
+  await http.insert('test', { id: 'test1', name: 'test1' });
+
+  // Initialize alice and bob and subscriptions
+  const alice = new TriplitClient({
+    serverUrl: `http://localhost:${port}`,
+    token: DEFAULT_TOKEN,
+  });
+  const bob = new TriplitClient({
+    serverUrl: `http://localhost:${port}`,
+    token: DEFAULT_TOKEN,
+  });
+  const aliceSub = vi.fn();
+  const bobSub = vi.fn();
+  alice.subscribe(alice.query('test'), aliceSub);
+  bob.subscribe(bob.query('test'), bobSub);
+  await pause();
+  expect(aliceSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'test1' },
+  ]);
+  expect(bobSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'test1' },
+  ]);
+
+  // Prevent outbox clearing for alice
+  // THIS ISNT EXACTLY AN API BUT WE CAN KEEP ITEMS IN THE OUTBOX BY TOGGLING syncInProgress
+  // @ts-expect-error - this is a private API
+  alice.syncEngine.syncInProgress = true;
+  // Update data
+  await alice.update('test', 'test1', {
+    name: 'a',
+  });
+  await pause();
+  expect(aliceSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'a' },
+  ]);
+  expect(bobSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'test1' },
+  ]);
+
+  // Bob makes a change that will sync to alice
+  await bob.update('test', 'test1', {
+    name: 'b',
+  });
+  await pause();
+  // Alice still has the outbox change
+  expect(aliceSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'a' },
+  ]);
+  expect(bobSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'b' },
+  ]);
+  // TODO: If alice clears outbox, she should see bobs data
+  // await alice.clearPendingChangesForEntity('test', 'test1');
+  // await pause();
+  // console.dir(aliceSub.mock.calls, { depth: null });
+});
+
+// Including outbox data might cause deletes while sync is occuring
+it('Outbox data is not included in checkpointed fetch payload', async () => {
+  using server = await tempTriplitServer({
+    serverOptions: { jwtSecret: SECRET },
+  });
+  const { port } = server;
+
+  const http = new HttpClient({
+    serverUrl: `http://localhost:${port}`,
+    token: DEFAULT_TOKEN,
+  });
+  await http.insert('test', { id: 'test1', name: 'test1' });
+
+  // Initialize alice subscritpion
+  const alice = new TriplitClient({
+    serverUrl: `http://localhost:${port}`,
+    token: DEFAULT_TOKEN,
+  });
+  const spy = spyMessages(alice);
+  const aliceSub = vi.fn();
+  alice.subscribe(alice.query('test'), aliceSub);
+  await pause();
+
+  // Go offline and add an entity to the outbox, prevent syncing on reconnect, then reconnect
+  alice.disconnect();
+  // Prevent outbox from syncing
+  // @ts-expect-error - this is a private API
+  alice.syncEngine.syncInProgress = true;
+  // add an entity to the outbox
+  await alice.insert('test', { id: 'test2', name: 'test2' });
+  // Connect to trigger sync process
+  await alice.connect();
+  await pause(1000);
+
+  // Sub has outbox data
+  expect(aliceSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'test1' },
+    { id: 'test2', name: 'test2' },
+  ]);
+
+  // No CONNECT_QUERY messages contain test2
+  const sentConnectQueryMessages = spy.filter(
+    (log) => log.direction === 'SENT' && log.message.type === 'CONNECT_QUERY'
+  );
+  const didSendOutboxData = sentConnectQueryMessages.some((log) =>
+    log.message.payload.state?.entityIds?.['test']?.includes('test2')
+  );
+  expect(didSendOutboxData).toBe(false);
+});
+
+it('rolled back outbox changes will correctly update in subscriptions', async () => {
+  using server = await tempTriplitServer({
+    serverOptions: { jwtSecret: SECRET },
+  });
+  const { port } = server;
+
+  const http = new HttpClient({
+    serverUrl: `http://localhost:${port}`,
+    token: DEFAULT_TOKEN,
+  });
+  await http.insert('test', { id: 'test1', name: 'test1' });
+
+  // Initialize alice subscritpion
+  const alice = new TriplitClient({
+    serverUrl: `http://localhost:${port}`,
+    token: DEFAULT_TOKEN,
+  });
+  const aliceSub = vi.fn();
+  alice.subscribe(alice.query('test'), aliceSub);
+  await pause();
+  expect(aliceSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'test1' },
+  ]);
+
+  // Go offline and add an entity to the outbox, prevent syncing on reconnect, then reconnect
+  alice.disconnect();
+  await alice.insert('test', { id: 'test2', name: 'test2' });
+  await pause(20);
+  // Sub has outbox data
+  expect(aliceSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'test1' },
+    { id: 'test2', name: 'test2' },
+  ]);
+
+  // Rollback outbox changes
+  await alice.clearPendingChangesForEntity('test', 'test2');
+
+  expect(aliceSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'test1' },
+  ]);
+
+  await alice.update('test', 'test1', {
+    name: 'test2',
+  });
+  await pause(20);
+  expect(aliceSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'test2' },
+  ]);
+  // Rollback outbox changes
+  await alice.clearPendingChangesForEntity('test', 'test1');
+  await pause(20);
+  expect(aliceSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'test1' },
+  ]);
+  await alice.insert('test', { id: 'test4', name: 'test4' });
+  await alice.update('test', 'test1', {
+    name: 'test3',
+  });
+  await pause(20);
+  expect(aliceSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'test3' },
+    { id: 'test4', name: 'test4' },
+  ]);
+  await alice.clearPendingChangesAll();
+  await pause(20);
+  expect(aliceSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: 'test1', name: 'test1' },
+  ]);
+});
+
+it.skip('client.clear should update all active subscriptions', async () => {
+  const schema = S.Collections({
+    users: {
+      schema: S.Schema({
+        id: S.Id(),
+        name: S.String(),
+      }),
+    },
+    posts: {
+      schema: S.Schema({
+        id: S.Id(),
+        title: S.String(),
+        authorId: S.String(),
+      }),
+    },
+  });
+  using server = await tempTriplitServer({
+    serverOptions: {
+      dbOptions: { schema: { collections: schema } },
+      jwtSecret: SECRET,
+    },
+  });
+  const { port } = server;
+  const client = new TriplitClient({
+    serverUrl: `http://localhost:${port}`,
+    token: DEFAULT_TOKEN,
+    schema,
+    autoConnect: true,
+  });
+  const usersSub = vi.fn();
+  const postsSub = vi.fn();
+  client.subscribe(client.query('users'), usersSub);
+  client.subscribe(client.query('posts'), postsSub);
+  await pause(30);
+  expect(usersSub.mock.calls.at(-1)?.[0]).toStrictEqual([]);
+  expect(postsSub.mock.calls.at(-1)?.[0]).toStrictEqual([]);
+  await client.insert('users', { id: '1', name: 'test' });
+  await client.insert('posts', {
+    id: '1',
+    title: 'test',
+    authorId: '1',
+  });
+  await pause(30);
+  expect(usersSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: '1', name: 'test' },
+  ]);
+  expect(postsSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: '1', title: 'test', authorId: '1' },
+  ]);
+  usersSub.mockClear();
+  postsSub.mockClear();
+  await client.clear({ full: false });
+  expect(usersSub.mock.calls.at(-1)?.[0]).toStrictEqual([]);
+  expect(postsSub.mock.calls.at(-1)?.[0]).toStrictEqual([]);
+  await pause(50);
+  expect(usersSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: '1', name: 'test' },
+  ]);
+  expect(postsSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: '1', title: 'test', authorId: '1' },
+  ]);
+});
+it('server.clear should update all active subscriptions', async () => {
+  const schema = S.Collections({
+    users: {
+      schema: S.Schema({
+        id: S.Id(),
+        name: S.String(),
+      }),
+    },
+    posts: {
+      schema: S.Schema({
+        id: S.Id(),
+        title: S.String(),
+        authorId: S.String(),
+      }),
+    },
+  });
+  using server = await tempTriplitServer({
+    serverOptions: {
+      dbOptions: { schema: { collections: schema } },
+      jwtSecret: SECRET,
+    },
+  });
+  const { port } = server;
+  const client = new TriplitClient({
+    serverUrl: `http://localhost:${port}`,
+    token: DEFAULT_TOKEN,
+    schema,
+    autoConnect: true,
+  });
+  const usersSub = vi.fn();
+  const postsSub = vi.fn();
+  client.subscribe(client.query('users'), usersSub);
+  client.subscribe(client.query('posts'), postsSub);
+  await pause(30);
+  expect(usersSub.mock.calls.at(-1)?.[0]).toStrictEqual([]);
+  expect(postsSub.mock.calls.at(-1)?.[0]).toStrictEqual([]);
+  await client.insert('users', { id: '1', name: 'test' });
+  await client.insert('posts', {
+    id: '1',
+    title: 'test',
+    authorId: '1',
+  });
+  await pause(30);
+  expect(usersSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: '1', name: 'test' },
+  ]);
+  expect(postsSub.mock.calls.at(-1)?.[0]).toStrictEqual([
+    { id: '1', title: 'test', authorId: '1' },
+  ]);
+  await fetch(`http://localhost:${port}/clear`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${DEFAULT_SERVICE_TOKEN}`,
+    },
+  });
+  await pause(50);
+  expect(usersSub.mock.calls.at(-1)?.[0]).toStrictEqual([]);
+  expect(postsSub.mock.calls.at(-1)?.[0]).toStrictEqual([]);
 });

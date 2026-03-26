@@ -29,7 +29,7 @@ import multer, { MulterError } from 'multer';
 import * as Sentry from '@sentry/node';
 import { StoreKeys, createTriplitStorageProvider } from './storage.js';
 import path from 'path';
-import { createRequire } from 'module';
+import { createRequire } from 'node:module';
 import { TriplitClient } from '@triplit/client';
 import PublicRouter from './routes/public.js';
 import fs from 'fs';
@@ -351,11 +351,24 @@ export function createServer(options?: ServerOptions) {
   //     return res.sendStatus(500);
   //   }
   // });
-  authenticated.post('/bulk-insert-file', upload.none(), async (req, res) => {
+  authenticated.post('/bulk-insert', async (req, res) => {
     const jsonBody = JSON.parse(req.body.data);
+    const param_noReturn = req.query['noReturn'];
+    const noReturn = param_noReturn === 'true';
     const { statusCode, payload } = await triplitServer.handleRequest(
       ['bulk-insert'],
-      jsonBody,
+      { inserts: jsonBody, noReturn },
+      req.token!
+    );
+    res.status(statusCode).json(payload);
+  });
+  authenticated.post('/bulk-insert-file', upload.none(), async (req, res) => {
+    const jsonBody = JSON.parse(req.body.data);
+    const param_noReturn = req.query['noReturn'];
+    const noReturn = param_noReturn === 'true';
+    const { statusCode, payload } = await triplitServer.handleRequest(
+      ['bulk-insert'],
+      { inserts: jsonBody, noReturn },
       req.token!
     );
     res.status(statusCode).json(payload);
@@ -403,9 +416,11 @@ export function createServer(options?: ServerOptions) {
   });
   authenticated.post('*', async (req, res) => {
     const path = req.path.split('/').slice(1) as Route; // ignore first empty string from split
+    const queryParams = req.query;
     const { statusCode, payload } = await triplitServer.handleRequest(
       path,
       req.body,
+      queryParams,
       req.token!
     );
     res.status(statusCode).json(payload);

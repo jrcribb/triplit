@@ -1,9 +1,9 @@
 import type {
-  ValueTypeKeys,
   DataType,
   Collection,
-  AllTypes,
+  DataTypeKeys,
   RecordType,
+  PrimitiveTypeKeys,
 } from '@triplit/db';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -78,6 +78,14 @@ function convertFormValueToTriplitValue(
     if (String(val) === 'Invalid Date') return undefined;
     return val;
   }
+  if (definition.type === 'json') {
+    try {
+      return JSON.parse(value as string);
+    } catch (e) {
+      console.error('Invalid JSON', e);
+      return undefined;
+    }
+  }
 
   // recurse in records
   if (definition.type === 'record')
@@ -133,8 +141,8 @@ function TypeLabel({
   isEnum = false,
 }: {
   name: string;
-  type: AllTypes;
-  setItemsType?: ValueTypeKeys;
+  type: DataTypeKeys;
+  setItemsType?: PrimitiveTypeKeys;
   isEnum?: boolean;
 }) {
   return (
@@ -275,7 +283,7 @@ export function CreateEntitySheet({
                 }}
               />
             )}
-            {item.definition.type === 'string' && !isEnum && (
+            {['string', 'json'].includes(item.definition.type) && !isEnum && (
               <Textarea
                 required={isRequired}
                 disabled={item.fieldValue === null}
@@ -291,6 +299,7 @@ export function CreateEntitySheet({
             {item.definition.type === 'number' && (
               <Input
                 type="number"
+                step={'any'}
                 required={isRequired}
                 disabled={item.fieldValue === null}
                 {...form.getInputProps(`attributes.${index}.fieldValue`)}

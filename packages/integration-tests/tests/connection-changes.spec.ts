@@ -1,10 +1,12 @@
-import { it, describe, expect } from 'vitest';
+import { it, describe, expect, vi, beforeEach } from 'vitest';
 import { hashQuery, Schema as S } from '@triplit/db';
 import { MessageLogItem, spyMessages } from '../utils/client.js';
 import { pause } from '../utils/async.js';
 import { withWebsocketStub } from '../utils/websockets.js';
-import { TriplitClient, WebSocketTransport } from '@triplit/client';
+import { TriplitClient } from '@triplit/client';
 import { tempTriplitServer } from '../utils/server.js';
+import { Logger } from '@triplit/logger';
+import { LogHandlerSpy } from '../utils/logging.js';
 
 const serviceToken =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ4LXRyaXBsaXQtdG9rZW4tdHlwZSI6InNlY3JldCIsIngtdHJpcGxpdC1wcm9qZWN0LWlkIjoicHJvamVjdCJ9.gcDKyZU9wf8o43Ca9kUVXO4KsGwX8IhhyEg1PO1ZqiQ';
@@ -152,6 +154,61 @@ describe('Connecting a client', () => {
       expect(messageSpy.filter(serverReadyMessages).length).toBe(1);
     })
   );
+  it('A client will warn if not enough information to connect is provided', async () => {
+    using server = await tempTriplitServer({
+      serverOptions: {
+        jwtSecret: 'test-secret',
+      },
+    });
+    const { port } = server;
+    {
+      // No params
+      const handlerSpy = new LogHandlerSpy();
+      const client = new TriplitClient({
+        autoConnect: true,
+        logger: new Logger([handlerSpy]),
+      });
+      await pause();
+      expect(handlerSpy.logs.length).toBe(1);
+      const log = handlerSpy.logs[0];
+      expect(log.level).toBe('WARN');
+      expect(log.message).toBe(
+        'You are attempting to connect to the server but no session is defined. Please ensure you are providing a token and serverUrl in the TriplitClient constructor or run startSession(token) to setup a session.'
+      );
+    }
+    {
+      // Missing token
+      const handlerSpy = new LogHandlerSpy();
+      const client = new TriplitClient({
+        serverUrl: `http://localhost:${port}`,
+        autoConnect: true,
+        logger: new Logger([handlerSpy]),
+      });
+      await pause();
+      expect(handlerSpy.logs.length).toBe(1);
+      const log = handlerSpy.logs[0];
+      expect(log.level).toBe('WARN');
+      expect(log.message).toBe(
+        'You are attempting to connect to the server but no session is defined. Please ensure you are providing a token and serverUrl in the TriplitClient constructor or run startSession(token) to setup a session.'
+      );
+    }
+    {
+      const handlerSpy = new LogHandlerSpy();
+      const client = new TriplitClient({
+        // Missing serverUrl
+        token: serviceToken,
+        autoConnect: true,
+        logger: new Logger([handlerSpy]),
+      });
+      await pause();
+      expect(handlerSpy.logs.length).toBe(1);
+      const log = handlerSpy.logs[0];
+      expect(log.level).toBe('WARN');
+      expect(log.message).toBe(
+        'You are attempting to connect but the connection cannot be opened because the required parameters are missing: [serverUrl].'
+      );
+    }
+  });
   it('After disconnecting, calling connect() will reconnect and restart syncing', async () => {
     using server = await tempTriplitServer({
       serverOptions: {
@@ -218,6 +275,55 @@ describe('Connecting a client', () => {
       spy2.find((m) => sentConnectQueryMessageForQuery(m, qid2))
     ).toBeDefined();
   });
+  it('A client will attempt to reconnect if the server is unreachable', async () => {
+    // NOT STARTING  SERVER YET
+    const port = 2999;
+    const client = new TriplitClient({
+      serverUrl: `http://localhost:${port}`,
+      token: serviceToken,
+      autoConnect: true,
+    });
+    await pause();
+    // Might be better to look at onConnectionStatusChange, but it is very likely the state is CLOSED
+    expect(client.connectionStatus).toBe('CLOSED');
+
+    // Now start the server
+    using server = await tempTriplitServer({
+      serverOptions: {
+        jwtSecret: 'test-secret',
+      },
+      port,
+    });
+    // Give the client enough time to perform its reconnect attempt
+    await pause(3000);
+    expect(client.connectionStatus).toBe('OPEN');
+  });
+  // TOOD: confirm server._server.close() actually closes the server
+  it.todo(
+    'A client will begin attempting to reconnect if the server becomes unreachable after connecting',
+    async () => {
+      using server = await tempTriplitServer({
+        serverOptions: {
+          jwtSecret: 'test-secret',
+        },
+      });
+      const { port } = server;
+      const client = new TriplitClient({
+        serverUrl: `http://localhost:${port}`,
+        token: serviceToken,
+        autoConnect: true,
+      });
+      await pause();
+      expect(client.connectionStatus).toBe('OPEN');
+      // Now close the server
+      // TODO: confirm this works properly
+      server._server.close();
+      await pause(3000);
+      // Client should be disconnected and attempting to reconnect
+      expect(client.connectionStatus).toBe('CLOSED');
+      // TODO: add assertions we are reconnecting
+    }
+  );
 });
 describe('Disconnecting a client', () => {
   it(
@@ -358,6 +464,8 @@ describe('Disconnecting a client', () => {
     })
   );
 });
+
+// TODO: disconnect, reconnect in succession -> not restarting sycing
 
 function sentConnectQueryMessageForQuery(log: MessageLogItem, qid: string) {
   return (

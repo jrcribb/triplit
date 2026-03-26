@@ -1,7 +1,7 @@
 {
   "name": "@triplit/db",
   "packageManager": "yarn@4.2.2",
-  "version": "1.0.8",
+  "version": "1.1.10",
   "source": "./src/index.ts",
   "main": "./dist/index.js",
   "type": "module",
@@ -14,9 +14,9 @@
       "default": "./dist/index.js"
     },
     "./ivm": {
-      "types": "./dist/ivm.d.ts",
-      "import": "./dist/ivm.js",
-      "default": "./dist/ivm.js"
+      "types": "./dist/ivm/index.d.ts",
+      "import": "./dist/ivm/index.js",
+      "default": "./dist/ivm/index.js"
     },
     "./changes-buffer": {
       "types": "./dist/memory-write-buffer.d.ts",
@@ -34,7 +34,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc --noCheck",
+    "build": "tsc",
     "lint": "tsc --noEmit",
     "lint:tests": "tsc --noEmit --project tsconfig.test.json",
     "test": "vitest run",
@@ -47,15 +47,19 @@
     "core-js": "^3.41.0",
     "elen": "^1.0.10",
     "nanoid": "^5.1.0",
-    "sorted-btree": "^1.8.1"
+    "sorted-btree": "^1.8.1",
+    "web-worker": "^1.5.0"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250429.0",
+    "@faker-js/faker": "^9.7.0",
     "@fast-check/vitest": "^0.1.5",
     "@triplit/types": "workspace:^",
     "@types/better-sqlite3": "^7.6.12",
-    "@types/bun": "^1.2.3",
+    "@types/bun": "^1.2.13",
     "@types/core-js": "^2.5.8",
     "@vitest/coverage-v8": "^3.0.6",
+    "@vitest/web-worker": "^3.1.1",
     "better-sqlite3": "^11.8.1",
     "esbuild": "^0.25.0",
     "expo-sqlite": "^15.1.2",
@@ -64,13 +68,15 @@
     "lmdb": "^3.2.6",
     "mitata": "^1.0.27",
     "tinybench": "^3.1.0",
-    "typescript": "^5.8.2",
+    "typescript": "^5.8.3",
+    "uuidv7": "^1.0.2",
     "vitest": "^3.0.6"
   },
   "peerDependencies": {
     "better-sqlite3": "*",
     "expo-sqlite": "*",
-    "lmdb": "*"
+    "lmdb": "*",
+    "uuidv7": "*"
   },
   "peerDependenciesMeta": {
     "better-sqlite3": {
@@ -80,6 +86,9 @@
       "optional": true
     },
     "lmdb": {
+      "optional": true
+    },
+    "uuidv7": {
       "optional": true
     }
   }

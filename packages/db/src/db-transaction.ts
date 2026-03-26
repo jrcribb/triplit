@@ -1,5 +1,5 @@
 import { Schema as S } from './schema/builder.js';
-import type { FetchResult, SchemaQuery } from './query.js';
+import type { FetchResult, SchemaQuery } from './query/types/index.js';
 import {
   CollectionNameFromModels,
   Type,
@@ -31,9 +31,8 @@ import { deepObjectAssign } from './utils/deep-merge.js';
 import { deepIsEmpty } from './memory-write-buffer.js';
 import { applyProjectionsAndConversions, DBSchema } from './db.js';
 import { DBSession } from './session.js';
-import { prepareQuery } from './prepare-query.js';
+import { prepareQuery } from './query/prepare-query.js';
 import { TypeConverters } from './schema/converters.js';
-import { parseInsert } from './parse.js';
 import {
   applyOverlay,
   overlayChangesOnCollection,
@@ -76,7 +75,6 @@ export class DBTransaction<M extends Models<M> = Models> {
   async fetch<Q extends SchemaQuery<M>>(
     query: Q
   ): Promise<FetchResult<M, Q, 'many'>> {
-    const schema = this.schema!;
     const preparedQuery = prepareQuery(
       query,
       this.schema?.collections,
@@ -86,26 +84,14 @@ export class DBTransaction<M extends Models<M> = Models> {
         applyPermission: this.skipRules ? undefined : 'read',
       }
     );
-    const queryEngine = new EntityStoreQueryEngine(
-      this.kvTx,
-      this.entityStore,
-      this.schema as DBSchema | undefined
-    );
-    // const dbEntities = (await queryEngine.fetch(preparedQuery)).map((entity) =>
-    //   structuredClone(flattenViewEntity(entity))
-    // );
-    // if (this.typeConverters && this.typeConverters.has(query.collectionName)) {
-    //   this.typeConverters.get(query.collectionName)!.fromDB(dbEntities);
-    // }
-    // return dbEntities;
+    const queryEngine = new EntityStoreQueryEngine(this.kvTx, this.entityStore);
     let results = await queryEngine.fetch(preparedQuery);
-    results = applyProjectionsAndConversions(
+    return applyProjectionsAndConversions(
       results,
-      query,
+      preparedQuery,
       'many',
       this.typeConverters
     );
-    return results;
   }
 
   async fetchOne<Q extends SchemaQuery<M>>(
@@ -126,7 +112,7 @@ export class DBTransaction<M extends Models<M> = Models> {
   async insert<CN extends CollectionNameFromModels<M>>(
     collectionName: CN,
     data: WriteModel<M, CN>
-  ) {
+  ): Promise<ReadModel<M, CN>> {
     // have these checks also in the kvTx itself, but
     // we don't call those until we're ready to commit
     // so these intermediate updates are necessary
@@ -150,10 +136,11 @@ export class DBTransaction<M extends Models<M> = Models> {
       throw new InvalidInsertDocumentError(
         `The document being inserted must be an object.`
       );
+    // TODO: this (I think) will accept inserts to collections that don't exist in the schema ... do we want to allow this?
     const collectionSchema = this.schema?.collections[collectionName]?.schema;
     const parsed = parseInsert(collectionSchema, data);
-    // For some reason only doing this for collections without schemas (?)
-    if (!collectionSchema && !parsed.id) {
+    // If at this point an id default has not been applied, add an id to the entity because its an insert
+    if (!parsed.id) {
       parsed.id = Type.defaultValue(S.Id());
     }
     const collectionChanges = this.getOrCreateCollectionChanges(collectionName);
@@ -199,14 +186,7 @@ export class DBTransaction<M extends Models<M> = Models> {
     } else {
       changes = update;
     }
-    // doing this "deeply" because property accessions of
-    // nested objects (including sets) will create empty objects
-    // in the changeset that will be throw errors in the
-    // schema validation process
-    // TODO: is this right if you want to clear an object ... I guess you cant delete the id?
-    if (deepIsEmpty(changes)) {
-      return;
-    }
+
     if ('id' in changes) {
       throw new InvalidOperationError(
         `Attempted to update the id of an entity in the ${collectionName} to ${changes.id}. The 'id' attribute of an entity is immutable and cannot be updated.`
@@ -218,13 +198,26 @@ export class DBTransaction<M extends Models<M> = Models> {
     changes = collectionSchema
       ? Type.encode(collectionSchema, changes)
       : changes;
+
+    // doing this "deeply" because property accessions of
+    // nested objects (including sets) will create empty objects
+    // in the changeset that will be throw errors in the
+    // schema validation process
+    // TODO: is this right if you want to clear an object ... I guess you cant delete the id?
+    if (deepIsEmpty(changes)) {
+      return;
+    }
+
     if (currentUpdate) {
       changes = deepObjectAssign({}, currentUpdate, changes);
     }
     collectionChanges.sets.set(id, changes);
   }
 
-  async delete(collectionName: string, id: string) {
+  async delete<CN extends CollectionNameFromModels<M>>(
+    collectionName: CN,
+    id: string
+  ) {
     if (!collectionName) {
       throw new InvalidCollectionNameError(collectionName);
     }
@@ -319,15 +312,19 @@ export function createUpdateProxyAndTrackChanges(
 ) {
   return new Proxy(entity, {
     get(target, prop) {
+      const targetDataType =
+        // If record type, get property
+        type?.type === 'record'
+          ? type.properties[prop]
+          : // If json type, continue to assume json
+            type?.type === 'json'
+            ? type
+            : type;
       if (target[prop] instanceof Set) {
         if (!changes[prop]) {
           changes[prop] = {};
         }
-        return createSetProxy(
-          target[prop],
-          changes[prop],
-          type?.properties[prop]
-        );
+        return createSetProxy(target[prop], changes[prop], targetDataType);
       }
       if (
         typeof target[prop] === 'object' &&
@@ -340,7 +337,7 @@ export function createUpdateProxyAndTrackChanges(
         return createUpdateProxyAndTrackChanges(
           target[prop],
           changes[prop],
-          type?.properties[prop]
+          targetDataType
         );
       }
       return Reflect.get(target, prop);
@@ -450,4 +447,37 @@ export function createSetProxy<T>(
       };
     },
   });
+}
+
+/**
+ * TODO: Unify this with type converters and selections
+ * If we want to eek out performance, we can pre-compile a function for the schema that does the checks below
+ */
+
+function parseInsert(type: RecordType | undefined, input: any) {
+  if (!type) return input;
+  const struct = Type.struct(type);
+  const assigned = Type.assign(type, struct, input);
+  // Helps for merging to remove undefined keys
+  // TODO: see if we can avoid doing this when we merge undefined / null
+  recursivelyDeleteUndefinedKeys(assigned);
+  const encoded = Type.encode(type, assigned);
+  return encoded;
+}
+
+function recursivelyDeleteUndefinedKeys(obj: any) {
+  for (const key in obj) {
+    if (obj[key] === undefined) {
+      delete obj[key];
+    } else if (typeof obj[key] !== 'object') {
+      continue;
+    } else if (
+      obj[key] !== null &&
+      !Array.isArray(obj[key]) &&
+      !(obj[key] instanceof Date) &&
+      !(obj[key] instanceof Set)
+    ) {
+      recursivelyDeleteUndefinedKeys(obj[key]);
+    }
+  }
 }

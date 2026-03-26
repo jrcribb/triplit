@@ -3,7 +3,7 @@
   "compilerOptions": {
     "strict": true,
     "composite": true,
-    "lib": ["ESNext"],
+    "lib": ["ESNext", "DOM"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "target": "ES2020",
@@ -19,7 +19,7 @@
     "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
     "rootDir": "./src/",
     "declarationDir": "./dist/types",
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types", "bun"]
   },
   "references": [
     {

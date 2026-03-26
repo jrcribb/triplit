@@ -1,0 +1,124 @@
+---
+description: Learn how to setup user auth for your Triplit application with Clerk.
+---
+
+import { Steps, Callout, Tabs, Tab } from 'nextra/components';
+
+# Using Clerk with Triplit
+
+[Clerk](https://clerk.com) is a user authentication and management service that makes it easy to add user accounts to your application. It's super simple to get Clerk up and running with Triplit, and this guide will show you how.
+
+<Callout>
+  This guide assumes you have a Triplit project set up. If you don't have one,
+  you can create one by following the [Quick Start](/quick-start) guide.
+</Callout>
+
+<Steps>
+
+### Create a Clerk account and application
+
+Follow the official [Clerk documentation](https://docs.clerk.dev/) to create an account and application in their dashboard.
+
+### Get your Clerk public key
+
+We also need to configure Triplit to validate the JWT tokens issued by Clerk. To do this, we need the RSA public key for your Clerk application. You can find this in the **API Keys** section of the Clerk dashboard.
+
+![Clerk API Keys](/clerk-auth-guide/api-keys-overview.png)
+
+Then click on the **Show JWT Public Key** button to reveal the public key.
+
+![Clerk JWT Public Key](/clerk-auth-guide/api-keys-public-key.png)
+
+For local dev, add this to your `.env` file in your Triplit app, making sure to remove any newlines:
+
+```env copy
+TRIPLIT_EXTERNAL_JWT_SECRET=-----BEGIN PUBLIC KEY-----<some-encoded-stuff>-----END PUBLIC KEY-----
+```
+
+### Start the Triplit development server
+
+Now that we've configured Clerk and added the necessary environmental variables, we can start the Triplit development server:
+
+```bash
+npx triplit dev
+```
+
+### Add Clerk to your Triplit app
+
+You can add Clerk to your Triplit app by installing the appropriate SDK. Clerk has official support for [Vanilla JavaScript](https://clerk.com/docs/quickstarts/javascript), [React](https://clerk.com/docs/quickstarts/react), [Next.js](https://clerk.com/docs/quickstarts/nextjs), [Expo](https://clerk.com/docs/quickstarts/expo), and more.
+
+There are also community SDKs for frameworks like [Svelte](https://github.com/markjaquith/clerk-sveltekit), [Vue](https://vue-clerk.vercel.app/), and [Angular](https://github.com/anagstef/ngx-clerk?tab=readme-ov-file#ngx-clerk). See the [Clerk documentation](https://clerk.com/docs) for the full list of integrated frameworks.
+
+### Add the Clerk token to your Triplit client
+
+Your Triplit client needs to send the JWT token issued by Clerk with each request. You can do this with the `startSession` method for the `TriplitClient`. Here's an example with Clerk's React bindings:
+
+```ts copy
+import { useAuth } from '@clerk/clerk-react';
+
+function App() {
+  const { isLoaded, getToken } = useAuth();
+
+  // Refresh the Triplit session when auth state changes
+  useEffect(() => {
+    if (isLoaded) {
+      getToken().then((token) => {
+        if (!token) {
+          client.endSession();
+          return;
+        }
+        client.startSession(token, true, {
+          refreshHandler: getToken,
+        });
+      });
+    }
+  }, [getToken, isLoaded]);
+}
+```
+
+You'll note that we're using the `refreshHandler` option to automatically refresh the token before it expires. Triplit will close down connections with expired tokens, but this will keep connections open for as long as Clerk issues a token that has consistent [roles](/schemas/permissions#roles) .
+
+### Test locally
+
+Run you Triplit app and sign in with Clerk. If you’re setup correctly, you should see the connection is established and your data is syncing with your server. If you can't connect, ensure that you set the `TRIPLIT_EXTERNAL_JWT_SECRET` environmental variables correctly.
+
+### Configure your Triplit dashboard
+
+To use Clerk with a deployed Triplit server, you just need ensure that it can use the Clerk public key to verify incoming requests.
+
+If you're using the Triplit Dashboard, you can add the public key to the **External JWT secret** input in your project settings.
+
+![Triplit Project Settings](/dashboard-screenshots/authentication.png)
+
+If you're using a custom self-hosted server, you need to set the `EXTERNAL_JWT_SECRET` environmental variable to the public key.
+
+Now that you have a user auth system set up, you can add permissions to your Triplit schema. By default, the JWT issued by Clerk will set the `sub` claim to the authenticated user's unique identifier. The server will apply the default `authenticated` role the token. For a given collection, you can define a permission that only allows any authenticated user to read all posts but only mutate their own.
+
+```ts copy filename=schema.ts
+import { Schema as S } from '@triplit/client';
+
+export const schema = S.Collections({
+  posts: {
+    schema: S.Schema({
+      id: S.Id(),
+      title: S.String(),
+      content: S.String(),
+      authorId: S.String(),
+    }),
+    permissions: {
+      authenticated: {
+        read: { filter: [true] },
+        insert: { filter: [['authorId', '=', '$token.sub']] },
+        update: { filter: [['authorId', '=', '$token.sub']] },
+        delete: { filter: [['authorId', '=', '$token.sub']] },
+      },
+    },
+  },
+});
+```
+
+When creating `posts`, you should ensure that the `authorId` is set to the `sub` claim, either taken from the token or the Supabase session.
+
+If you need to model more complex roles or permissions, [consult the documentation](/schemas/permissions).
+
+</Steps>

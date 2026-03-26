@@ -1,4 +1,4 @@
-import { DB } from '../src';
+import { DB, exists } from '../src';
 import { describe, beforeAll, it, expect, beforeEach } from 'vitest';
 import { testSubscription } from './utils/test-subscription.js';
 import { Schema as S } from '../src/schema/builder.js';
@@ -1540,6 +1540,55 @@ it('Can load a relation with variable nested in a record', async () => {
   });
 });
 
+it('Can filter a relation with variable nested in a record', async () => {
+  const schema = S.Collections({
+    a: {
+      schema: S.Schema({
+        id: S.Id(),
+        record: S.Record({
+          bId: S.String(),
+        }),
+      }),
+      relationships: {
+        // Test no scope
+        b1: S.RelationById('b', '$record.bId'),
+        // Test with scope
+        b2: S.RelationById('b', '$1.record.bId'),
+      },
+    },
+    b: {
+      schema: S.Schema({
+        id: S.Id(),
+      }),
+    },
+  });
+  const db = new DB({ schema: { collections: schema } });
+  await db.insert('b', { id: 'b-1' });
+  await db.insert('a', { id: 'a-1', record: { bId: 'b-1' } });
+  await db.insert('a', { id: 'a-2', record: { bId: 'b-2' } });
+
+  // Test no scope
+  {
+    const results = await db.fetch(db.query('a').Where(exists('b1')));
+    expect(results).toEqual([
+      {
+        id: 'a-1',
+        record: { bId: 'b-1' },
+      },
+    ]);
+  }
+  // Test scope
+  {
+    const results = await db.fetch(db.query('a').Where(exists('b2')));
+    expect(results).toEqual([
+      {
+        id: 'a-1',
+        record: { bId: 'b-1' },
+      },
+    ]);
+  }
+});
+
 const messagingSchema = S.Collections({
   users: {
     schema: S.Schema({
@@ -1760,5 +1809,40 @@ describe('Variable filters', () => {
         });
       }
     });
+  });
+});
+
+// Fix for https://github.com/aspen-cloud/triplit/issues/379
+// Ended up being a VAC issue (when a key is null), but we dont have VAC unit tests so putting it here
+it('BUG FIX: null relational keys dont cause misloading relationships', async () => {
+  const schema = S.Collections({
+    branches: {
+      schema: S.Schema({
+        id: S.String(),
+        branch_id: S.String({ nullable: true }),
+      }),
+      relationships: {
+        branches: S.RelationMany('branches', {
+          where: [['branch_id', '=', '$id']],
+        }),
+      },
+    },
+  });
+  const db = new DB({ schema: { collections: schema } });
+  await db.transact(async (tx) => {
+    await tx.insert('branches', { id: 'a', branch_id: null });
+    await tx.insert('branches', { id: 'b', branch_id: 'a' });
+  });
+  const query = db.query('branches').Id('a').Include('branches');
+  const result = await db.fetchOne(query);
+  expect(result).toEqual({
+    id: 'a',
+    branch_id: null,
+    branches: [
+      {
+        id: 'b',
+        branch_id: 'a',
+      },
+    ],
   });
 });

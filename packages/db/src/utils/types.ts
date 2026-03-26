@@ -8,6 +8,7 @@ export type Not<T extends boolean> = T extends true ? false : true;
  *
  * This prevents `keyof` from returning `number | Symbol` keys
  */
+// TODO: improve this to allow for numeric keys, when changing to keyof T & (string | number) some compiler error occurs
 export type StringKey<T> = keyof T & string;
 
 /**
@@ -25,3 +26,8 @@ export type Unalias<T> =
           : T extends Record<string, unknown>
             ? { [K in keyof T]: Unalias<T[K]> }
             : T;
+
+/**
+ * Transforms a Readonly type to a mutable type
+ */
+export type Writeable<T> = { -readonly [P in keyof T]: T[P] };

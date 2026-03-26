@@ -1,0 +1,91 @@
+---
+description: Variables in Triplit allow you to pass in preset values into queries.
+---
+
+# Variables
+
+Variables in Triplit allow you to pass in preset values into queries. They consist of a scope (to prevent collisions) and a dot (`.`) separated path to reference data in the variable.
+
+## Types of variables
+
+### Query variables
+
+Query variables are prefixed with the `query` scope and are accessible just to the query they are defined on. They are defined with the `Vars` method in the query builder. For example:
+
+```typescript
+const baseQuery = client.query('employees').Where([
+  ['team', '=', 'Delivery Crew'],
+  ['name', '=', '$query.name'],
+]);
+const fryQuery = baseQuery.Vars({ name: 'Philip J. Fry' });
+const leelaQuery = baseQuery.Vars({ name: 'Turanga Leela' });
+```
+
+This can help prevent writing the same query multiple times with different values. Additionally, you can use query variables to open [selective public access](/schemas/permissions#modeling-selective-public-access) to resources, allowing you to create things like public links to private resources.
+
+### Global variables
+
+Global variables are prefixed with the `global` scope and are accessible to all queries in the database. They are defined in the client constructor or via the `updateGlobalVariables` method. For example:
+
+```typescript
+const client = new TriplitClient({ variables: { name: 'Philip J. Fry' } });
+let query = client.query('employees').Where('name', '=', '$global.name'); // resolves to 'Philip J. Fry'
+
+client.db.updateGlobalVariables({ name: 'Turanga Leela' });
+query = client.query('employees').Where('name', '=', '$global.name'); // resolves to 'Turanga Leela'
+```
+
+### Token variables
+
+Token variables are prefixed with the `token` scope and are accessible to all queries in that database session. When [authenticating](/auth) with a Triplit server, the server will assign all claims on the JWT to token variables.
+
+### Role variables
+
+When determining access control rules with [roles](/schemas/permissions#roles), you can use role variables to reference values from a client's token in your permission definitions. Role variables are prefixed with the `role` scope.
+
+### Referential variables
+
+When issuing a subquery to load related data, you can use a referential variable in your query to reference ancestral data in the query. Referential variables are prefixed with a number (e.g. `$1`, `$2`, etc.) and correspond to higher levels of the query. If you are coming from a SQL background, you can think of these variables referencing the join keys of the parent.
+
+For example, you may fetch all posts and include the author of each post in the result:
+
+```typescript
+const query = client.query('posts').SubqueryMany(
+  'postAuthors',
+  client.query('users').Where(['id', '=', '$1.authorId']) // $1.authorId refers to posts.authorId
+);
+```
+
+By default, `$1` will actually be applied automatically if you do not specify a variable prefix `$authorId` in the filter. However, you would be required to use the referential prefix if you wanted to reference a grandparent or higher in the query:
+
+```typescript
+// Fetch all 747 planes that have a flight to an airport newer than the plane
+const query = client.query('planes').Where([
+  ['model', '=', '747']
+  {
+    exists: client.query('flights').Where([
+      ['plane_id', '=', '$1.id'],
+      {
+        exists: client.query('airports').Where([
+          ['id', '=', '$1.destination_id']
+          ['created_at', '>', '$2.created_at'],
+        ]),
+      },
+    ]),
+  },
+]);
+```
+
+## Accessing variables
+
+`$global` and `$token` variables are accessible on the client instance through the `vars` property.
+
+```typescript
+import { TriplitClient } from '@triplit/client';
+const client = new TriplitClient({
+  variables: { name: 'Philip J. Fry' },
+  token: '<jwt-token>',
+});
+console.log(client.vars.$global.name); // Philip J. Fry
+console.log(client.vars.$token.sub); //  The subject of the JWT token, if it exists
+```

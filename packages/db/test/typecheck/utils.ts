@@ -22,6 +22,11 @@ export type ExhaustiveSchemaSelectAll = {
   optionalDate?: Date | null | undefined;
   defaultDate: Date;
 
+  json: any;
+  nullableJson?: any;
+  optionalJson?: any;
+  defaultJson: any;
+
   number: number;
   nullableNumber?: number | null | undefined;
   optionalNumber?: number | null | undefined;
@@ -61,6 +66,8 @@ export type ExhaustiveSchemaSelectAll = {
   defaultString: string;
   enumString: 'a' | 'b' | 'c';
   nullableEnumString?: 'a' | 'b' | 'c' | null | undefined;
+
+  42: string;
 };
 
 export type ExhaustiveSchemaInsert = {
@@ -75,6 +82,11 @@ export type ExhaustiveSchemaInsert = {
   nullableDate?: Date | number | string | null | undefined;
   optionalDate?: Date | number | string | null | undefined;
   defaultDate?: Date | number | string | null | undefined;
+
+  json: any;
+  nullableJson?: any;
+  optionalJson?: any;
+  defaultJson?: any;
 
   number: number;
   nullableNumber?: number | null | undefined;
@@ -115,4 +127,6 @@ export type ExhaustiveSchemaInsert = {
   defaultString?: string | null | undefined;
   enumString: 'a' | 'b' | 'c';
   nullableEnumString?: 'a' | 'b' | 'c' | null | undefined;
+
+  42: string;
 };

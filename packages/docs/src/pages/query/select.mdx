@@ -1,0 +1,26 @@
+---
+description: The `Select` clause is used to specify which attributes to return in a Triplit query.
+---
+
+# Select
+
+To specify which attributes you want to return, you can use the `Select` method. This method accepts a list of attribute names for the collection as arguments.
+
+```typescript
+const query = client.query('users').Select(['id', 'name', 'email', 'dob']);
+```
+
+If the type you are selecting is a record, you may also select a specific attribute of the record by using dot notation. The result will be an object with just the selected keys.
+
+```typescript
+const query = client
+  .query('users')
+  .Select(['id', 'address.street', 'address.city']);
+// {id: 'abc', address: {street: '123 Main St', city: 'New York'}}
+```
+
+If you do not call select on a query, all attributes are selected.
+
+## Selecting relationships
+
+Refer to the docs on [`Include`](/query/include) to learn how to select relationships in a query.

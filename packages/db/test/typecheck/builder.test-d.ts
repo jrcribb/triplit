@@ -6,7 +6,7 @@ import {
   QueryWhere,
   ValueCursor,
   WhereFilter,
-} from '../../src/query.js';
+} from '../../src/query/types/index.js';
 import { DB } from '../../src/db.js';
 import { Models } from '../../src/index.js';
 
@@ -23,6 +23,7 @@ describe('query builder', () => {
             record: S.Record({
               attr1: S.String(),
             }),
+            json: S.Json(),
           }),
           relationships: {
             // Not included in select
@@ -50,7 +51,14 @@ describe('query builder', () => {
         .parameter(0)
         .toEqualTypeOf<
           | ReadonlyArray<
-              'attr1' | 'attr2' | 'attr3' | 'record' | 'record.attr1' | 'id'
+              | 'attr1'
+              | 'attr2'
+              | 'attr3'
+              | 'record'
+              | 'record.attr1'
+              | 'json'
+              | `json.${string}`
+              | 'id'
             >
           | undefined
         >();
@@ -80,6 +88,7 @@ describe('query builder', () => {
               }),
             }),
             attr2: S.Boolean(),
+            attr3: S.Json(),
           }),
           relationships: {
             // should include query
@@ -96,24 +105,28 @@ describe('query builder', () => {
     {
       const db = new DB({ schema });
       const query = db.query('test');
-      expectTypeOf(query.Where)
-        .parameter(0)
-        .toEqualTypeOf<
-          | undefined
-          | 'id'
-          | 'attr1'
-          | 'attr1.inner1'
-          | 'attr1.inner1.inner1A'
-          | 'attr1.inner1.inner1B'
-          | 'attr1.inner2'
-          | 'attr1.inner2.inner2A'
-          | 'attr2'
-          | 'relationById.id'
-          | WhereFilter<(typeof schema)['collections'], 'test'>
-          | QueryWhere<(typeof schema)['collections'], 'test'>
-        >();
+      expectTypeOf(query.Where).parameter(0).toEqualTypeOf<
+        // .Where(undefined)
+        | undefined
+        // .Where('id, '=', '1')
+        | 'id'
+        | 'attr1'
+        | 'attr1.inner1'
+        | 'attr1.inner1.inner1A'
+        | 'attr1.inner1.inner1B'
+        | 'attr1.inner2'
+        | 'attr1.inner2.inner2A'
+        | 'attr2'
+        | 'attr3'
+        | `attr3.${string}`
+        | 'relationById.id'
+        // .Where(['id', '=', '1'], ['attr1', '=', '1'])
+        | WhereFilter<(typeof schema)['collections'], 'test'>
+        // .Where([['id', '=', '1'], ['attr1', '=', '1']])
+        | QueryWhere<(typeof schema)['collections'], 'test'>
+      >();
 
-      // Can handle terary
+      // Can handle ternary
       const ternary: boolean = true;
       assertType(query.Where(ternary ? ['id', '=', '1'] : undefined));
     }
@@ -121,15 +134,17 @@ describe('query builder', () => {
       const db = new DB();
       const query = db.query('test');
       type T = typeof query.Where;
-      expectTypeOf(query.Where)
-        .parameter(0)
-        .toEqualTypeOf<
-          | string
-          | WhereFilter<Models, 'test'>
-          | QueryWhere<Models, 'test'>
-          | undefined
-        >();
-      // Can handle terary
+      expectTypeOf(query.Where).parameter(0).toEqualTypeOf<
+        // .Where(undefined)
+        | undefined
+        // .Where('id, '=', '1')
+        | string
+        // .Where(['id', '=', '1'], ['attr1', '=', '1'])
+        | WhereFilter<Models, 'test'>
+        // .Where([['id', '=', '1'], ['attr1', '=', '1']])
+        | QueryWhere<Models, 'test'>
+      >();
+      // Can handle ternary
       const ternary: boolean = true;
       assertType(query.Where(ternary ? ['id', '=', '1'] : undefined));
     }
@@ -151,6 +166,7 @@ describe('query builder', () => {
               }),
             }),
             attr2: S.Boolean(),
+            attr3: S.Json(),
           }),
           relationships: {
             relationById: S.RelationById('test2', 'test-id'),
@@ -178,11 +194,13 @@ describe('query builder', () => {
           | 'attr1.inner2'
           | 'attr1.inner2.inner2A'
           | 'attr2'
+          | 'attr3'
+          | `attr3.${string}`
           | 'relationById.id'
           | OrderStatement<(typeof schema)['collections'], 'test'>
           | QueryOrder<(typeof schema)['collections'], 'test'>
         >();
-      // Can handle terary
+      // Can handle ternary
       const ternary: boolean = true;
       assertType(query.Order(ternary ? ['id', 'ASC'] : undefined));
     }
@@ -197,7 +215,7 @@ describe('query builder', () => {
           | QueryOrder<Models, 'test'>
           | OrderStatement<Models, 'test'>
         >();
-      // Can handle terary
+      // Can handle ternary
       const ternary: boolean = true;
       assertType(query.Order(ternary ? ['id', 'ASC'] : undefined));
     }

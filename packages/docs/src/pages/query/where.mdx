@@ -1,0 +1,197 @@
+---
+description: The `Where` clause is used to filter results in a Triplit query based on conditions.
+---
+
+import { Callout } from 'nextra/components';
+
+# Where
+
+To filter results based on conditions, you can use the `Where` method. This method accepts a list of clauses as arguments. A clause is a tuple that takes the form `[attribute, operator, value]`.
+
+For example the following query will return all registered users.
+
+```typescript
+const query = client
+  .query('users')
+  .Select(['id', 'name', 'email', 'dob'])
+  .Where('is_registered', '=', true);
+```
+
+Clauses can be passed to `Where` as a single clause or an array of clauses:
+
+- `.Where('is_registered', '=', true)`
+- `.Where(['is_registered', '=', true])`
+- `.Where([['is_registered', '=', true], ...additional clauses])`
+
+If multiple clauses are provided, all clauses are joined with a logical AND. However, you may use `or` and `and` methods within the clause array to specify how clauses should be logically grouped and joined.
+
+For example the following query will return all registered users who are either an admin or an owner.
+
+```typescript
+import { or } from '@triplit/client';
+
+const query = client
+  .query('users')
+  .Select(['id', 'name', 'email', 'dob'])
+  .Where([
+    [
+      ['is_registered', '=', true],
+      or([
+        ['role', '=', 'admin'],
+        ['role', '=', 'owner'],
+      ]),
+    ],
+  ]);
+```
+
+You may use dot notation to filter by attributes of a record.
+
+```typescript
+const query = client.query('users').Where('address.city', '=', 'New York');
+```
+
+If you define relationships in your schema you may also access those via dot notation. Triplit will autocomplete up to 3 levels of depth, but arbitrary depth is supported.
+
+```typescript
+const query = client
+  .query('test_scores')
+  .Where('class.instructor.name', '=', 'Dr. Smith');
+```
+
+### Boolean clauses
+
+You may also pass in a boolean value as a clause. These statements are particularly useful when defining [permissions](/schemas/permissions).
+
+```typescript
+const query = client.query('users').Where([true]); // 'true' is a no-op, will return all users
+const query = client.query('users').Where([false]); // 'false' filters out all results, will return no users
+```
+
+### Exists filters
+
+You may also define a filter to check if related data exists. Triplit provides an `exists` method to help build subqueries that reference your schema.
+
+```typescript
+import { Schema as S, exists } from '@triplit/client';
+const schema = S.Collections({
+  todos: {
+    schema: S.Schema({
+      id: S.Id(),
+      text: S.String(),
+      assignee_ids: S.Set(S.String()),
+    }),
+    relationships: {
+      assignees: S.RelationMany('users', {
+        where: ['id', 'in', '$assignee_ids'],
+      }),
+    },
+  },
+  users: {
+    schema: S.Schema({
+      id: S.Id(),
+      name: S.String(),
+      team: S.String(),
+      title: S.String(),
+    }),
+  },
+});
+
+// Todos where at least one assignee is on the engineering team and has the title of manager
+const query = client.query('todos').Where(
+  exists('assignees', {
+    where: [
+      ['team', '=', 'engineering'],
+      ['title', '=', 'manager'],
+    ],
+  })
+);
+```
+
+<Callout type="warning" emoji="⚠️">
+  You may be tempted to write the query above as: `.Where('assignees.team', '=',
+  'engineering').Where('assignees.title', '=', 'manager')`. However, this will
+  instead query for todos where at least one assignee is on the engineering team
+  and where at least one assignee has the title of manager.
+</Callout>
+
+### Operators
+
+The following operators are available for use in where clauses, organized by data type:
+
+#### String Operators
+
+- `=`, `!=`: Equality and inequality comparison
+- `>`, `>=`, `<`, `<=`: Greater than, greater than or equal, less than, less than or equal
+- `isDefined`: Check if the attribute is defined
+- `in`, `nin`: Check if value is in or not in a set or array of values
+
+```typescript
+// String in/nin examples
+['triplit', 'in', ['triplit', 'hello']]; // true
+['triplit', 'nin', ['triplit', 'hello']]; // false
+['triplit', 'in', ['hello', 'world']]; // false
+['triplit', 'nin', ['hello', 'world']]; // true
+```
+
+- `like`, `nlike`: String pattern matching
+  - `_` matches any single character
+  - `%` matches any sequence of zero or more characters
+
+```typescript
+// String pattern matching examples
+['triplit', 'like', 'triplit']; //true
+['triplit', 'like', 'tri%']; // true
+['triplit', 'like', 'tr_pl_t']; // true
+['triplit', 'like', 'trip']; // true // false
+```
+
+- `isDefined`: Check if the attribute is defined
+
+#### Number Operators
+
+- `=`, `!=`: Equality and inequality comparison
+- `>`, `>=`, `<`, `<=`: Greater than, greater than or equal, less than, less than or equal
+- `in`, `nin`: Check if value is in or not in a set or array of values
+- `isDefined`: Check if the attribute is defined
+
+#### Boolean Operators
+
+- `=`, `!=`: Equality and inequality comparison
+- `>`, `>=`, `<`, `<=`: Greater than, greater than or equal, less than, less than or equal
+- `isDefined`: Check if the attribute is defined
+
+#### Date Operators
+
+- `=`, `!=`: Equality and inequality comparison
+- `>`, `>=`, `<`, `<=`: Greater than, greater than or equal, less than, less than or equal
+- `isDefined`: Check if the attribute is defined
+
+#### Set Operators
+
+- `has`, `!has`: Check if the set contains or does not contain a value
+- `isDefined`: Check if the attribute is defined
+- _the operators of its underlying type_ (e.g. string, number, etc.). This will check if some value in the set matches the operator. For example, if the set is of type string, you can use `like` to check if any of the strings in the set match a pattern.
+
+#### Record Operators
+
+- `isDefined`: Check if the attribute is defined
+
+#### Json Operators
+
+Json attributes contain arbitrary JSON data, described [here](/schemas/types#json). Any operator corresponding to the underlying type of the JSON data can be used. For example, if the JSON data contains a string, you can use `like` to check if the string matches a pattern.
+
+#### Optional Attributes
+
+All optional attributes support the `isDefined` operator, which checks if the specified attribute is defined:
+
+```typescript
+const query = client.query('profiles').Where('email', 'isDefined', true);
+```
+
+## Id shorthand
+
+If you want to query by the entity's ID, you can use the `Id` method as a shorthand for `Where('id', '=', id)`. E.g.
+
+```ts
+const query = client.query('users').Id('the-user-id');
+```

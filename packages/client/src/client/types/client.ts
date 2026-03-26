@@ -1,11 +1,19 @@
-import { KVStore, Models, Roles, TransactOptions } from '@triplit/db';
+import {
+  DB,
+  DBInitializationEvent,
+  KVStore,
+  Models,
+  Roles,
+  TransactOptions,
+} from '@triplit/db';
+import type { IndexedDbKVOptions } from '@triplit/db/storage/indexed-db';
 import { OnSessionErrorCallback, TokenRefreshOptions } from './sync.js';
 import {
   ClientFetchOptions,
   SubscriptionOptions,
   SyncTransport,
 } from '../../types.js';
-import { Logger } from '../../@triplit/types/logger.js';
+import { Logger } from '@triplit/logger';
 
 export interface ClientOptions<M extends Models<M> = Models> {
   /**
@@ -78,16 +86,33 @@ export interface ClientOptions<M extends Models<M> = Models> {
   logLevel?: 'info' | 'warn' | 'error' | 'debug';
   skipRules?: boolean;
 
-  experimental?: {};
+  experimental?: {
+    onDatabaseInit?: (
+      client: DB<M>,
+      event: DBInitializationEvent
+    ) => void | Promise<void>;
+  };
+
+  /**
+   * The interval in seconds at which to ping the server to ensure connection stays alive. If set to 0 or undefined, pings are disabled. Defaults to 45 (seconds).
+   */
+  pingInterval?: number;
 }
 
-export type SupportClientStorageProviders = 'indexeddb' | 'memory';
-
-export type SimpleClientStorageOptions =
-  | SupportClientStorageProviders
-  | { type: SupportClientStorageProviders; name?: string };
-
-export type SimpleStorageOrInstances = KVStore | SimpleClientStorageOptions;
+export type MemoryOptions = {
+  type: 'memory';
+};
+export type IndexedDbOptions = {
+  type: 'indexeddb';
+  name?: string;
+  options?: IndexedDbKVOptions;
+};
+export type SerializableMemoryOptions = 'memory' | MemoryOptions;
+export type SerializableIndexedDBOptions = 'indexeddb' | IndexedDbOptions;
+export type SerializableStorageOptions =
+  | SerializableMemoryOptions
+  | SerializableIndexedDBOptions;
+export type SimpleStorageOrInstances = KVStore | SerializableStorageOptions;
 
 // TODO: I think both `skipRules` and `manualSchemaRefresh` arent used / needed
 export type ClientTransactOptions = Pick<TransactOptions, 'skipRules'> & {

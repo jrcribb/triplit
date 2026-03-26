@@ -9,6 +9,13 @@ import selfHosting from '../../../public/dashboard-screenshots/self-hosting.png'
 import machineWidget from '../../../public/dashboard-screenshots/machine-widget.png';
 import createProject from '../../../public/dashboard-screenshots/create-project.png';
 
+<Callout emoji="⚠️">
+  Triplit Cloud is no longer accepting new users, and we recommend that you
+  self-host your Triplit database instead. Please see our [self-hosting
+  guide](/self-hosting) for more information on how to set up your own Triplit
+  server.
+</Callout>
+
 # Self-hosted deployments
 
 Triplit Cloud is fully compatible with self-hosted Triplit servers. This means you can deploy your own Triplit server and connect it to the Triplit Cloud dashboard, and reap the benefits of easier server management and use of the Triplit Console.
@@ -81,6 +88,10 @@ If you want to log errors to Sentry, you can set the `SENTRY_DSN` environment va
 ##### `VERBOSE_LOGS` (optional)
 
 If you want to log all incoming and outgoing messages and requests, you can set the `VERBOSE_LOGS` environment variable. This can be useful for debugging.
+
+#### `MAX_BODY_SIZE` (optional)
+
+If you want to increase the maximum body size for incoming requests, you can set the `MAX_BODY_SIZE` environment variable. This is useful if you want to send large payloads to your server. The default value is 100, corresponding to 100MB.
 
 ### Add your server's hostname to your project
 

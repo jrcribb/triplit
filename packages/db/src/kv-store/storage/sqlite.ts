@@ -7,9 +7,13 @@ import {
   ScanOptions,
 } from '../../types.js';
 import { decodeTuple, encodeTuple, Tuple } from '../../codec.js';
-import { STATEMENTS, DEFAULT_PRAGMA } from '../utils/sqlite.js';
+import {
+  STATEMENTS,
+  SQLiteKVStoreOptions,
+  parseSqliteKvStoreOptions,
+} from '../utils/sqlite.js';
 import { ScopedKVStore } from '../utils/scoped-store.js';
-import sqlite from 'better-sqlite3';
+import { walSizeGuard } from '../utils/sqlite-node.js';
 
 type SQLiteKVState = {
   tableCreated: boolean;
@@ -43,16 +47,11 @@ export class SQLiteKVStore implements KVStore {
   private transactions: SQLiteKVState['transactions'];
 
   db: Database;
+  private walGuard?: NodeJS.Timer;
 
-  // TODO: string constructor
-  constructor(databasePath: string);
-  constructor(database: Database);
-  constructor(arg0: string | Database) {
-    if (typeof arg0 === 'string') {
-      this.db = sqlite(arg0);
-    } else {
-      this.db = arg0;
-    }
+  constructor(db: Database, options: SQLiteKVStoreOptions = {}) {
+    this.db = db;
+
     /**
      * Docs: https://github.com/WiseLibs/better-sqlite3/blob/master/docs/unsafe.md#unsafe-mode
      *
@@ -61,8 +60,9 @@ export class SQLiteKVStore implements KVStore {
      *
      * TODO: we now only run createTable when needed, eval unsafeMode (might need for subquery evaluation)
      */
+    const parsedOptions = parseSqliteKvStoreOptions(options);
     this.db.unsafeMode(true);
-    this.db.exec(DEFAULT_PRAGMA);
+    this.db.exec(parsedOptions.pragma);
     this.createTable();
     this.statements = {
       get: this.db.prepare(STATEMENTS.get),
@@ -78,11 +78,9 @@ export class SQLiteKVStore implements KVStore {
     this.transactions = {
       write: this.db.transaction(
         (sets: Iterable<[Tuple, any]>, deletes: Iterable<Tuple>) => {
-          // TODO: prefix application?
           for (const key of deletes) {
             const encodedKey = encodeTuple(key);
             this.freeStatement(this.statements.delete).run(encodedKey);
-            // deleteQuery.run(encodedKey);
           }
           for (const [key, value] of sets) {
             const encodedKey = encodeTuple(key);
@@ -91,22 +89,33 @@ export class SQLiteKVStore implements KVStore {
               encodedKey,
               encodedValue
             );
-            // insertQuery.run(encodedKey, encodedValue);
           }
         }
       ),
     };
+    this.walGuard = this.startWalGuard(parsedOptions);
+  }
+
+  private startWalGuard(options: Required<SQLiteKVStoreOptions>) {
+    if (this.walGuard) {
+      clearInterval(this.walGuard);
+    }
+    const dbPath = this.db.name;
+    const walFile = `${dbPath}-wal`;
+    const walCheck = setInterval(() => {
+      walSizeGuard(this.db, walFile, {
+        restartMax: options.checkpointRestart,
+        truncateMax: options.checkpointTruncate,
+      });
+    }, 60_000);
+    // In Node, unref() to prevent keeping the event loop alive
+    // https://nodejs.org/api/timers.html#timers_timeout_unref
+    if (typeof walCheck === 'object' && 'unref' in walCheck) walCheck.unref();
+    return walCheck;
   }
 
   private createTable() {
-    /**
-     * Create the table if it doesn't exist.
-     *
-     * We use `WITHOUT ROWID` to create a clustered index on the `key` column to improve locality during range scans.
-     */
     const createTableQuery = this.db.prepare(STATEMENTS.createTable);
-
-    // Make sure the table exists.
     createTableQuery.run();
   }
 
@@ -217,7 +226,6 @@ export class SQLiteKVStore implements KVStore {
     return new MemoryTransaction(this);
   }
 
-  // Needs to be interable
   async applyEdits(
     sets: AsyncIterable<[Tuple, any]> | Iterable<[Tuple, any]>,
     deletes: AsyncIterable<Tuple> | Iterable<Tuple>

@@ -1,11 +1,11 @@
-import { type Timestamp as HybridClockTimestamp } from '@triplit/types/sync.js';
+import { type SyncTimestamp as HybridClockTimestamp } from '@triplit/types/sync.js';
 import { Tuple } from './codec.js';
 import { EntityMetadataStore } from './entity-metadata-store.js';
 import { PermissionWriteOperations } from './schema/index.js';
 import { TripleRow, TupleValue } from './legacy.js';
 
 // TODO: refactor paths and organization
-export type * from './query.js';
+export type * from './query/types/index.js';
 export type * from './types/index.js';
 export type * from './utils/types.js';
 
@@ -142,10 +142,18 @@ export type ApplyChangesOptions = {
   entityChangeValidator: EntityChangeValidator | undefined;
 };
 
+export type Delta = {
+  id: string;
+  collection: string;
+  prev: any;
+  next: any;
+  change: any;
+  operation: 'insert' | 'upsert' | 'update' | 'delete';
+};
+
 export type WritePermissionCheck = (
   storage: KVStoreOrTransaction,
-  collection: string,
-  entity: any,
+  delta: Delta,
   operation: PermissionWriteOperations
 ) => Promise<void>;
 

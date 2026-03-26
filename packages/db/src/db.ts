@@ -1,4 +1,9 @@
-import { DBSerializationError, WritePermissionError } from './errors.js';
+import {
+  DBInitializationError,
+  DBSerializationError,
+  TriplitError,
+  WritePermissionError,
+} from './errors.js';
 import { EntityStoreKV } from './entity-store.js';
 import {
   DBChanges,
@@ -10,23 +15,20 @@ import {
   KVStoreOrTransaction,
   Change,
   Timestamp,
+  PreparedQuery,
+  Delta,
 } from './types.js';
 import { HybridLogicalClock } from './hybrid-clock.js';
 import { EntityStoreQueryEngine, ViewEntity } from './query-engine.js';
 import { BTreeKVStore } from './kv-store/storage/memory-btree.js';
-import {
-  createQueryWithExistsAddedToIncludes,
-  createQueryWithRelationalOrderAddedToIncludes,
-  IVM,
-  queryResultsToChanges,
-} from './ivm.js';
+import { IVM, queryResultsToChanges } from './ivm/index.js';
 import { DBTransaction } from './db-transaction.js';
 import {
   getSchemaDiffIssues,
   logSchemaChangeViolations,
   diffSchemas,
 } from './schema/diff-issues.js';
-import { prepareQuery } from './prepare-query.js';
+import { prepareQuery } from './query/prepare-query.js';
 import { createSession, DBSession, normalizeSessionVars } from './session.js';
 import {
   getTypeConvertersFromSchema,
@@ -36,10 +38,11 @@ import { isEmpty } from './memory-write-buffer.js';
 import { satisfiesFilters } from './filters.js';
 import { ValuePointer } from './utils/value-pointer.js';
 import { logger as LOGGER, Logger } from '@triplit/logger';
-import { Type } from './schema/data-types/type.js';
+import { Type } from './schema/data-types/index.js';
 import { getCollectionPermissions } from './permissions.js';
 import {
   CollectionNameFromModels,
+  FailedSchemaChange,
   Models,
   PermissionWriteOperations,
   PossibleDataViolation,
@@ -51,14 +54,15 @@ import {
   FetchResult,
   QueryResultCardinality,
   SchemaQuery,
-} from './query.js';
-import { QueryBuilder } from './query-builder.js';
+} from './query/types/index.js';
+import { QueryBuilder } from './query/query-builder.js';
 import {
   ClearOptions,
   DBOptions,
   EntityWriteOptions,
   FetchOptions,
   OnCommitCallback,
+  ReadModel,
   SchemaChangeListener,
   SubscriptionResultsCallback,
   TransactCallback,
@@ -67,6 +71,7 @@ import {
   WriteModel,
 } from './types/db.js';
 import { validateSchema } from './schema/validation.js';
+import { tryPreloadingOptionalDeps } from './utils/optional-dep.js';
 
 export type DBSchema<M extends Models<M> = Models> = {
   collections: M;
@@ -114,11 +119,20 @@ export class DB<
       options.ivm ??
       new IVM(
         // @ts-expect-error - TODO: handle more generalized internal typings
-        this,
-        options.ivmOptions ?? {
-          shouldTrackChanges: true,
-        }
+        this
       );
+
+    if (options.schema) {
+      const schemaInvalid = validateSchema(options.schema);
+      // TODO: in production uses, if you hit this error your db instance may become unusable
+      // This should only happen if (A) validation function changed but tests should catch this, OR (B) your stored schema changed unexpectedly
+      // Optimally we can fix with schema push --force, but if you cant access the db instance that may not be possible
+      // Similar to "await ready", we probably want every operation to fail until you fix the schema
+      if (schemaInvalid)
+        throw new DBInitializationError(
+          `Failed to start DB because the current schema is invalid: ${schemaInvalid}`
+        );
+    }
 
     this.schema = options.schema;
     this.typeConverters = getTypeConvertersFromSchema(
@@ -148,7 +162,13 @@ export class DB<
     onResults: SubscriptionResultsCallback<M, Q>,
     onError?: (error: Error) => void,
     // TODO: will we need this?
-    options: FetchOptions = {}
+    options: FetchOptions & {
+      queryState?: {
+        timestamp: Timestamp;
+        entityIds: Record<string, string[]>;
+      };
+      queryKey?: string;
+    } = {}
   ): () => void {
     const preparedQuery = prepareQuery(
       query,
@@ -166,12 +186,34 @@ export class DB<
           preparedQuery,
           'many',
           this.typeConverters
-        )
+        ),
+        options.queryKey
       );
     };
     return this.ivm.subscribe(preparedQuery, callback, onError);
   }
 
+  subscribeRaw(
+    query: PreparedQuery,
+    onResults: SubscriptionResultsCallback,
+    onError?: (error: Error) => void,
+    options: {
+      queryState?: {
+        timestamp: Timestamp;
+        entityIds: Record<string, string[]>;
+      };
+      queryKey?: string;
+    } = {}
+  ): () => void {
+    const callback = ({ results }: any) => {
+      onResults(results, options.queryKey);
+    };
+    return this.ivm.subscribe(query, callback, onError);
+  }
+
+  /**
+   * @deprecated TODO remove
+   */
   subscribeWithChanges<Q extends SchemaQuery<M>>(
     query: Q,
     onResults: (args: {
@@ -203,7 +245,9 @@ export class DB<
     };
     return this.ivm.subscribe(preparedQuery, callback, onError);
   }
-
+  /**
+   * @deprecated TODO remove
+   */
   subscribeChanges<Q extends SchemaQuery<M>>(
     query: Q,
     onResults: (results: DBChanges, queryId?: string) => void | Promise<void>,
@@ -327,7 +371,12 @@ export class DB<
       onResults(relevantChanges, options.queryKey);
       isInitialResponse = false;
     };
-    return this.ivm.subscribe(preparedQuery, callback, options.errorCallback);
+    return this.ivm.subscribe(
+      preparedQuery,
+      // @ts-expect-error - Ignoring because method is deprecated
+      callback,
+      options.errorCallback
+    );
   }
 
   async fetch<Q extends SchemaQuery<M>>(
@@ -344,77 +393,28 @@ export class DB<
       }
     );
 
-    const queryEngine = new EntityStoreQueryEngine(
-      this.kv,
-      this.entityStore,
-      this.schema as DBSchema | undefined
-    );
+    const queryEngine = new EntityStoreQueryEngine(this.kv, this.entityStore);
     let results = await queryEngine.fetch(preparedQuery);
 
-    results = applyProjectionsAndConversions(
+    return applyProjectionsAndConversions(
       results,
       preparedQuery,
       'many',
       this.typeConverters
     );
-    return results;
   }
 
-  async rawFetch(query: CollectionQuery) {
-    const queryEngine = new EntityStoreQueryEngine(
-      this.kv,
-      this.entityStore,
-      this.schema as DBSchema | undefined
-    );
-    return queryEngine.fetch(query);
+  async rawFetch(query: PreparedQuery, vars?: any): Promise<ViewEntity[]> {
+    const queryEngine = new EntityStoreQueryEngine(this.kv, this.entityStore);
+    return queryEngine.fetch(query, vars);
   }
 
-  applyProjectionsAndConversions(
-    results: ViewEntity[] | ViewEntity,
-    query: CollectionQuery,
-    cardinality: QueryResultCardinality
-  ): any[] | any {
-    const dataConverter = this.typeConverters?.get(query.collectionName);
-
-    const convertEntity = (entityData: ViewEntity['data']) => {
-      return dataConverter?.fromDB(entityData) ?? entityData;
-    };
-
-    const projectEntity = (entity: ViewEntity['data']) => {
-      if (!query.select) return entity;
-      const projectedEntity: any = {};
-      for (const key of query.select) {
-        const path = key.split('.');
-        ValuePointer.Set(projectedEntity, path, ValuePointer.Get(entity, path));
-      }
-      return projectedEntity;
-    };
-
-    const projectAndConvertEntity = (entity) => {
-      const convertedData = convertEntity(projectEntity(entity.data));
-      const convertedInclusions =
-        query.include &&
-        Object.entries(query.include).reduce((acc, [key, { subquery }]) => {
-          if (entity.subqueries[key]) {
-            acc[key] = this.applyProjectionsAndConversions(
-              entity.subqueries[key],
-              subquery,
-              subquery.cardinality
-            );
-          }
-          return acc;
-        }, {});
-      return {
-        ...convertedData,
-        ...convertedInclusions,
-      };
-    };
-
-    return cardinality === 'one'
-      ? [projectAndConvertEntity(results)]
-      : (results as ViewEntity[]).map(projectAndConvertEntity);
-  }
-
+  /**
+   * @deprecated
+   * @param query
+   * @param options
+   * @returns
+   */
   async fetchChanges(query: CollectionQuery<M>, options?: FetchOptions) {
     const preparedQuery = prepareQuery(
       query,
@@ -425,11 +425,8 @@ export class DB<
         applyPermission: options?.skipRules ? undefined : 'read',
       }
     );
-    const queryToGetChanges = createQueryWithRelationalOrderAddedToIncludes(
-      createQueryWithExistsAddedToIncludes(preparedQuery)
-    );
-    const results = await this.rawFetch(queryToGetChanges);
-    const changes = queryResultsToChanges(results, queryToGetChanges);
+    const results = (await this.rawFetch(preparedQuery)) as ViewEntity[];
+    const changes = queryResultsToChanges(results, preparedQuery);
     return changes;
   }
 
@@ -457,7 +454,7 @@ export class DB<
     collectionName: CN,
     data: WriteModel<M, CN>,
     options?: EntityWriteOptions
-  ) {
+  ): Promise<ReadModel<M, CN>> {
     // TODO: for insert, update, delete, can we do this without creating garbage
     // for the changes map and array?
     // e.g. more semantic API for the entityStore
@@ -478,7 +475,7 @@ export class DB<
     id: string,
     data: UpdatePayload<M, CN>,
     options?: EntityWriteOptions
-  ) {
+  ): Promise<void> {
     return this.transact(
       async (tx) => {
         await tx.update(collectionName, id, data);
@@ -489,11 +486,11 @@ export class DB<
     );
   }
 
-  async delete(
-    collectionName: string,
+  async delete<CN extends CollectionNameFromModels<M>>(
+    collectionName: CN,
     id: string,
     options?: EntityWriteOptions
-  ) {
+  ): Promise<void> {
     return this.transact(
       async (tx) => {
         await tx.delete(collectionName, id);
@@ -626,7 +623,8 @@ export class DB<
     if (invalid) {
       return {
         successful: false,
-        invalid,
+        code: 'SCHEMA_INVALID',
+        message: invalid,
         issues: [],
         diff: [],
         oldSchema: currentSchema,
@@ -638,7 +636,8 @@ export class DB<
       await this.updateSchema(newSchema);
       return {
         successful: true,
-        invalid: undefined,
+        code: 'SUCCESS',
+        message: 'Schema updated successfully', // TODO: add updates to message?
         issues: [],
         diff: [],
         oldSchema: currentSchema,
@@ -653,36 +652,44 @@ export class DB<
     if (diff.length === 0)
       return {
         successful: true,
-        invalid: undefined,
+        code: 'SUCCESS',
+        message: 'Schema updated successfully.',
         issues,
         diff,
         oldSchema: currentSchema,
         newSchema,
       };
 
-    issues = await getSchemaDiffIssues(this.fetch.bind(this), diff);
+    issues = await getSchemaDiffIssues(
+      (query: SchemaQuery<M>) =>
+        this.fetch.bind(this)(query, { skipRules: true }),
+      diff
+    );
+
+    if (issues.length > 0 && issues.some((issue) => issue.violatesExistingData))
+      return {
+        successful: false,
+        code: 'EXISTING_DATA_MISMATCH',
+        message: 'Schema update failed due to existing data violations.',
+        issues,
+        diff,
+        oldSchema: currentSchema,
+        newSchema,
+      };
 
     // TODO if `failOnBackwardsIncompatibleChange` is true, we should skip
     // data checks for faster performance
     if (failOnBackwardsIncompatibleChange && issues.length > 0) {
       return {
         successful: false,
-        invalid: undefined,
+        code: 'SCHEMA_COMPATIBILITY_MISMATCH',
+        message: 'Schema update failed due to backwards incompatible changes.',
         issues,
         diff,
         oldSchema: currentSchema,
         newSchema,
       };
     }
-    if (issues.length > 0 && issues.some((issue) => issue.violatesExistingData))
-      return {
-        successful: false,
-        invalid: undefined,
-        issues,
-        diff,
-        oldSchema: currentSchema,
-        newSchema,
-      };
 
     diff.length > 0 &&
       this.logger.info(`applying ${diff.length} changes to schema`);
@@ -691,7 +698,8 @@ export class DB<
 
     return {
       successful: true,
-      invalid: undefined,
+      code: 'SUCCESS',
+      message: 'Schema updated successfully.',
       issues,
       diff,
       oldSchema: currentSchema,
@@ -728,8 +736,9 @@ export class DB<
       storageTx,
       {
         _metadata: {
+          // Perform a set AND delete to ensure a full overwrite and no merging
           sets: new Map([['_schema', { id: '_schema', ...schema } as any]]),
-          deletes: new Set(),
+          deletes: new Set(['_schema']),
         },
       },
       {
@@ -772,13 +781,15 @@ export class DB<
   }
 
   async clear(options?: ClearOptions) {
-    await Promise.all([this.kv.clear(), this.ivm.clear()]);
+    await this.kv.clear();
     if (options?.full) {
+      await this.ivm.clear();
       this.schema = undefined;
       return;
     }
     this.schema &&
       (await this.updateSchema(this.schema as unknown as DBSchema));
+    this.ivm.resetSubscriptions();
   }
 
   updateGlobalVariables(vars: Record<string, any>) {
@@ -800,7 +811,7 @@ export class DB<
     const schema = this.schema?.collections;
     if (!schema) return;
     const collectionSchema =
-      schema[collection as CollectionNameFromModels<M>].schema;
+      schema[collection as CollectionNameFromModels<M>]?.schema;
     if (!collectionSchema) return;
     const validation = Type.validateEncoded(collectionSchema, change, {
       partial: ignoreRequiredProperties,
@@ -817,24 +828,38 @@ export class DB<
   // NOTE: we run this many times when writing, we can probably precalculate the filters / save them for re-use ({ [collection+operation]: filters})
   private async checkWritePermission(
     storage: KVStoreOrTransaction,
-    collection: string,
-    entity: any,
+    delta: Delta,
     operation: PermissionWriteOperations
   ) {
+    let entity = undefined;
+    const collection = delta.collection;
+    switch (operation) {
+      case 'insert':
+        entity = delta.next;
+        break;
+      case 'update':
+        entity = delta.prev;
+        break;
+      case 'delete':
+        entity = delta.prev;
+        break;
+      case 'postUpdate':
+        entity = delta.next;
+        break;
+    }
     const permissions = getCollectionPermissions(
       this.schema?.collections as Models | undefined,
       collection
     );
     // If no permissions for collection, its exempt from rules
     if (!permissions) return;
-
     // Prepare filters for fetch
     const preparedQuery = prepareQuery(
       {
         collectionName: collection,
       },
       this.schema?.collections as Models | undefined,
-      this.systemVars,
+      { ...this.systemVars, $prev: delta.prev },
       this.session,
       {
         applyPermission: operation,
@@ -847,11 +872,7 @@ export class DB<
     if (!preparedPermissions || preparedPermissions.length === 0) return;
 
     // Run a pseudo-fetch, checking if the entity satisfies the permissions filters
-    const queryEngine = new EntityStoreQueryEngine(
-      storage,
-      this.entityStore,
-      this.schema
-    );
+    const queryEngine = new EntityStoreQueryEngine(storage, this.entityStore);
     const isSatisfied = await satisfiesFilters(
       entity,
       preparedPermissions,
@@ -940,115 +961,67 @@ function recursivelyGetTriplesFromObj(
   return triples;
 }
 
-export async function createDB<M extends Models<M> = Models>(
-  options: DBOptions<M>
-) {
-  let savedSchema = undefined;
-  if (options.kv) {
-    savedSchema = await DB.getSchemaFromStorage(options.kv);
-  }
-  const db = new DB({ ...options, schema: savedSchema });
+export type DBInitializationEvent =
+  | { type: 'ERROR'; error: Error }
+  | {
+      type: 'SCHEMA_UPDATE_FAILED';
+      change: FailedSchemaChange;
+    }
+  | { type: 'SUCCESS'; change: SchemaChange | undefined };
 
-  if (options.schema) {
-    const change = await db.overrideSchema(
-      options.schema as unknown as DBSchema,
-      {
-        failOnBackwardsIncompatibleChange: true,
-      }
-    );
-    // TODO: integrate these into the error somehow?
-    logSchemaChangeViolations(change, { logger: db.logger });
-    if (!change.successful) {
-      throw new Error(
-        `Schema change failed. Review the issues above for more information.`
+/**
+ * Creates a new database instance and performs and necessary async operations as part of the initialization.
+ * It is guaranteed to return a DB instance, however it may throw an error if a DB instance could not be created.
+ * The event parameter will indicate the result of the initialization process, some notable cases include:
+ * - if the provided schema cannot be applied, an instance with the old schema will be returned
+ */
+export async function createDB<
+  M extends Models<M> = Models,
+  E extends EntitySyncStore = EntitySyncStore,
+>(
+  options: DBOptions<M, E> & { failOnBackwardsIncompatibleChange?: boolean }
+): Promise<{ db: DB<M, E>; event: DBInitializationEvent }> {
+  let savedSchema = undefined;
+  let db: DB<M, E> | undefined = undefined;
+  try {
+    if (options.kv) {
+      savedSchema = await DB.getSchemaFromStorage(options.kv);
+    }
+    await tryPreloadingOptionalDeps();
+    db = new DB<M, E>({ ...options, schema: savedSchema as DBSchema<M> });
+    let schemaChange: SchemaChange | undefined = undefined;
+
+    // A schema is provided, attempt to apply it
+    if (options.schema) {
+      schemaChange = await db.overrideSchema(options.schema, {
+        failOnBackwardsIncompatibleChange:
+          options.failOnBackwardsIncompatibleChange,
+      });
+      if (schemaChange.successful)
+        return {
+          db,
+          event: {
+            type: 'SUCCESS',
+            change: schemaChange,
+          },
+        };
+      else
+        return {
+          db,
+          event: { type: 'SCHEMA_UPDATE_FAILED', change: schemaChange },
+        };
+    }
+
+    return { db, event: { type: 'SUCCESS', change: undefined } };
+  } catch (error) {
+    if (db) {
+      return { db, event: { type: 'ERROR', error: error as Error } };
+    } else {
+      throw new TriplitError(
+        `Failed to create a DB instance: ${(error as Error).message}`
       );
     }
-  } else if (savedSchema) {
-    // override schema implicitly handles persisting
-    // but if we don't have a new schema, we need to
-    // persist the old one
-    await db.updateSchema(savedSchema);
   }
-
-  return db;
-}
-
-function applySelect<M>(
-  rawEntities: ViewEntity[],
-  select?: string[],
-  include?: any
-) {
-  if (!include && !select) return rawEntities;
-  if (rawEntities.length === 0) return rawEntities;
-  return rawEntities.map((rawEnt) => {
-    let entity = rawEnt;
-    if (include) {
-      for (const inclusion in include) {
-        const { subquery, cardinality } = include[inclusion] as any;
-        if (cardinality === 'one' && entity[inclusion] === null) {
-          entity[inclusion] = null;
-          continue;
-        }
-        const selection = applySelect(
-          cardinality === 'one' ? [entity[inclusion]] : entity[inclusion],
-          subquery.select,
-          subquery.include
-        );
-        entity[inclusion] =
-          cardinality === 'one' ? (selection[0] ?? null) : selection;
-      }
-    }
-    if (select) {
-      const selectPaths = select.map((attribute) => attribute.split('.'));
-      const entityCopy = {} as any;
-      for (const path of selectPaths) {
-        ValuePointer.Set(entityCopy, path, ValuePointer.Get(entity, path));
-      }
-      if (include) {
-        for (const inclusion in include) {
-          entityCopy[inclusion] = entity[inclusion];
-        }
-      }
-      entity = entityCopy;
-    }
-    return entity;
-  });
-}
-
-function filterChangesByTimestamp(
-  changes: DBChanges,
-  timestamps: Record<string, Map<string, Timestamp>>,
-  afterTimestamp: Timestamp
-): DBChanges {
-  const filteredChanges: DBChanges = {};
-
-  for (const [collectionName, collectionChanges] of Object.entries(changes)) {
-    const filteredSets = new Map<string, any>();
-    const filteredDeletes = new Set<string>();
-
-    for (const [entityId, change] of collectionChanges.sets) {
-      const entityTimestamp = timestamps[collectionName]?.get(entityId);
-      if (entityTimestamp && entityTimestamp > afterTimestamp) {
-        filteredSets.set(entityId, change);
-      }
-    }
-
-    for (const entityId of collectionChanges.deletes) {
-      const entityTimestamp = timestamps[collectionName]?.get(entityId);
-      if (entityTimestamp && entityTimestamp > afterTimestamp) {
-        filteredDeletes.add(entityId);
-      }
-    }
-
-    if (filteredSets.size > 0 || filteredDeletes.size > 0) {
-      filteredChanges[collectionName] = {
-        sets: filteredSets,
-        deletes: filteredDeletes,
-      };
-    }
-  }
-
-  return filteredChanges;
 }
 
 function entityIsInChangeset(
@@ -1064,8 +1037,8 @@ function entityIsInChangeset(
 }
 
 export function applyProjectionsAndConversions(
-  results: ViewEntity[] | ViewEntity,
-  query: CollectionQuery,
+  results: ViewEntity[] | ViewEntity | null,
+  query: PreparedQuery,
   cardinality: QueryResultCardinality,
   typeConverters?: TypeConverters
 ): any[] | any {
@@ -1084,11 +1057,11 @@ export function applyProjectionsAndConversions(
     return projectedEntity;
   };
 
-  const projectAndConvertEntity = (entity) => {
+  const projectAndConvertEntity = (entity: ViewEntity) => {
     const convertedData = convertEntity(projectEntity(entity.data));
     const convertedInclusions =
       query.include &&
-      Object.entries(query.include).reduce((acc, [key, inclusion]) => {
+      Object.entries(query.include).reduce<any>((acc, [key, inclusion]) => {
         if (entity.subqueries[key] !== undefined) {
           acc[key] = applyProjectionsAndConversions(
             entity.subqueries[key],
@@ -1105,123 +1078,6 @@ export function applyProjectionsAndConversions(
     };
   };
   return cardinality === 'one'
-    ? projectAndConvertEntity(results)
+    ? projectAndConvertEntity(results as ViewEntity)
     : (results as ViewEntity[]).map(projectAndConvertEntity);
-}
-
-/**
- * This takes a ViewEntity, query, typeConverters and creates getters for the inclusions
- * and select doing conversions lazily as necessary
- * NOTE: this is not used and still TBD if it's worth the complexity
- **/
-export function createLazyEntity(
-  entity: ViewEntity,
-  query: CollectionQuery,
-  typeConverters?: TypeConverters
-) {
-  // Single cache Map, no pre-computation
-  const cache = new Map<string, any>();
-
-  const handler: ProxyHandler<object> = {
-    get(target, prop, receiver) {
-      const propStr = String(prop);
-
-      // Handle special methods
-      if (
-        prop === 'toJSON' ||
-        prop === 'toString' ||
-        prop === 'valueOf' ||
-        prop === Symbol.toPrimitive
-      ) {
-        return () => {
-          if (!cache.has('data')) {
-            const dataConverter = typeConverters?.get(query.collectionName);
-            cache.set(
-              'data',
-              dataConverter?.fromDB(entity.data) ?? entity.data
-            );
-          }
-          const data = cache.get('data');
-          return prop === 'toString' ? JSON.stringify(data) : data;
-        };
-      }
-
-      // Return cached value if exists
-      if (cache.has(propStr)) {
-        return cache.get(propStr);
-      }
-
-      // Lazy computation only when accessed
-      let value;
-      if (propStr === 'data') {
-        const dataConverter = typeConverters?.get(query.collectionName);
-        value = dataConverter?.fromDB(entity.data) ?? entity.data;
-      } else {
-        const inclusion = query.include?.[propStr];
-        if (inclusion) {
-          const subquery = inclusion.subquery;
-          const cardinality = inclusion.cardinality;
-          const subEntities = entity.subqueries[propStr];
-          if (cardinality === 'one') {
-            value = subEntities?.[0]
-              ? createLazyEntity(subEntities[0], subquery, typeConverters)
-              : null;
-          } else {
-            value = (subEntities || []).map((v) =>
-              createLazyEntity(v, subquery, typeConverters)
-            );
-          }
-        } else {
-          // Lazy compute dataKeys only when needed
-          const dataKeys = query.select ?? Object.keys(entity.data);
-          value = dataKeys.includes(propStr) ? entity.data[propStr] : undefined;
-        }
-      }
-
-      cache.set(propStr, value);
-      return value;
-    },
-
-    has(target, prop) {
-      const propStr = String(prop);
-      if (propStr === 'data') return true;
-      if (cache.has(propStr)) return true;
-
-      // Lazy check inclusion and data keys
-      if (query.include?.[propStr]) return true;
-      const dataKeys = query.select ?? Object.keys(entity.data);
-      return dataKeys.includes(propStr);
-    },
-
-    ownKeys(target) {
-      // Extremely lazy - only returns what's been accessed plus 'data'
-      const cachedKeys = Array.from(cache.keys());
-      return [
-        'data',
-        ...(query.include ? Object.keys(query.include) : []),
-        ...cachedKeys,
-      ].filter((key, idx, arr) => arr.indexOf(key) === idx);
-    },
-
-    getOwnPropertyDescriptor(target, prop) {
-      const propStr = String(prop);
-      // Lazy check if property exists
-      const hasProp =
-        propStr === 'data' ||
-        query.include?.[propStr] !== undefined ||
-        (query.select ?? Object.keys(entity.data)).includes(propStr) ||
-        cache.has(propStr);
-
-      if (hasProp) {
-        return {
-          enumerable: true,
-          configurable: true,
-          get: () => Reflect.get(target, prop, receiver),
-        };
-      }
-      return undefined;
-    },
-  };
-
-  return new Proxy({}, handler);
 }

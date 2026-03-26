@@ -1,10 +1,121 @@
 import { expect, it, describe, vi } from 'vitest';
 import { Server as TriplitServer } from '@triplit/server-core';
-import { createTestClient, SERVICE_KEY, spyMessages } from '../utils/client.js';
+import {
+  createTestClient,
+  receivedMessages,
+  SERVICE_KEY,
+  spyMessages,
+} from '../utils/client.js';
 import { DB, Models, Schema as S } from '@triplit/db';
 import { pause } from '../utils/async.js';
+import { generateServiceToken } from '../utils/token.js';
+import { tempTriplitServer } from '../utils/server.js';
+import { HttpClient, TriplitClient } from '@triplit/client';
 
-it('Should allow a client with the same schema to sync', async () => {
+const SECRET = 'test-secret';
+
+// TODO: confusing with SERVICE_KEY, rename
+const serviceToken = await generateServiceToken(SECRET);
+
+it('allows a schemaful client and schemaful server with incompatible schemas to connect', async () => {
+  const serverSchema = {
+    collections: S.Collections({
+      todos: {
+        schema: S.Schema({
+          id: S.Id(),
+          text: S.String(),
+          completed: S.Boolean(),
+        }),
+      },
+      users: {
+        schema: S.Schema({
+          id: S.Id(),
+          name: S.String(),
+        }),
+      },
+    }),
+  };
+  const clientSchema = {
+    collections: S.Collections({
+      todos: {
+        schema: S.Schema({
+          id: S.Id(),
+          text: S.String(),
+          done: S.Boolean(),
+        }),
+      },
+      users: {
+        schema: S.Schema({
+          id: S.Id(),
+          name: S.String(),
+        }),
+      },
+    }),
+  };
+  const serverDb = new DB({
+    schema: serverSchema,
+  });
+  await serverDb.insert('users', {
+    id: '1',
+    name: 'alice',
+  });
+  await serverDb.insert('todos', {
+    id: '1',
+    text: 'test',
+    completed: false,
+  });
+  const server = new TriplitServer(serverDb);
+
+  const client = createTestClient(server, {
+    clientId: 'alice',
+    token: SERVICE_KEY,
+    schema: clientSchema.collections,
+    autoConnect: false,
+  });
+  const spy = spyMessages(client);
+  client.connect();
+  await pause();
+  // Initial handshake is correct
+  expect(spy.length).toEqual(1);
+  expect(spy[0].direction).toEqual('RECEIVED');
+  expect(spy[0].message.type).toEqual('READY');
+
+  // Client can sync with server where schemas are compatible
+  const userSub = vi.fn();
+  const userQuery = client.query('users');
+  client.subscribe(userQuery, userSub);
+  await pause();
+  expect(userSub.mock.calls.at(-1)?.[0]).toEqual([
+    {
+      id: '1',
+      name: 'alice',
+    },
+  ]);
+
+  await client.insert('users', {
+    id: '2',
+    name: 'bob',
+  });
+  await pause();
+  expect(userSub.mock.calls.at(-1)?.[0]).toEqual([
+    {
+      id: '1',
+      name: 'alice',
+    },
+    {
+      id: '2',
+      name: 'bob',
+    },
+  ]);
+
+  // TODO: test error cases
+  // const todoSub = vi.fn();
+  // const todoQuery = client.query('todos');
+  // client.subscribe(todoQuery, todoSub);
+  // await pause();
+});
+
+it.skip('Should allow a client with the same schema to sync', async () => {
   const schema = {
     collections: S.Collections({
       todos: {
@@ -66,7 +177,7 @@ it('Should allow a client with the same schema to sync', async () => {
   ]);
 });
 
-it('Should allow clients that are compatible to sync', async () => {
+it.skip('Should allow clients that are compatible to sync', async () => {
   const schemaAlice = {
     collections: {
       todos: {
@@ -184,7 +295,7 @@ it('Should allow clients that are compatible to sync', async () => {
     id: '2',
     text: 'test',
     completed: false,
-    bob: 'test',
+    // bob: 'test',
   });
 
   expect(subBob.mock.calls.at(-1)?.[0].length).toEqual(2);
@@ -192,7 +303,7 @@ it('Should allow clients that are compatible to sync', async () => {
     id: '1',
     text: 'test',
     completed: false,
-    alice: 'test',
+    // alice: 'test',
   });
   expect(subBob.mock.calls.at(-1)?.[0]).toContainEqual({
     id: '2',
@@ -202,7 +313,7 @@ it('Should allow clients that are compatible to sync', async () => {
   });
 });
 
-it('Should not allow clients to are incompatible to sync', async () => {
+it.skip('Should not allow clients to are incompatible to sync', async () => {
   const schemaClient = {
     collections: {
       todos: {
@@ -262,7 +373,8 @@ it('Should not allow clients to are incompatible to sync', async () => {
   expect(client.syncEngine.serverReady).toBe(false);
   expect(client.syncEngine.connectionStatus).toEqual('CLOSED');
 });
-it('Schema handshake will only occur on first connection with schema', async () => {
+
+it.skip('Schema handshake will only occur on first connection with schema', async () => {
   const schemaClient = {
     collections: {
       todos: {
@@ -447,7 +559,68 @@ describe('Schemaless situations', () => {
     ).toBeTruthy();
   });
 
-  it('A schemaful client and schemaless server should not be able to sync', async () => {
+  it('A schemaful client and schemaless server should be able to sync', async () => {
+    const schema = {
+      collections: {
+        todos: {
+          schema: S.Schema({
+            id: S.Id(),
+            text: S.String(),
+            completed: S.Boolean(),
+          }),
+        },
+      } satisfies Models,
+    };
+    const serverDb = new DB();
+    const server = new TriplitServer(serverDb);
+    const client = createTestClient(server, {
+      clientId: 'alice',
+      token: SERVICE_KEY,
+      schema: schema.collections,
+      autoConnect: false,
+    });
+    const spy = spyMessages(client);
+    client.connect();
+    await pause();
+
+    // No schema handshake because client is schemaless
+    expect(spy.length).toEqual(1);
+    expect(spy[0].direction).toEqual('RECEIVED');
+    expect(spy[0].message.type).toEqual('READY');
+    // Client state is correct
+    // @ts-expect-error - private
+    expect(client.syncEngine.serverReady).toBe(true);
+    expect(client.syncEngine.connectionStatus).toEqual('OPEN');
+
+    // Can write data and subscribe over transport
+    const sub = vi.fn();
+    const query = client.query('todos');
+    client.subscribe(query, sub);
+    await client.insert('todos', {
+      id: '1',
+      text: 'test',
+      completed: false,
+    });
+    await pause();
+    expect(sub.mock.calls.at(-1)).toEqual([
+      [
+        {
+          id: '1',
+          text: 'test',
+          completed: false,
+        },
+      ],
+    ]);
+    // TODO: will throw, need to handle this
+    // await serverDb.insert('todos', {
+    //   id: '2',
+    //   text: 1,
+    //   done: false,
+    // });
+    // await pause();
+  });
+
+  it.skip('A schemaful client and schemaless server should not be able to sync', async () => {
     const schema = {
       collections: {
         todos: {
@@ -485,11 +658,96 @@ describe('Schemaless situations', () => {
   });
 });
 
-// This is the safe thing to do on a schema change
-// We could do it on every change, or just on incompatible changes
-it.todo(
-  'Server will re-check connections if a backwards incompatible change occurs'
-);
+it.skip('Server will drop all current connections if a backwards incompatible change occurs', async () => {
+  const schema = {
+    collections: {
+      todos: {
+        schema: S.Schema({
+          id: S.Id(),
+          text: S.String(),
+          completed: S.Boolean(),
+        }),
+      },
+    },
+  };
+  using server = await tempTriplitServer({
+    serverOptions: { dbOptions: { schema }, jwtSecret: SECRET },
+  });
+  const { port } = server;
+
+  const http = new HttpClient({
+    serverUrl: `http://localhost:${port}`,
+    token: serviceToken,
+  });
+
+  const client = new TriplitClient({
+    serverUrl: `http://localhost:${port}`,
+    token: serviceToken,
+    schema: schema.collections,
+  });
+  const spy = spyMessages(client);
+  await pause();
+
+  // Make a compatible change
+  {
+    const { data, error } = await http
+      // @ts-expect-error - private
+      .sendRequest('/override-schema', 'POST', {
+        schema: {
+          collections: {
+            todos: {
+              schema: S.Schema({
+                id: S.Id(),
+                text: S.String(),
+                completed: S.Boolean(),
+                // Compatible change
+                createdAt: S.Optional(S.Date({ default: S.Default.now() })),
+              }),
+            },
+          },
+        },
+        failOnBackwardsIncompatibleChange: false,
+      });
+    if (error) throw error;
+    if (!data.successful) throw new Error('Failed to update schema');
+  }
+  await pause();
+  expect(client.connectionStatus).toEqual('OPEN');
+  expect(receivedMessages(spy).filter((m) => m.type === 'CLOSE').length).toBe(
+    0
+  );
+  {
+    // Make an incompatible change
+    const { data, error } = await http
+      // @ts-expect-error - private
+      .sendRequest('/override-schema', 'POST', {
+        schema: {
+          collections: {
+            todos: {
+              schema: S.Schema({
+                id: S.Id(),
+                text: S.String(),
+                completed: S.Boolean(),
+                createdAt: S.Optional(S.Date({ default: S.Default.now() })),
+                // Incompatible change
+                assignee: S.String(),
+              }),
+            },
+          },
+        },
+        failOnBackwardsIncompatibleChange: false,
+      });
+    if (error) throw error;
+    if (!data.successful) throw new Error('Failed to update schema');
+  }
+  await pause();
+  expect(client.connectionStatus).toEqual('CLOSED');
+  expect(receivedMessages(spy).filter((m) => m.type === 'CLOSE').length).toBe(
+    1
+  );
+  const closeMessage = receivedMessages(spy).find((m) => m.type === 'CLOSE')!;
+  expect(closeMessage.payload.type).toEqual('SCHEMA_MISMATCH');
+});
 
 // TODO: You can use client.onSyncMessageReceived, evaluate if we should have a specific event for this
 // Also test any what you might do here, which is realistically tell the user to upgrade

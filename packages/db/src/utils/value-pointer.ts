@@ -1,14 +1,14 @@
+/**
+ * A helper class to get and set values in a nested object using a string path based on https://datatracker.ietf.org/doc/html/rfc6901 with some modifications to support Triplit path strings.
+ */
 export class ValuePointer {
   static Get(data: Record<string, any>, path: string | Iterable<string>): any {
     const keys = typeof path === 'string' ? path.split('.') : path;
     let current = data;
     for (const key of keys) {
-      if (Array.isArray(current)) {
-        current = current.map((item) => item[key]);
-      } else {
-        if (current[key] === undefined) return undefined;
-        current = current[key];
-      }
+      if (current === undefined) return undefined;
+      if (current[key] === undefined) return undefined;
+      current = current[key];
     }
     return current;
   }

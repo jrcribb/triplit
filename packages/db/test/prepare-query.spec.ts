@@ -1,5 +1,5 @@
 import { it, describe, expect } from 'vitest';
-import { prepareQuery } from '../src/prepare-query.js';
+import { prepareQuery } from '../src/query/prepare-query.js';
 import { Schema as S } from '../src/schema/builder.js';
 import {
   InvalidQueryAfterError,
@@ -393,7 +393,7 @@ describe('include', () => {
         applyPermission: undefined,
       }
     );
-    expect(query.include).toEqual({});
+    expect(query.include).toBeUndefined();
   });
 
   it('accepts subqueries', () => {
@@ -768,7 +768,6 @@ describe('where', () => {
       )
     ).toThrow(InvalidFilterError);
   });
-  it.todo('appends rule filters if rules are present in the schema', () => {});
   it('appends permissions filters if permissions are present in the schema', () => {
     const query = prepareQuery(
       {
@@ -843,6 +842,49 @@ describe('where', () => {
       // All cases should have the denial filter appended
       expect(query.where).toEqual([false]);
     }
+  });
+
+  // Important for selective public access
+  it('replaces query variables in permission filters', () => {
+    const schema = S.Collections({
+      test: {
+        schema: S.Schema({
+          id: S.Id(),
+        }),
+        permissions: {
+          authenticated: {
+            read: {
+              filter: [['id', '=', '$query.testId']],
+            },
+          },
+        },
+      },
+    });
+    const query = prepareQuery(
+      {
+        collectionName: 'test',
+        vars: {
+          testId: 'test',
+        },
+      },
+      schema,
+      {},
+      {
+        vars: {},
+        roles: [
+          {
+            key: 'authenticated',
+            roleVars: {
+              testId: 'test',
+            },
+          },
+        ],
+      },
+      {
+        applyPermission: 'read',
+      }
+    );
+    expect(query.where).toEqual([['id', '=', 'test']]);
   });
 
   describe('boolean filters', () => {
@@ -1029,21 +1071,49 @@ describe('where', () => {
         ['name', '=', '$1.var2'],
       ]);
     });
-    it('rejects variables that are not defined', () => {
-      expect(() =>
-        prepareQuery(
-          {
-            collectionName: 'users',
-            where: [['name', '=', '$global.dne']],
+    it('can opt out of static variable replacement', () => {
+      const query = prepareQuery(
+        {
+          collectionName: 'users',
+          where: [
+            ['name', '=', '$global.var1'],
+            // Unscoped vars default to relational to parent ($1)
+            ['name', '=', '$unscoped'],
+            ['name', '=', '$1.var2'],
+          ],
+        },
+        undefined,
+        {
+          $global: {
+            var1: 'test',
           },
-          undefined,
-          {},
-          undefined,
-          {
-            applyPermission: undefined,
-          }
-        )
-      ).toThrow(SessionVariableNotFoundError);
+        },
+        undefined,
+        {
+          applyPermission: undefined,
+          replaceStaticVariables: false,
+        }
+      );
+      expect(query.where).toEqual([
+        ['name', '=', '$global.var1'],
+        ['name', '=', '$1.unscoped'],
+        ['name', '=', '$1.var2'],
+      ]);
+    });
+    it('Naturally resolves filters with undefined variable paths', () => {
+      const query = prepareQuery(
+        {
+          collectionName: 'users',
+          where: [['name', '=', '$global.dne']],
+        },
+        undefined,
+        {},
+        undefined,
+        {
+          applyPermission: undefined,
+        }
+      );
+      expect(query.where).toEqual([['name', '=', undefined]]);
     });
     it('rejects filters to nonexistent attributes', () => {
       const schema = USER_SCHEMA;
@@ -1150,6 +1220,31 @@ describe('where', () => {
           },
         },
       ]);
+    });
+
+    /**
+     * Temporarily prefixing all set operations to make them unique in the query engine
+     * This may be a long term solution, but it is okay to refactor the representation if needed
+     */
+    it('transforms Set operators to internal representation', () => {
+      const schema = S.Collections({
+        users: {
+          schema: S.Schema({ id: S.Id(), friends: S.Set(S.String()) }),
+        },
+      });
+      const query = prepareQuery(
+        {
+          collectionName: 'users',
+          where: [['friends', '=', 'test']],
+        },
+        schema,
+        {},
+        undefined,
+        {
+          applyPermission: undefined,
+        }
+      );
+      expect(query.where).toEqual([['friends', 'SET_=', 'test']]);
     });
 
     it.todo('validates and transforms value from user input to db value');
@@ -1343,8 +1438,8 @@ describe('where', () => {
                 collectionName: 'b',
                 where: [
                   ['id', '=', '$1.b_id'],
-                  // still querying that aProp1 is greater
                   ['bProp1', '<', '$1.aProp1'],
+                  // still querying that aProp1 is greater
                 ],
               },
             },
@@ -1478,8 +1573,10 @@ describe('order', () => {
             name: S.String(),
           }),
           set: S.Set(S.String(), { default: S.Default.Set.empty() }),
-          rel: S.RelationById('test2', '$1.id'),
         }),
+        relationships: {
+          rel: S.RelationById('test2', '$1.id'),
+        },
       },
       test2: {
         schema: S.Schema({

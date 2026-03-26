@@ -1,5 +1,44 @@
 # @triplit/utilities
 
+## 0.0.15
+
+### Patch Changes
+
+- 9308b204: add support to json attributes in json schema converter
+
+## 0.0.14
+
+### Patch Changes
+
+- a4c00766: Move RN helpers to @triplit/react-native
+
+## 0.0.13
+
+### Patch Changes
+
+- 8fc1e28c: handle cjs and esm envs for metro config helpers
+
+## 0.0.12
+
+### Patch Changes
+
+- 5354b7d2: add metro config helpers to utilities
+
+## 0.0.11
+
+### Patch Changes
+
+- Updated dependencies [e9395371]
+  - @triplit/db@1.0.10
+
+## 0.0.10
+
+### Patch Changes
+
+- Updated dependencies [0f8a4a4a]
+- Updated dependencies [a7c98bcd]
+  - @triplit/db@1.0.9
+
 ## 0.0.9
 
 ### Patch Changes

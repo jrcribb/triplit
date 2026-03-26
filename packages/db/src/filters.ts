@@ -1,18 +1,17 @@
-import { InvalidFilterError, TriplitError } from './errors.js';
-import { isValueVariable } from './variables.js';
-import { DBEntity } from './types.js';
+import { InvalidFilterError } from './errors.js';
+import {
+  DBEntity,
+  PreparedFilterGroup,
+  PreparedSubQueryFilter,
+  PreparedWhere,
+  PreparedWhereFilter,
+  QueryFilterGroup,
+} from './types.js';
 import { ValuePointer } from './utils/value-pointer.js';
 import { EntityStoreQueryEngine } from './query-engine.js';
-import { asyncIterEvery, asyncIterSome } from './utils/iterators.js';
-import {
-  getAttributeFromSchema,
-  isTraversalRelationship,
-} from './schema/utilities.js';
-import { DBSchema } from './db.js';
 import { logger } from '@triplit/logger';
 import {
   AndFilterGroup,
-  CollectionQuery,
   FilterGroup,
   FilterStatement,
   OrFilterGroup,
@@ -24,29 +23,32 @@ import {
 } from './types.js';
 import {
   CollectionNameFromModels,
-  hasNoValue,
   ModelRelationshipPaths,
   Models,
+  SET_OP_PREFIX,
 } from './schema/index.js';
+import { isValueVariable } from './variables.js';
+import { compareValue } from './codec.js';
+import { hasNoValue } from './utils/value.js';
 
 export async function satisfiesFilters(
-  entity: any,
-  filters: QueryWhere,
+  entity: DBEntity,
+  filters: PreparedWhere,
   queryEngine: EntityStoreQueryEngine
 ): Promise<boolean> {
   let isSatisfied = true;
-  for (const filter of filters) {
+  const priorityOrder = getFilterPriorityOrder(filters);
+  for (const idx of priorityOrder) {
+    const filter = filters[idx];
     isSatisfied = await satisfiesFilter(entity, filter, queryEngine);
-    if (!isSatisfied) {
-      break;
-    }
+    if (!isSatisfied) break; // Short-circuit if any filter fails
   }
   return isSatisfied;
 }
 
 export async function satisfiesFilter(
-  entity: any,
-  filter: WhereFilter,
+  entity: DBEntity,
+  filter: PreparedWhereFilter,
   queryEngine: EntityStoreQueryEngine
 ): Promise<boolean> {
   if (isFilterGroup(filter)) {
@@ -61,26 +63,19 @@ export async function satisfiesFilter(
       return isSatisfied;
     }
   } else if (isSubQueryFilter(filter)) {
-    const result = await queryEngine.executeRelationalQuery(filter.exists, {
+    const result = await queryEngine.fetch(filter.exists, {
       entityStack: [entity],
     });
     if (Array.isArray(result)) return result.length > 0;
     return !!result;
   } else {
-    return satisfiesNonRelationalFilter(
-      entity.collection,
-      entity,
-      filter,
-      queryEngine.schema
-    );
+    return satisfiesNonRelationalFilter(entity, filter);
   }
 }
 
 export function satisfiesNonRelationalFilter(
-  collectionName: string,
   entity: DBEntity,
-  filter: WhereFilter,
-  schema?: DBSchema,
+  filter: PreparedWhereFilter,
   ignoreSubQueries = false
 ): boolean {
   if (isBooleanFilter(filter)) return filter;
@@ -88,12 +83,12 @@ export function satisfiesNonRelationalFilter(
     const { mod, filters } = filter;
     if (mod === 'and') {
       return filters.every((f) =>
-        satisfiesNonRelationalFilter(collectionName, entity, f, schema)
+        satisfiesNonRelationalFilter(entity, f, ignoreSubQueries)
       );
     }
     if (mod === 'or') {
       return filters.some((f) =>
-        satisfiesNonRelationalFilter(collectionName, entity, f, schema)
+        satisfiesNonRelationalFilter(entity, f, ignoreSubQueries)
       );
     }
     return false;
@@ -107,94 +102,79 @@ export function satisfiesNonRelationalFilter(
       `Subquery filters should be filtered out before this point, found ${filter}`
     );
   }
-
-  if (isRelationshipExistsFilter(filter)) {
-    throw new Error('Untranslated exists filter');
-  }
-  return satisfiesFilterStatement(
-    { collectionName, data: entity },
-    filter,
-    schema
-  );
+  return satisfiesFilterStatement(entity, filter);
 }
 
-function satisfiesFilterStatement(
-  entity: {
-    collectionName: string;
-    data: DBEntity;
-  },
-  filter: FilterStatement,
-  schema?: DBSchema
-) {
+function satisfiesFilterStatement(entity: DBEntity, filter: FilterStatement) {
   const [path, op, filterValue] = filter;
-  const dataType = schema?.collections
-    ? getAttributeFromSchema(
-        path.split('.'),
-        schema?.collections,
-        entity.collectionName
-      )
-    : undefined;
-
-  const value = ValuePointer.Get(entity.data, path);
-
-  if (isTraversalRelationship(dataType)) {
-    throw new TriplitError(
-      'Cannot apply filter. Provided path did not resolve to a valid attribute.'
-    );
-  }
-
-  // If we have a schema handle specific cases
-  if (dataType && dataType.type === 'set')
-    return satisfiesSetFilter(value, op, filterValue);
-
-  // Use register as default
-  return satisfiesRegisterFilter(value, op, filterValue);
+  const value = ValuePointer.Get(entity, path);
+  return evaluateFilterStatement(value, op, filterValue);
 }
 
-export function satisfiesSetFilter(
-  setValue: Record<string, boolean>,
-  op: string, // Operator,
-  filterValue: any
-) {
-  if (op === 'has') {
-    if (hasNoValue(setValue)) return false;
-    const filteredSet = Object.entries(setValue).filter(([_v, inSet]) => inSet);
-    return filteredSet.some(([v]) => v === filterValue);
-  } else if (op === '!has') {
-    if (hasNoValue(setValue)) return true;
-    const filteredSet = Object.entries(setValue).filter(([_v, inSet]) => inSet);
-    return filteredSet.every(([v]) => v !== filterValue);
-  } else if (op === 'isDefined') {
-    return !!filterValue ? !hasNoValue(setValue) : hasNoValue(setValue);
-  } else {
-    if (hasNoValue(setValue)) return false;
-    const filteredSet = Object.entries(setValue).filter(([_v, inSet]) => inSet);
-    return filteredSet.some(([v]) =>
-      satisfiesRegisterFilter(v, op, filterValue)
-    );
-  }
-}
-
-export function satisfiesRegisterFilter(
+function evaluateFilterStatement(
   value: any,
-  op: string, //Operator,
+  op: string,
   filterValue: any
-) {
+): boolean {
+  /**
+   * As a temporary solution, we will prepend all set operations with SET_ in prepareQuery
+   * This should indicate that we are dealing with a set
+   * This can be refactored in the future as this is all internal handling of operators
+   */
+  if (op.startsWith(SET_OP_PREFIX)) {
+    // Valid values are { key: boolean }, null, or undefined
+    if (typeof value !== 'object' && value !== null && value !== undefined)
+      throw new InvalidFilterError(
+        `The operator requires a set value, but got ${value}`
+      );
+    const setOp = op.slice(SET_OP_PREFIX.length);
+    if (setOp === 'has') {
+      if (hasNoValue(value)) return false;
+      for (const key of Object.keys(value)) {
+        if (!value[key]) continue;
+        const deserialized = inferSetValue(key, filterValue);
+        if (deserialized === filterValue) return true;
+      }
+      return false;
+    } else if (setOp === '!has') {
+      if (hasNoValue(value)) return true;
+      for (const key of Object.keys(value)) {
+        if (!value[key]) continue;
+        const deserialized = inferSetValue(key, filterValue);
+        if (deserialized === filterValue) return false;
+      }
+      return true;
+    } else if (setOp === 'isDefined') {
+      return !!filterValue ? !hasNoValue(value) : hasNoValue(value);
+    } else {
+      if (hasNoValue(value)) return false;
+      for (const key of Object.keys(value)) {
+        if (!value[key]) continue;
+        const deserialized = inferSetValue(key, filterValue);
+        if (evaluateFilterStatement(deserialized, setOp, filterValue))
+          return true;
+      }
+      return false;
+    }
+  }
+
+  // Handle primitive value operations
   switch (op) {
     case '=':
       // Empty equality check
       if (hasNoValue(value) && hasNoValue(filterValue)) return true;
-      return value === filterValue;
+      // Coerce null because undefined is not a valid value (maybe should be in compareValue?)
+      return compareValue(value ?? null, filterValue ?? null) === 0;
     case '!=':
       // Empty not-equality check
       if (hasNoValue(value) && hasNoValue(filterValue)) return false;
-      return value !== filterValue;
+      return compareValue(value ?? null, filterValue ?? null) !== 0;
     case '>':
       // Null is not greater than anything
       if (hasNoValue(value)) return false;
       // Null is less than everything
       if (hasNoValue(filterValue)) return true;
-      return value > filterValue;
+      return compareValue(value, filterValue) > 0;
     case '>=':
       // Empty equality check
       if (hasNoValue(value) && hasNoValue(filterValue)) return true;
@@ -202,13 +182,13 @@ export function satisfiesRegisterFilter(
       if (hasNoValue(value)) return false;
       // Null is less than everything
       if (hasNoValue(filterValue)) return true;
-      return value >= filterValue;
+      return compareValue(value, filterValue) >= 0;
     case '<':
       // Null is not less than anything
       if (hasNoValue(filterValue)) return false;
       // Null is less than everything
       if (hasNoValue(value)) return true;
-      return value < filterValue;
+      return compareValue(value, filterValue) < 0;
     case '<=':
       // Empty equality check
       if (hasNoValue(value) && hasNoValue(filterValue)) return true;
@@ -216,7 +196,7 @@ export function satisfiesRegisterFilter(
       if (hasNoValue(filterValue)) return false;
       // Null is less than everything
       if (hasNoValue(value)) return true;
-      return value <= filterValue;
+      return compareValue(value, filterValue) <= 0;
 
     //TODO: move regex initialization outside of the scan loop to improve performance
     case 'like':
@@ -242,8 +222,10 @@ export function satisfiesRegisterFilter(
       // [null, 'in', ['a', 'b']] false, TODO: could be true if [null, 'in', [null]]?
       // ['a', 'in', null] false
       if (hasNoValue(value) || hasNoValue(filterValue)) return false;
-      if (filterValue instanceof Array) {
-        return new Set(filterValue).has(value);
+      if (filterValue instanceof Set) {
+        return filterValue.has(value);
+      } else if (filterValue instanceof Array) {
+        return filterValue.includes(value);
       } else if (filterValue instanceof Object) {
         return !!filterValue[value];
       } else {
@@ -254,8 +236,10 @@ export function satisfiesRegisterFilter(
       // [null, 'nin', ['a', 'b']] true
       // ['a', 'nin', null] true
       if (hasNoValue(value) || hasNoValue(filterValue)) return true;
-      if (filterValue instanceof Array) {
-        return !new Set(filterValue).has(value);
+      if (filterValue instanceof Set) {
+        return !filterValue.has(value);
+      } else if (filterValue instanceof Array) {
+        return filterValue.includes(value);
       } else if (filterValue instanceof Object) {
         return !filterValue[value];
       } else {
@@ -267,6 +251,15 @@ export function satisfiesRegisterFilter(
     default:
       throw new InvalidFilterError(`The operator ${op} is not recognized.`);
   }
+}
+
+// This is fine for now, but we really need the encoding information to properly filter sets
+// Or in prepare query ensure that values in a filter are valid for the type + operator
+// TODO: improve our handling of set filters, we would like to avoid invoking the schema, but just knowing something is a set is not enough information
+function inferSetValue(serialized: string, value: any) {
+  if (typeof value === 'boolean') return serialized === 'true';
+  if (typeof value === 'number') return parseFloat(serialized);
+  return serialized;
 }
 
 function ilike(text: string, pattern: string): boolean {
@@ -286,7 +279,7 @@ function ilike(text: string, pattern: string): boolean {
 }
 
 export function isFilterStatement(
-  filter: WhereFilter
+  filter: WhereFilter | PreparedWhereFilter
 ): filter is FilterStatement {
   return (
     filter instanceof Array &&
@@ -306,13 +299,19 @@ export function isIdFilterEqualityStatement(
   return isIdFilter(filter) && (filter[1] === '=' || filter[1] === 'in');
 }
 
-export function isFilterGroup(filter: WhereFilter): filter is FilterGroup {
+export function isFilterGroup(
+  filter: PreparedWhereFilter
+): filter is PreparedFilterGroup;
+export function isFilterGroup(filter: WhereFilter): filter is QueryFilterGroup;
+export function isFilterGroup(filter: any) {
   return filter instanceof Object && 'mod' in filter;
 }
 
 export function isSubQueryFilter(
-  filter: WhereFilter
-): filter is SubQueryFilter {
+  filter: PreparedWhereFilter
+): filter is PreparedSubQueryFilter;
+export function isSubQueryFilter(filter: WhereFilter): filter is SubQueryFilter;
+export function isSubQueryFilter(filter: any) {
   return (
     filter instanceof Object &&
     'exists' in filter &&
@@ -330,7 +329,9 @@ export function isRelationshipExistsFilter(
   );
 }
 
-export function isBooleanFilter(filter: WhereFilter): filter is boolean {
+export function isBooleanFilter(
+  filter: WhereFilter | PreparedWhereFilter
+): filter is boolean {
   return typeof filter === 'boolean';
 }
 
@@ -344,8 +345,32 @@ export function isWhereFilter(filter: any): filter is WhereFilter {
   );
 }
 
+/**
+ * Returns true if the filter can be used in an index sorted by the property. It should be a filter statement with a some range scan operator.
+ */
+export function isIndexableFilter(
+  filter: PreparedWhereFilter
+): filter is FilterStatement {
+  if (!isFilterStatement(filter)) return false;
+  const [prop, op, val] = filter;
+  if (!isValueVariable(val)) return false;
+  if (!['=', '<', '<=', '>', '>=', '!='].includes(op)) return false;
+  // We could also confirm that the data type is a primitive, but checking the operator of a prepared query should be enough
+  // if (schema) {
+  //   const attribute = getAttributeFromSchema(
+  //     prop.split('.'),
+  //     schema,
+  //     query.collectionName
+  //   );
+  //   if (!attribute) return false;
+  //   if (isTraversalRelationship(attribute)) return false;
+  //   if (!isPrimitiveType(attribute)) return false;
+  // }
+  return true;
+}
+
 function determineFilterType(
-  filter: WhereFilter
+  filter: PreparedWhereFilter
 ): 'boolean' | 'basic' | 'group' | 'relational' {
   if (isFilterStatement(filter)) return 'basic';
   if (isSubQueryFilter(filter)) return 'relational';
@@ -364,7 +389,7 @@ function determineFilterType(
  * 4. Relational filters (subqueries, will take the longest to execute)
  */
 export function getFilterPriorityOrder(
-  where: CollectionQuery['where']
+  where: PreparedWhere | undefined
 ): number[] {
   if (!where) return [];
   const basicFilters = [];
@@ -402,19 +427,28 @@ export function getFilterPriorityOrder(
 export function or<
   M extends Models<M> = Models,
   CN extends CollectionNameFromModels<M> = CollectionNameFromModels<M>,
-  W extends QueryWhere<M, CN> = QueryWhere<M, CN>,
+  W extends QueryWhere<M, CN> | PreparedWhere =
+    | QueryWhere<M, CN>
+    | PreparedWhere,
 >(where: W) {
-  return { mod: 'or' as const, filters: where } satisfies OrFilterGroup<M, CN>;
+  return { mod: 'or' as const, filters: where } satisfies OrFilterGroup<
+    M,
+    CN,
+    W
+  >;
 }
 
 export function and<
   M extends Models<M> = Models,
   CN extends CollectionNameFromModels<M> = CollectionNameFromModels<M>,
-  W extends QueryWhere<M, CN> = QueryWhere<M, CN>,
+  W extends QueryWhere<M, CN> | PreparedWhere =
+    | QueryWhere<M, CN>
+    | PreparedWhere,
 >(where: W) {
   return { mod: 'and' as const, filters: where } satisfies AndFilterGroup<
     M,
-    CN
+    CN,
+    W
   >;
 }
 
@@ -449,11 +483,21 @@ export function exists(relationship: any, ext: any = {}) {
  * @param someFunction
  * @returns
  */
-export function someFilterStatements(
+export function someFilterStatementsFlat(
+  statements: PreparedWhere,
+  someFunction: (
+    statement: Exclude<PreparedWhereFilter, PreparedFilterGroup>
+  ) => boolean
+): boolean;
+export function someFilterStatementsFlat(
   statements: QueryWhere,
-  someFunction: (statement: WhereFilter) => boolean
+  someFunction: (statement: Exclude<WhereFilter, FilterGroup>) => boolean
+): boolean;
+export function someFilterStatementsFlat(
+  statements: any,
+  someFunction: (statement: any) => boolean
 ): boolean {
-  for (const statement of filterStatementIterator(statements)) {
+  for (const statement of filterStatementIteratorFlat(statements)) {
     if (someFunction(statement)) return true;
   }
   return false;
@@ -464,24 +508,34 @@ export function someFilterStatements(
  * but not within subqueries
  * @param statements
  */
-export function* filterStatementIterator(
+export function filterStatementIteratorFlat(
+  statements: PreparedWhere
+): Generator<Exclude<PreparedWhereFilter, PreparedFilterGroup>>;
+export function filterStatementIteratorFlat(
   statements: QueryWhere
-): Generator<WhereFilter> {
+): Generator<Exclude<WhereFilter, FilterGroup>>;
+export function* filterStatementIteratorFlat(statements: any) {
   for (const statement of statements) {
     if (isFilterGroup(statement)) {
-      yield* filterStatementIterator(statement.filters);
+      yield* filterStatementIteratorFlat(statement.filters);
     } else {
       yield statement;
     }
   }
 }
 
+export type StaticFilter =
+  | boolean
+  | FilterStatement
+  | FilterGroup<Models, CollectionNameFromModels<Models>, StaticFilter[]>;
 /**
  * Returns true if the filter has no relational components
  */
 export function isStaticFilter(
-  filter: WhereFilter
-): filter is boolean | FilterStatement | FilterGroup {
+  filter: PreparedWhereFilter
+): filter is StaticFilter;
+export function isStaticFilter(filter: WhereFilter): filter is StaticFilter;
+export function isStaticFilter(filter: any) {
   if (isBooleanFilter(filter)) return true;
   if (isFilterStatement(filter)) return true;
   if (isFilterGroup(filter)) {

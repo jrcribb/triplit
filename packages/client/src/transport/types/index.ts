@@ -8,7 +8,12 @@ import { ClientSyncMessage, CloseReason } from '../../@triplit/types/sync.js';
  * - CLOSING: The connection is in the process of closing
  * - CLOSED: The connection is closed or couldn't be opened
  */
-export type ConnectionStatus = 'CONNECTING' | 'OPEN' | 'CLOSING' | 'CLOSED';
+export type ConnectionStatus =
+  | 'UNINITIALIZED'
+  | 'CONNECTING'
+  | 'OPEN'
+  | 'CLOSING'
+  | 'CLOSED';
 
 export interface SyncTransport {
   isOpen: boolean;
@@ -26,6 +31,9 @@ export interface SyncTransport {
    */
   close(reason?: CloseReason): void;
   onClose(callback: (ev: any) => void): void;
+  /**
+   * @deprecated Triplit Client now manages its own connection state, so this is no longer needed.
+   */
   onConnectionChange(callback: (state: ConnectionStatus) => void): void;
   onError(callback: (ev: any) => void): void;
   onMessage(callback: (message: any) => void): void;

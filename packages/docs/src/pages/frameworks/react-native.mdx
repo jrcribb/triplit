@@ -2,7 +2,7 @@
 description: Learn how configure React Native with Expo to use Triplit in your mobile app.
 ---
 
-import { Tabs, Tab, Callout } from 'nextra-theme-docs';
+import { Tabs, Tab, Callout, Steps } from 'nextra-theme-docs';
 
 # React Native
 
@@ -12,7 +12,8 @@ React Native is the best way to run Triplit on a mobile app. The hooks available
 
 If you are using Expo to setup your React Native project, you can follow these steps to get Triplit up and running.
 
-### 1. Create an Expo project and install Triplit
+<Steps>
+### Create an Expo project and install Triplit
 
 Create your expo project:
 
@@ -26,79 +27,150 @@ For more information on setting up an Expo project with typescript see the [Expo
 
 Next, install Triplit's packages:
 
+<Callout type="warning">
+  There is currently a bug in how Triplit handles optional dependencies in
+  Metro, so you will need to install `uuidv7` as a dependency in your project.
+  This is a temporary workaround until the bug is fixed.
+</Callout>
+
 <Tabs items={['npm', 'pnpm', 'yarn', 'bun']}>
   <Tab>
-    ```bash
-    npm i @triplit/client @triplit/react
+    ```bash copy
+    npm i @triplit/client @triplit/react-native uuidv7
     npm i @triplit/cli --save-dev
     ```
   </Tab>
   <Tab>
-    ```bash
-    pnpm add @triplit/client @triplit/react
+    ```bash copy
+    pnpm add @triplit/client @triplit/react-native uuidv7
     pnpm add @triplit/cli --save-dev
     ```
 
   </Tab>
   <Tab>
-    ```bash
-    yarn add @triplit/client @triplit/react
+    ```bash copy
+    yarn add @triplit/client @triplit/react-native uuidv7
     yarn add @triplit/cli --dev
     ```
 
   </Tab>
   <Tab>
-    ```bash
-    bun add @triplit/client @triplit/react
+    ```bash copy
+    bun add @triplit/client @triplit/react-native uuidv7
     bun add @triplit/cli --dev
     ```
     
     </Tab>
 </Tabs>
 
-### 2. Update metro.config.js
+### Configure polyfills
 
-Some Triplit packages use [Package Exports](https://nodejs.org/docs/latest-v18.x/api/packages.html#package-entry-points), which Metro does not yet support.
+Triplit was originally built to run in web browsers, so a few APIs are used in some core packages and dependencies that are not in the ECMAScript spec that Hermes implements. So you will need to add some polyfills to your project.
 
-<Callout type="info" emoji="ℹ️">
-  Metro does have a configuration option
-  [unstable_enablePackageExports](https://metrobundler.dev/docs/configuration/#unstable_enablepackageexports-experimental)
-  but we found it broke other parts of the package resolution process.
-</Callout>
+These polyfills should be imported or implemented in your project's entry file so they can be run as early as possible. Typically this is your `index.js` file. If you are using Expo Router see this [thread](https://github.com/expo/expo/discussions/25122) on creating and using an `index.js` file to add polyfills.
 
-To handle these imports, you will need to customize the Metro bundler. If you have not already created a `metro.config.js` file, please see the Expo docs on properly [configuring Metro](https://docs.expo.dev/guides/customizing-metro/). Once you have created a `metro.config.js` file, you can add the following code to resolve the exports from the Triplit packages:
+```javascript
+// Import polyfills relevant to Triplit
+import '@triplit/react-native/polyfills';
+// ... other polyfills
+
+// If using Expo Router:
+import 'expo-router/entry';
+
+// The rest of your entry file
+```
+
+### Use React hooks
+
+Triplit's [React](/frameworks/react) hooks are also exported via `@triplit/react-native`, so you can use them in your components just like you would in a web app.
+
+```typescript
+import { useQuery } from '@triplit/react-native';
+
+const { results } = useQuery(client, client.query('todos'));
+```
+
+### Additional configuration
+
+#### Update metro.config.js (metro \< `0.82.0`)
+
+If you are using a Metro version before `0.82.0`, you will need to add a custom Metro config to your project. This is encompasses most users using Expo 52 and below. This is because Triplit uses some features that are not supported by the Metro bundler, notably the [exports](https://nodejs.org/docs/latest-v18.x/api/packages.html#package-entry-points) field.
+
+To determine the version of Metro that is installed, run the following command:
+
+<Tabs items={['npm', 'pnpm', 'yarn', 'bun']} >
+  <Tab>
+    ```bash copy
+    npm list metro
+    ```
+  </Tab>
+  <Tab>
+    ```bash copy
+    pnpm list metro
+    ```
+
+  </Tab>
+  <Tab>
+    ```bash copy
+    yarn list --pattern metro
+    ```
+
+  </Tab>
+  <Tab>
+    ```bash copy
+    bun pm ls metro --json
+    ```
+
+    </Tab>
+
+</Tabs>
+
+Below is an example output with version `0.82.3` installed:
+
+```bash {7}
+$ npm list metro
+my-app@0.0.1 /path/to/my-app
+└─┬ react-native@0.79.2
+  └─┬ @react-native/community-cli-plugin@0.79.2
+    ├─┬ metro-config@0.82.3
+    │ └── metro@0.82.3 deduped
+    └─┬ metro@0.82.3
+      └─┬ metro-transform-worker@0.82.3
+        └── metro@0.82.3 deduped
+```
+
+If you are using a version prior to `0.82.0`, Triplit provides a utility for generating a custom Metro config that will resolve these exports. If you have not already created a `metro.config.js` file, please see the Expo docs on properly [configuring Metro](https://docs.expo.dev/guides/customizing-metro/). Once you have created a `metro.config.js` file, you can add the following code to properly resolve Triplit packages:
 
 ```javascript
 const { getDefaultConfig } = require('expo/metro-config');
-const path = require('path');
 const config = getDefaultConfig(__dirname);
+const { triplitMetroConfig } = require('@triplit/react-native/metro-config');
 
-// additional configuration steps
+module.exports = triplitMetroConfig(config);
+```
 
-// Resolve exports for these Triplit packages
-const packageExportsDependencies = ['@triplit/db', '@triplit/logger'];
-// Custom resolver function
-function customResolver(context, moduleName, platform) {
-  for (const dep of packageExportsDependencies) {
-    const prefix = dep + '/';
-    if (moduleName.startsWith(prefix)) {
-      const suffix = moduleName.replace(prefix, '');
-      const basePath = path.dirname(require.resolve(dep));
-      const filePath = path.join(basePath, `${suffix}.js`);
-      return {
-        filePath: filePath,
-        type: 'sourceFile',
-      };
-    }
-  }
+If you would like more control over dependency resolution, you can import `triplitMetroResolveRequest` and use it inside a custom resolver.
+
+```javascript
+const { getDefaultConfig } = require('expo/metro-config');
+const config = getDefaultConfig(__dirname);
+const {
+  triplitMetroResolveRequest,
+} = require('@triplit/react-native/metro-config');
+
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  const triplitResult = triplitMetroResolveRequest(moduleName);
+  if (triplitResult) return triplitResult;
+
+  // Additional resolver logic
+
   return context.resolveRequest(context, moduleName, platform);
-}
-config.resolver.resolveRequest = customResolver;
+};
 
 module.exports = config;
 ```
 
-### 3. Configure Babel (optional)
+#### Configure Babel (web only)
 
 If you are building for the web, you'll need to update a babel configuration file. At the root of your Expo project, create a `babel.config.js` file with the following content:
 
@@ -114,33 +186,17 @@ module.exports = function (api) {
 };
 ```
 
-### 4. Configure polyfills
+#### Configure a development build
 
-Triplit was originally built to run in web browsers, so a few APIs are used in some core packages and dependencies that are not in the ECMAScript spec that Hermes implements. So you will need to add some polyfills to your project. We list some polyfills below, but you may use other packages or write your own.
+If you are using Expo Go, you can skip this step. However, if you are building a custom [development build](https://docs.expo.dev/develop/development-builds/introduction/) of your app, you will also need to perform the following steps to ensure Triplit works correctly:
 
-- crypto.getRandomValues: [react-native-get-random-values](https://www.npmjs.com/package/react-native-get-random-values)
-- URL: [react-native-url-polyfill](https://www.npmjs.com/package/react-native-url-polyfill)
-- atob / btoa: [@react-native-anywhere/polyfill-base64](https://www.npmjs.com/package/@react-native-anywhere/polyfill-base64)
-- EventTarget: [event-target-polyfill](https://www.npmjs.com/package/event-target-polyfill)
-- hasown: [hasown](https://www.npmjs.com/package/hasown)
-- AsyncIterator: [@azure/core-asynciterator-polyfill](https://www.npmjs.com/package/@azure/core-asynciterator-polyfill)
+1. Install `expo-crypto`
 
-These polyfills should be imported or implemented in your project's entry file so they can be run as early as possible. Typically this is your `index.js` file. If you are using Expo Router see this [thread](https://github.com/expo/expo/discussions/25122) on creating and using an `index.js` file to add polyfills.
-
-```javascript
-import 'react-native-get-random-values';
-import 'react-native-url-polyfill/auto';
-import '@react-native-anywhere/polyfill-base64';
-import 'event-target-polyfill';
-import 'hasown';
-import '@azure/core-asynciterator-polyfill';
-// ... other polyfills
-
-// If using Expo Router:
-import 'expo-router/entry';
-
-// The rest of your entry file
+```bash
+npx expo install expo-crypto
 ```
+
+</Steps>
 
 ### Local development
 

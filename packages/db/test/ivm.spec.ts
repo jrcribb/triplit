@@ -1,21 +1,22 @@
+import { describe, test, vi, expect, beforeEach, afterEach } from 'vitest';
+import { DB } from '../src/db.js';
 import {
-  describe,
-  test,
-  vi,
-  expect,
-  beforeEach,
-  afterAll,
-  afterEach,
-} from 'vitest';
-import { DB, DBSchema } from '../src/db.js';
-import { IVM } from '../src/ivm.js';
+  createQueryWithExistsAddedToIncludes,
+  createQueryWithRelationalOrderAddedToIncludes,
+  diffChanges,
+  queryResultsToChanges,
+} from '../src/ivm/index.js';
 import { Schema as S } from '../src/schema/builder.js';
-import { CollectionQuery, OrderStatement, QueryOrder } from '../src/query.js';
-import { Models } from '../src/schema/types/index.js';
-import { deterministicShuffle } from './utils/seeding.js';
-import { prepareQuery } from '../src/prepare-query.js';
+import { CollectionQuery, QueryOrder } from '../src/query/types/index.js';
+import { prepareQuery } from '../src/query/prepare-query.js';
 import { pause } from './utils/async.js';
 import { InMemoryTestKVStore } from './utils/test-kv-store.js';
+import { mergeDBChanges } from '../src/memory-write-buffer.js';
+import { DBChanges } from '../dist/types.js';
+import { ViewEntity } from '../dist/query-engine.js';
+import { flattenViewEntity } from '../src/query-engine.js';
+import { or } from '../src/filters.js';
+import { DEFAULT_ROLES } from '../src/index.js';
 
 describe('IVM', () => {
   describe('initial results', async () => {
@@ -103,208 +104,271 @@ describe('IVM', () => {
       unsubs.forEach((unsub) => unsub());
     });
   });
-  describe.each([true, false])(
-    'shouldTrackChanges: %s',
-    (shouldTrackChanges) => {
-      test('can subscribe to a non-relational query and get updates', async () => {
-        const db = new DB({ ivmOptions: { shouldTrackChanges } });
+  // No longer tracking changes here because it happens in the server
+  describe.each([false])('shouldTrackChanges: %s', (shouldTrackChanges) => {
+    test('can subscribe to a non-relational query and get updates', async () => {
+      const db = new DB({ ivmOptions: { shouldTrackChanges } });
 
-        await db.insert('users', { id: '1', name: 'Alice' });
-        await db.insert('users', { id: '2', name: 'Bob' });
+      await db.insert('users', { id: '1', name: 'Alice' });
+      await db.insert('users', { id: '2', name: 'Bob' });
 
-        const spy = vi.fn();
+      const spy = vi.fn();
 
-        const unsubscribe = db.subscribeWithChanges(
-          {
-            collectionName: 'users',
-            where: [['name', '=', 'Alice']],
-          },
-          ({ results, changes }) => {
-            spy({ results, changes });
-          },
-          (err) => {
-            throw err;
-          }
-        );
-
-        await db.updateQueryViews();
-        db.broadcastToQuerySubscribers();
-        expect(spy).toHaveBeenCalledTimes(1);
-        expect(spy.mock.lastCall[0].results).toEqual([
-          { id: '1', name: 'Alice' },
-        ]);
-        if (shouldTrackChanges) {
-          expect(spy.mock.lastCall[0].changes).toEqual({
-            users: {
-              deletes: new Set(),
-              sets: new Map([['1', { id: '1', name: 'Alice' }]]),
-            },
-          });
+      const unsubscribe = db.subscribeWithChanges(
+        {
+          collectionName: 'users',
+          where: [['name', '=', 'Alice']],
+        },
+        ({ results, changes }) => {
+          spy({ results, changes });
+        },
+        (err) => {
+          throw err;
         }
+      );
 
-        await db.update('users', '1', { name: 'Alice Updated' });
+      await db.updateQueryViews();
+      db.broadcastToQuerySubscribers();
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.lastCall[0].results).toEqual([
+        { id: '1', name: 'Alice' },
+      ]);
+      if (shouldTrackChanges) {
+        expect(spy.mock.lastCall[0].changes).toEqual({
+          users: {
+            deletes: new Set(),
+            sets: new Map([['1', { id: '1', name: 'Alice' }]]),
+          },
+        });
+      }
 
-        await db.updateQueryViews();
-        db.broadcastToQuerySubscribers();
-        expect(spy).toHaveBeenCalledTimes(2);
-        expect(spy.mock.lastCall[0].results).toEqual([]);
-        if (shouldTrackChanges) {
-          expect(spy.mock.lastCall[0].changes).toEqual({
-            users: {
-              deletes: new Set(),
-              sets: new Map([['1', { name: 'Alice Updated' }]]),
+      await db.update('users', '1', { name: 'Alice Updated' });
+
+      await db.updateQueryViews();
+      db.broadcastToQuerySubscribers();
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(spy.mock.lastCall[0].results).toEqual([]);
+      if (shouldTrackChanges) {
+        expect(spy.mock.lastCall[0].changes).toEqual({
+          users: {
+            deletes: new Set(),
+            sets: new Map([['1', { name: 'Alice Updated' }]]),
+          },
+        });
+      }
+
+      unsubscribe();
+    });
+
+    test('can subscribe to a relational query and get updates', async () => {
+      const db = new DB({ ivmOptions: { shouldTrackChanges } });
+
+      await db.insert('users', { id: '1', name: 'Alice' });
+      await db.insert('users', { id: '2', name: 'Bob' });
+      await db.insert('users', { id: '3', name: 'Charlie' });
+
+      await db.insert('posts', { id: '1', userId: '1', public: true });
+      await db.insert('posts', { id: '2', userId: '2', public: false });
+      await db.insert('posts', { id: '3', userId: '2', public: false });
+
+      const spy = vi.fn();
+      const unsubscribe = db.subscribe(
+        {
+          collectionName: 'users',
+          where: [
+            {
+              exists: {
+                collectionName: 'posts',
+                where: [
+                  ['userId', '=', '$1.id'],
+                  ['public', '=', true],
+                ],
+              },
             },
-          });
-        }
+          ],
+        },
+        spy
+      );
 
-        unsubscribe();
-      });
+      await db.updateQueryViews();
+      db.broadcastToQuerySubscribers();
 
-      test('can subscribe to a relational query and get updates', async () => {
-        const db = new DB({ ivmOptions: { shouldTrackChanges } });
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.lastCall[0]).toEqual([{ id: '1', name: 'Alice' }]);
 
-        await db.insert('users', { id: '1', name: 'Alice' });
-        await db.insert('users', { id: '2', name: 'Bob' });
-        await db.insert('users', { id: '3', name: 'Charlie' });
+      await db.insert('posts', { id: '4', userId: '2', public: true });
 
-        await db.insert('posts', { id: '1', userId: '1', public: true });
-        await db.insert('posts', { id: '2', userId: '2', public: false });
-        await db.insert('posts', { id: '3', userId: '2', public: false });
+      await db.updateQueryViews();
+      db.broadcastToQuerySubscribers();
 
-        const spy = vi.fn();
-        const unsubscribe = db.subscribe(
-          {
-            collectionName: 'users',
-            where: [
-              {
-                exists: {
-                  collectionName: 'posts',
-                  where: [
-                    ['userId', '=', '$1.id'],
-                    ['public', '=', true],
-                  ],
-                },
+      // const firstCallResults = spy.mock.calls[0][0];
+      // const secondCallResults = spy.mock.calls[1][0];
+      // console.dir(firstCallResults === secondCallResults, spy.mock.calls);
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(spy.mock.lastCall[0]).toEqual([
+        { id: '1', name: 'Alice' },
+        { id: '2', name: 'Bob' },
+      ]);
+
+      unsubscribe();
+    });
+
+    test('can handle queries with completely locked down permissions', async () => {
+      const collections = S.Collections({
+        organizations: {
+          schema: S.Schema({
+            id: S.Id(),
+          }),
+          relationships: {
+            members: S.RelationMany('members', {
+              where: [['organizationId', '=', '$id']],
+            }),
+          },
+          permissions: {},
+        },
+        members: {
+          schema: S.Schema({
+            id: S.Id(),
+            userId: S.String(),
+            organizationId: S.String(),
+          }),
+          relationships: {
+            organization: S.RelationById('organizations', '$organizationId'),
+          },
+          permissions: {},
+        },
+        applications: {
+          schema: S.Schema({
+            id: S.Id(),
+            userId: S.Optional(S.String()),
+            organizationId: S.Optional(S.String()),
+          }),
+          relationships: {
+            organization: S.RelationById('organizations', '$organizationId'),
+          },
+          permissions: {
+            authenticated: {
+              read: {
+                filter: [
+                  or([
+                    ['userId', '=', '$token.sub'],
+                    ['organization.members.userId', '=', '$token.sub'],
+                  ]),
+                ],
               },
-            ],
+            },
           },
-          spy
-        );
-
-        await db.updateQueryViews();
-        db.broadcastToQuerySubscribers();
-
-        expect(spy).toHaveBeenCalledTimes(1);
-        expect(spy.mock.lastCall[0]).toEqual([{ id: '1', name: 'Alice' }]);
-
-        await db.insert('posts', { id: '4', userId: '2', public: true });
-
-        await db.updateQueryViews();
-        db.broadcastToQuerySubscribers();
-
-        // const firstCallResults = spy.mock.calls[0][0];
-        // const secondCallResults = spy.mock.calls[1][0];
-        // console.dir(firstCallResults === secondCallResults, spy.mock.calls);
-        expect(spy).toHaveBeenCalledTimes(2);
-        expect(spy.mock.lastCall[0]).toEqual([
-          { id: '1', name: 'Alice' },
-          { id: '2', name: 'Bob' },
-        ]);
-
-        unsubscribe();
+        },
       });
-
-      test('can handle deletes on simple, non-relational query', async () => {
-        const db = new DB({ ivmOptions: { shouldTrackChanges } });
-
-        await db.insert('users', { id: '1', name: 'Alice' });
-        await db.insert('users', { id: '2', name: 'Bob' });
-        await db.insert('users', { id: '3', name: 'Charlie' });
-
-        const spy = vi.fn();
-        const unsubscribe = db.subscribe(
-          {
-            collectionName: 'users',
-            where: [['name', '=', 'Alice']],
-          },
-          spy
-        );
-
-        await db.updateQueryViews();
-        db.broadcastToQuerySubscribers();
-
-        expect(spy).toHaveBeenCalledTimes(1);
-        expect(spy.mock.lastCall[0]).toEqual([{ id: '1', name: 'Alice' }]);
-
-        await db.delete('users', '1');
-
-        await db.updateQueryViews();
-        db.broadcastToQuerySubscribers();
-
-        expect(spy).toHaveBeenCalledTimes(2);
-        expect(spy.mock.lastCall[0]).toEqual([]);
-
-        unsubscribe();
+      const db = new DB({ schema: { collections, roles: DEFAULT_ROLES } });
+      const sessionDB = db.withSessionVars({
+        sub: '123',
       });
+      const spy = vi.fn();
+      const unsub = sessionDB.subscribe(
+        sessionDB.Query('applications'),
+        spy,
+        undefined,
+        { skipRules: false }
+      );
+      await sessionDB.updateQueryViews();
+      sessionDB.broadcastToQuerySubscribers();
+      await db.insert('organizations', { id: '1' }, { skipRules: true });
+      await expect(sessionDB.updateQueryViews()).resolves.toBeUndefined();
+    });
 
-      test('can handle deletes on relation', async () => {
-        const db = new DB({ ivmOptions: { shouldTrackChanges } });
+    test('can handle deletes on simple, non-relational query', async () => {
+      const db = new DB({ ivmOptions: { shouldTrackChanges } });
 
-        await db.insert('users', { id: '1', name: 'Alice' });
-        await db.insert('users', { id: '2', name: 'Bob' });
-        await db.insert('users', { id: '3', name: 'Charlie' });
+      await db.insert('users', { id: '1', name: 'Alice' });
+      await db.insert('users', { id: '2', name: 'Bob' });
+      await db.insert('users', { id: '3', name: 'Charlie' });
 
-        await db.insert('posts', { id: '1', userId: '1', public: true });
-        await db.insert('posts', { id: '2', userId: '2', public: false });
-        await db.insert('posts', { id: '3', userId: '1', public: false });
+      const spy = vi.fn();
+      const unsubscribe = db.subscribe(
+        {
+          collectionName: 'users',
+          where: [['name', '=', 'Alice']],
+        },
+        spy
+      );
 
-        const spy = vi.fn();
-        const unsubscribe = db.subscribe(
-          {
-            collectionName: 'users',
-            where: [
-              {
-                exists: {
-                  collectionName: 'posts',
-                  where: [
-                    ['userId', '=', '$1.id'],
-                    ['public', '=', true],
-                  ],
-                },
+      await db.updateQueryViews();
+      db.broadcastToQuerySubscribers();
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.lastCall[0]).toEqual([{ id: '1', name: 'Alice' }]);
+
+      await db.delete('users', '1');
+
+      await db.updateQueryViews();
+      db.broadcastToQuerySubscribers();
+
+      expect(spy).toHaveBeenCalledTimes(2);
+      expect(spy.mock.lastCall[0]).toEqual([]);
+
+      unsubscribe();
+    });
+
+    test('can handle deletes on relation', async () => {
+      const db = new DB({ ivmOptions: { shouldTrackChanges } });
+
+      await db.insert('users', { id: '1', name: 'Alice' });
+      await db.insert('users', { id: '2', name: 'Bob' });
+      await db.insert('users', { id: '3', name: 'Charlie' });
+
+      await db.insert('posts', { id: '1', userId: '1', public: true });
+      await db.insert('posts', { id: '2', userId: '2', public: false });
+      await db.insert('posts', { id: '3', userId: '1', public: false });
+
+      const spy = vi.fn();
+      const unsubscribe = db.subscribe(
+        {
+          collectionName: 'users',
+          where: [
+            {
+              exists: {
+                collectionName: 'posts',
+                where: [
+                  ['userId', '=', '$1.id'],
+                  ['public', '=', true],
+                ],
               },
-            ],
-          },
-          spy
-        );
+            },
+          ],
+        },
+        spy
+      );
 
-        await db.updateQueryViews();
-        db.broadcastToQuerySubscribers();
+      await db.updateQueryViews();
+      db.broadcastToQuerySubscribers();
 
-        expect(spy).toHaveBeenCalledTimes(1);
-        expect(spy.mock.lastCall[0]).toEqual([{ id: '1', name: 'Alice' }]);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.lastCall[0]).toEqual([{ id: '1', name: 'Alice' }]);
 
-        // Irrelevant delete (should not trigger a change)
-        await db.delete('posts', '3');
+      // Irrelevant delete (should not trigger a change)
+      await db.delete('posts', '3');
 
-        await db.updateQueryViews();
-        db.broadcastToQuerySubscribers();
-        // This will sometimes bet called twice because of the shortcut used on the client
-        // to just
-        expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
-        expect(spy.mock.lastCall[0]).toEqual([{ id: '1', name: 'Alice' }]);
+      await db.updateQueryViews();
+      db.broadcastToQuerySubscribers();
+      // This will sometimes bet called twice because of the shortcut used on the client
+      // to just
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
+      expect(spy.mock.lastCall[0]).toEqual([{ id: '1', name: 'Alice' }]);
 
-        await db.delete('posts', '1');
+      await db.delete('posts', '1');
 
-        await db.updateQueryViews();
-        db.broadcastToQuerySubscribers();
+      await db.updateQueryViews();
+      db.broadcastToQuerySubscribers();
 
-        expect(spy.mock.calls.length).toBeLessThanOrEqual(3);
-        expect(spy.mock.lastCall[0]).toEqual([]);
+      expect(spy.mock.calls.length).toBeLessThanOrEqual(3);
+      expect(spy.mock.lastCall[0]).toEqual([]);
 
-        unsubscribe();
-      });
-    }
-  );
-  test('can track changes with deletes on simple, non-relational query', async () => {
+      unsubscribe();
+    });
+  });
+  // IVM no longer does this specific change tracking rather it happens on the server
+  test.skip('can track changes with deletes on simple, non-relational query', async () => {
     const db = new DB();
 
     await db.insert('users', { id: '1', name: 'Alice' });
@@ -346,7 +410,8 @@ describe('IVM', () => {
     unsubscribe();
   });
 
-  test('can track changes with deletes on relation', async () => {
+  // IVM no longer does this specific change tracking rather it happens on the server
+  test.skip('can track changes with deletes on relation', async () => {
     const db = new DB();
 
     await db.insert('users', { id: '1', name: 'Alice' });
@@ -428,7 +493,7 @@ describe('IVM', () => {
         },
       }),
     };
-    const db = new DB({ schema });
+    const db = new DB({ schema, ivmOptions: { shouldTrackChanges: false } });
     beforeEach(async () => {
       await db.clear({});
     });
@@ -592,7 +657,7 @@ describe('IVM', () => {
         },
       }),
     };
-    const db = new DB({ schema });
+    const db = new DB({ schema, ivmOptions: { shouldTrackChanges: false } });
     const USERS = [
       { id: '1', name: 'Alice' },
       { id: '2', name: 'Bob' },
@@ -977,9 +1042,20 @@ describe('IVM syncing', () => {
               ['conversationId', '=', '$1.conversationId'],
               ['userId', '=', 'alice'],
             ],
+            order: [['id', 'DESC']],
           },
         },
       ],
+      include: {
+        membership: {
+          subquery: {
+            collectionName: 'conversationMembers',
+            where: [['conversationId', '=', '$1.conversationId']],
+            order: [['id', 'DESC']],
+          },
+          cardinality: 'one',
+        },
+      },
     },
     messagesFromEitherBobOrCharlie: {
       collectionName: 'messages',
@@ -1080,6 +1156,12 @@ describe('IVM syncing', () => {
       collectionName: 'messages',
       where: [['sentAt', '>', TODAY - 24 * 60 * 60 * 1000]],
     },
+    // TODO / note that because there is no ORDER, it isn't deterministic which messages are returned
+    // so it can differ between IVM and a fresh fetch
+    // fiveMessages: {
+    //   collectionName: 'messages',
+    //   limit: 5,
+    // },
     messagesByConversationByDate: {
       collectionName: 'messages',
       where: [],
@@ -1148,7 +1230,17 @@ describe('IVM syncing', () => {
           value,
         });
       } else {
-        const randomEntity = randomEntityFactory[collectionName](rand(1000));
+        const seeded = rand(1000);
+        let randomEntity = randomEntityFactory[collectionName](seeded);
+        // in case we have a collision with an existing message
+        if (collectionName === 'messages') {
+          let isIdAlreadyUsed = aliveEntities.includes(randomEntity.id);
+          while (isIdAlreadyUsed) {
+            randomEntity = randomEntityFactory[collectionName](rand(1000));
+            isIdAlreadyUsed = aliveEntities.includes(randomEntity.id);
+          }
+        }
+
         ops.push({
           type: 'insert',
           collection: collectionName,
@@ -1161,132 +1253,229 @@ describe('IVM syncing', () => {
     return ops;
   }
 
-  const RANDOM_SEEDS = Array.from({ length: 1 }, (_, i) =>
+  const RANDOM_SEEDS = Array.from({ length: 50 }, (_, i) =>
     Math.floor(Math.random() * 10_000)
   );
-
+  const QUERIES_TO_TEST: Array<keyof typeof QUERIES> = Object.keys(QUERIES);
+  // const QUERIES_TO_TEST: Array<keyof typeof QUERIES> = ['fiveMessages'];
   describe.each(RANDOM_SEEDS)('seed %i', (seed) => {
-    describe.each([true])('database starts empty: %s', (shouldTrackChanges) => {
-      test.each(Object.keys(QUERIES))('Query: %s', async (queryKey) => {
-        const query = QUERIES[queryKey];
-        const serverDb = new DB();
-        const clientDb = new DB();
+    describe.each([false, true])(
+      'should track changes: %s',
+      (shouldTrackChanges) => {
+        async function testQueries(queryKeys: string[]) {
+          for (const queryKey of queryKeys) {
+            let query = QUERIES[queryKey];
+            const serverDb = new DB();
+            const clientDb = new DB();
 
-        // const expectedNumberOfCalls = Math.floor(
-        //   randomOps.length / flushChangesFrequency
-        // );
-        const spy = vi.fn();
-        let ranStep, resolve, reject;
-        let numCalls = 0;
+            // const expectedNumberOfCalls = Math.floor(
+            //   randomOps.length / flushChangesFrequency
+            // );
+            const spy = vi.fn();
+            let ranStep, resolve, reject;
+            let numCalls = 0;
 
-        const prepared = prepareQuery(query, undefined, {}, undefined, {
-          applyPermission: undefined,
-        });
+            query = shouldTrackChanges
+              ? createQueryWithRelationalOrderAddedToIncludes(
+                  createQueryWithExistsAddedToIncludes(
+                    prepareQuery(
+                      query,
+                      serverDb.schema?.['collections'],
+                      {},
+                      undefined,
+                      {
+                        applyPermission: undefined,
+                      }
+                    )
+                  )
+                )
+              : prepareQuery(query, undefined, {}, undefined, {
+                  applyPermission: undefined,
+                });
+            // starting states should match
+            expect(await serverDb.fetch(query)).toEqual(
+              await clientDb.fetch(query)
+            );
+            let subscribedQueryState = new Map<
+              CollectionQuery<any, any>,
+              DBChanges
+            >();
+            subscribedQueryState.set(query, {});
+            serverDb.subscribeRaw(
+              query,
+              async (rawServerResults: ViewEntity[]) => {
+                ({
+                  promise: ranStep,
+                  resolve,
+                  reject,
+                } = Promise.withResolvers());
+                spy();
 
-        // starting states should match
-        expect(await serverDb.fetch(query)).toEqual(
-          await clientDb.fetch(query)
-        );
+                try {
+                  const serverResults = rawServerResults.map((r) =>
+                    structuredClone(flattenViewEntity(r))
+                  );
+                  if (shouldTrackChanges) {
+                    const serverChanges = queryResultsToChanges(
+                      rawServerResults,
+                      query
+                    );
+                    /**
+                     * This is replicating / simulating the diffing that happens on the server
+                     */
+                    // TODO actually share the function and/or move this testing to integration-tests
+                    let unionOfChangesBefore = {};
+                    let unionOfChangesAfter = {};
+                    for (const [q, changes] of subscribedQueryState.entries()) {
+                      unionOfChangesBefore = mergeDBChanges(
+                        structuredClone(unionOfChangesBefore),
+                        structuredClone(changes)
+                      );
+                      if (q === query) {
+                        unionOfChangesAfter = mergeDBChanges(
+                          structuredClone(unionOfChangesAfter),
+                          structuredClone(serverChanges)
+                        );
+                      } else {
+                        unionOfChangesAfter = mergeDBChanges(
+                          structuredClone(unionOfChangesAfter),
+                          structuredClone(changes)
+                        );
+                      }
+                    }
+                    subscribedQueryState.set(
+                      query,
+                      structuredClone(serverChanges)
+                    );
+                    const changeDiff = diffChanges(
+                      unionOfChangesBefore,
+                      unionOfChangesAfter
+                    );
+                    // console.dir(
+                    //   {
+                    //     serverResults,
+                    //     unionOfChangesBefore,
+                    //     unionOfChangesAfter,
+                    //     serverChanges,
+                    //     changeDiff,
+                    //   },
+                    //   { depth: null }
+                    // );
+                    // console.dir({ serverChanges }, { depth: null });
+                    // expect(serverChanges).toBeDefined();
+                    // expect(areChangesEmpty(serverChanges)).toBeFalsy();
+                    for (const [collection, changes] of Object.entries(
+                      changeDiff
+                    )) {
+                      if (!changes) {
+                        console.warn('no changes', collection, changes);
+                        continue;
+                      }
+                      for (const id of changes.deletes) {
+                        await clientDb.delete(collection, id);
+                      }
+                      for (const [id, value] of changes.sets.entries()) {
+                        if ('id' in value) {
+                          await clientDb.insert(collection, value);
+                        } else {
+                          await clientDb.update(collection, id, value);
+                        }
+                      }
+                    }
 
-        serverDb.subscribeWithChanges(
-          prepared,
-          async ({ changes: serverChanges, results: serverResults }) => {
-            ({ promise: ranStep, resolve, reject } = Promise.withResolvers());
-            spy();
+                    const clientFetchResults = await clientDb.fetch(query);
 
-            // insert changes into clientDb
-            if (serverChanges) {
-              for (const [collection, changes] of Object.entries(
-                serverChanges
-              )) {
-                if (!changes) {
-                  console.warn('no changes', collection, changes);
-                  continue;
-                }
-                for (const id of changes.deletes) {
-                  await clientDb.delete(collection, id);
-                }
-                for (const [id, value] of changes.sets.entries()) {
-                  if ('id' in value) {
-                    await clientDb.insert(collection, value);
+                    if (query.order != null) {
+                      // console.dir(
+                      //   { clientFetchResults, serverResults },
+                      //   { depth: null }
+                      // );
+                      expect(clientFetchResults).toEqual(serverResults);
+                    } else {
+                      // console.dir(
+                      //   {
+                      //     clientFetchResults,
+                      //     serverResults,
+                      //     serverChanges,
+                      //     changeDiff,
+                      //   },
+                      //   { depth: null }
+                      // );
+                      const clientResultMap =
+                        resultArrToMap(clientFetchResults);
+                      const serverResultMap = resultArrToMap(serverResults);
+                      expect(clientResultMap).toEqual(serverResultMap);
+                    }
                   } else {
-                    await clientDb.update(collection, id, value);
+                    const serverFetchResults = await serverDb.fetch(query);
+
+                    // TODO verify subquery result order
+                    if (query.order != null) {
+                      // TODO verify order rather than expect order to be exactly the same.
+                      // E.g. a result can satisfy the order in multiple different ways
+                      // but still be correct in the face of equal values. I.e. it's an unstable sort
+                      expect(serverResults).toEqual(serverFetchResults);
+                    } else {
+                      expect(resultArrToMap(serverResults)).toEqual(
+                        resultArrToMap(serverFetchResults)
+                      );
+                    }
                   }
+                  numCalls++;
+                  resolve();
+                } catch (e) {
+                  reject(e);
                 }
               }
-            }
-            try {
-              const clientFetchResults = await clientDb.fetch(query);
-              const serverFetchResults = await serverDb.fetch(query);
+            );
 
-              // console.dir(
-              //   {
-              //     serverChanges,
-              //     clientResults: clientFetchResults,
-              //     serverResults,
-              //     serverFetchResults,
-              //   },
-              //   { depth: null }
-              // );
+            const NUM_OPS = 10;
+            const randomOps = deterministicMixArrays(
+              [
+                createRandomOpsForCollection('messages', NUM_OPS, seed),
+                createRandomOpsForCollection(
+                  'conversationMembers',
+                  NUM_OPS,
+                  seed * 2
+                ),
+                createRandomOpsForCollection(
+                  'conversations',
+                  NUM_OPS,
+                  seed * 3
+                ),
+              ],
+              seed
+            );
 
-              // TODO verify subquery result order
-              if (query.order != null) {
-                // TODO verify order rather than expect order to be exactly the same.
-                // E.g. a result can satisfy the order in multiple different ways
-                // but still be correct in the face of equal values. I.e. it's an unstable sort
-                expect(clientFetchResults).toEqual(serverFetchResults);
-                expect(clientFetchResults).toEqual(serverResults);
-              } else {
-                const serverResultMap = resultArrToMap(serverResults);
-                const clientResultMap = resultArrToMap(clientFetchResults);
-                const serverFetchResultMap = resultArrToMap(serverFetchResults);
-                expect(clientResultMap).toEqual(serverResultMap);
-                expect(clientResultMap).toEqual(serverFetchResultMap);
+            const flushChangesFrequency = [1, 2, 3, 4, 5, 6][seed % 6];
+            // const updateViewFrequency = [1, 2, 3, 4, 5, 6][seed % 6];
+            const broadcastChangesFrequency = [1, 2, 3, 4, 5, 6][seed % 6];
+
+            let i = 0;
+            for (const op of randomOps) {
+              await applyOpToDB(serverDb, op);
+              i++;
+              if (i % flushChangesFrequency === 0) {
+                await serverDb.updateQueryViews();
               }
-              numCalls++;
-              resolve();
-            } catch (e) {
-              reject(e);
+              if (i % broadcastChangesFrequency === 0) {
+                ranStep = Promise.resolve();
+                // if the query subscription runs it should reassign ranStep
+                // to a promise that resolves when the result checks finish
+                serverDb.broadcastToQuerySubscribers();
+                await ranStep;
+              }
             }
-          }
-        );
-
-        const NUM_OPS = 10;
-        const randomOps = deterministicMixArrays(
-          [
-            createRandomOpsForCollection('messages', NUM_OPS, seed),
-            createRandomOpsForCollection(
-              'conversationMembers',
-              NUM_OPS,
-              seed * 2
-            ),
-            createRandomOpsForCollection('conversations', NUM_OPS, seed * 3),
-          ],
-          seed
-        );
-
-        const flushChangesFrequency = [1, 2, 3, 4, 5, 6][seed % 6];
-        // const updateViewFrequency = [1, 2, 3, 4, 5, 6][seed % 6];
-        const broadcastChangesFrequency = [1, 2, 3, 4, 5, 6][seed % 6];
-
-        let i = 0;
-        for (const op of randomOps) {
-          await applyOpToDB(serverDb, op);
-          i++;
-          if (i % flushChangesFrequency === 0) {
-            await serverDb.updateQueryViews();
-          }
-          if (i % broadcastChangesFrequency === 0) {
-            ranStep = Promise.resolve();
-            // if the query subscription runs it should reassign ranStep
-            // to a promise that resolves when the result checks finish
-            serverDb.broadcastToQuerySubscribers();
-            await ranStep;
           }
         }
-        // expect(spy).toHaveBeenCalledTimes(expectedNumberOfCalls);
-      });
-    });
+        test.each(QUERIES_TO_TEST)('Query: %s', async (queryKey) => {
+          return await testQueries([queryKey]);
+        });
+        // test('all queries concurrently', async () => {
+        //   await testQueries(QUERIES_TO_TEST);
+        // });
+      }
+    );
   });
 });
 

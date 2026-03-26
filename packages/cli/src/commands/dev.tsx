@@ -1,10 +1,6 @@
 import React from 'react';
 import { Box, Newline, Text } from 'ink';
-import {
-  createServer as createDBServer,
-  durableStoreKeys,
-  storeKeys,
-} from '@triplit/server';
+import { durableStoreKeys, storeKeys } from '@triplit/server/storage';
 import jwt from 'jsonwebtoken';
 import path from 'path';
 import fs, { existsSync } from 'fs';
@@ -18,6 +14,7 @@ import { validateWebhookStructure } from './webhooks/push.js';
 import { blue } from 'ansis/colors';
 import { logger } from '@triplit/logger';
 import { DevServerLogHandler } from '../log-handlers/dev-server-logs.js';
+import { createTriplitStorageProvider } from '@triplit/server/storage';
 
 export default Command({
   description: 'Starts the Triplit development environment',
@@ -82,6 +79,7 @@ export default Command({
         case 'lmdb':
           checkLMDBDependency();
         case 'sqlite':
+        case 'sqlite-worker':
           checkSQLiteDependency();
         default:
           break;
@@ -89,7 +87,11 @@ export default Command({
 
       // Setup the database path
       const dataDir = getDataDir();
-      const storagePath = path.join(dataDir, flags.storage, 'app.db');
+      const storageDirName =
+        flags.storage === 'sqlite-worker' ? 'sqlite' : flags.storage;
+      const storagePath =
+        process.env.TRIPLIT_LOCAL_DATABASE_URL ??
+        path.join(dataDir, storageDirName, 'app.db');
       if (!fs.existsSync(path.dirname(storagePath))) {
         fs.mkdirSync(path.dirname(storagePath), { recursive: true });
       }
@@ -132,8 +134,18 @@ export default Command({
       new DevServerLogHandler({ verbose: flags.verbose }),
       { exclusive: true }
     );
+    let createDBServer;
+    if (typeof Bun !== 'undefined') {
+      const { createBunServer } = await import('@triplit/server/bun');
+      createDBServer = createBunServer;
+    } else {
+      const { createServer: createNodeServer } = await import(
+        '@triplit/server'
+      );
+      createDBServer = createNodeServer;
+    }
     const startDBServer = await createDBServer({
-      storage: flags.storage || 'memory',
+      storage: await createTriplitStorageProvider(flags.storage || 'memory'),
       jwtSecret: process.env.JWT_SECRET,
       projectId: process.env.PROJECT_ID,
       externalJwtSecret: process.env.EXTERNAL_JWT_SECRET,
@@ -143,6 +155,7 @@ export default Command({
       verboseLogs: !!flags.verbose,
       upstream,
       useNodeInspector: flags.inspect,
+      maxPayloadMb: process.env.TRIPLIT_MAX_BODY_SIZE,
     });
     let watcher: FSWatcher | undefined = undefined;
     const dbServer = startDBServer(dbPort, async () => {
@@ -186,36 +199,36 @@ export default Command({
       );
     }
 
-    const webhooksPath = path.resolve(
-      process.env.TRIPLIT_WEBHOOK_CONFIG_PATH ??
-        path.join(getTriplitDir(), 'webhooks.json')
-    );
+    // const webhooksPath = path.resolve(
+    //   process.env.TRIPLIT_WEBHOOK_CONFIG_PATH ??
+    //     path.join(getTriplitDir(), 'webhooks.json')
+    // );
 
-    if (existsSync(webhooksPath)) {
-      const validJSONWebhooks = validateWebhookStructure(
-        fs.readFileSync(webhooksPath, 'utf8')
-      );
-      if (validJSONWebhooks) {
-        await fetch(dbUrl + '/webhooks-push', {
-          method: 'POST',
-          body: JSON.stringify({
-            webhooks: validJSONWebhooks,
-          }),
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${serviceKey}`,
-          },
-        });
-        console.log(
-          'Webhooks config file found at',
-          blue('./' + path.relative(CWD, webhooksPath))
-        );
-        console.log('Webhooks will not be sent in development mode.');
-        console.log(
-          `You can override this with the ${blue('--enableWebhooks')} flag`
-        );
-      }
-    }
+    // if (existsSync(webhooksPath)) {
+    //   const validJSONWebhooks = validateWebhookStructure(
+    //     fs.readFileSync(webhooksPath, 'utf8')
+    //   );
+    //   if (validJSONWebhooks) {
+    //     await fetch(dbUrl + '/webhooks-push', {
+    //       method: 'POST',
+    //       body: JSON.stringify({
+    //         webhooks: validJSONWebhooks,
+    //       }),
+    //       headers: {
+    //         'Content-Type': 'application/json',
+    //         Authorization: `Bearer ${serviceKey}`,
+    //       },
+    //     });
+    //     console.log(
+    //       'Webhooks config file found at',
+    //       blue('./' + path.relative(CWD, webhooksPath))
+    //     );
+    //     console.log('Webhooks will not be sent in development mode.');
+    //     console.log(
+    //       `You can override this with the ${blue('--enableWebhooks')} flag`
+    //     );
+    //   }
+    // }
     return (
       <>
         <Newline />
@@ -289,6 +302,10 @@ function checkLMDBDependency() {
 }
 
 function checkSQLiteDependency() {
+  // Bun has its own built-in SQLite implementation, so we don't need to check for the dependency
+  if (typeof Bun !== 'undefined') {
+    return;
+  }
   try {
     import.meta.resolve('better-sqlite3');
   } catch (e) {

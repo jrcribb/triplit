@@ -7,6 +7,7 @@ import {
 } from '../../types/properties.js';
 import { BooleanType } from '../definitions/boolean.js';
 import { DateType } from '../definitions/date.js';
+import { JsonType } from '../definitions/json.js';
 import { NumberType } from '../definitions/number.js';
 import { RecordType } from '../definitions/record.js';
 import { SetType } from '../definitions/set.js';
@@ -21,16 +22,18 @@ export type Encoded<T extends DataType> = T extends DataType
     ? boolean
     : T extends DateType
       ? string
-      : T extends NumberType
-        ? number
-        : T extends RecordType
-          ? EncodedRecord<T>
-          : T extends SetType<any>
-            ? Record<string, boolean>
-            : T extends StringType
-              ? StringWithOptions<T>
-              : // TODO: use never here?
-                any
+      : T extends JsonType
+        ? any
+        : T extends NumberType
+          ? number
+          : T extends RecordType
+            ? EncodedRecord<T>
+            : T extends SetType<any>
+              ? Record<string, boolean>
+              : T extends StringType
+                ? StringWithOptions<T>
+                : // TODO: use never here?
+                  any
   : any;
 
 type EncodedRecord<T extends RecordType> = T extends RecordType
@@ -57,27 +60,29 @@ export type Decoded<T extends DataType> = T extends DataType
     ? boolean
     : T extends DateType
       ? Date
-      : T extends NumberType
-        ? number
-        : T extends RecordType
-          ? DecodedRecord<T>
-          : T extends SetType<infer Items>
-            ? Set<Decoded<Items>>
-            : T extends StringType
-              ? StringWithOptions<T>
-              : // TODO: use never here?
-                any
+      : T extends JsonType
+        ? any
+        : T extends NumberType
+          ? number
+          : T extends RecordType
+            ? DecodedRecord<T>
+            : T extends SetType<infer Items>
+              ? Set<Decoded<Items>>
+              : T extends StringType
+                ? StringWithOptions<T>
+                : // TODO: use never here?
+                  any
   : any;
 
 type DecodedRecord<T extends RecordType> = T extends RecordType
   ? {
-      [K in StringKey<T['properties']> as IsPropertyReadRequired<
+      [K in keyof T['properties'] as IsPropertyReadRequired<
         T['properties'][K]
       > extends true
         ? K
         : never]: Decoded<T['properties'][K]>;
     } & {
-      [K in StringKey<T['properties']> as IsPropertyReadOptional<
+      [K in keyof T['properties'] as IsPropertyReadOptional<
         T['properties'][K]
       > extends true
         ? K
@@ -93,27 +98,29 @@ export type WriteDecoded<T extends DataType> = T extends DataType
     ? boolean
     : T extends DateType
       ? Date | number | string
-      : T extends NumberType
-        ? number
-        : T extends RecordType
-          ? WriteDecodedRecord<T>
-          : T extends SetType<infer Items>
-            ? Set<WriteDecoded<Items>> | WriteDecoded<Items>[]
-            : T extends StringType
-              ? StringWithOptions<T>
-              : // TODO: use never here?
-                any
+      : T extends JsonType
+        ? any
+        : T extends NumberType
+          ? number
+          : T extends RecordType
+            ? WriteDecodedRecord<T>
+            : T extends SetType<infer Items>
+              ? Set<WriteDecoded<Items>> | WriteDecoded<Items>[]
+              : T extends StringType
+                ? StringWithOptions<T>
+                : // TODO: use never here?
+                  any
   : any;
 
 type WriteDecodedRecord<T extends RecordType> = T extends RecordType
   ? {
-      [K in StringKey<T['properties']> as IsPropertyWriteRequired<
+      [K in keyof T['properties'] as IsPropertyWriteRequired<
         T['properties'][K]
       > extends true
         ? K
         : never]: WriteDecoded<T['properties'][K]>;
     } & {
-      [K in StringKey<T['properties']> as IsPropertyWriteOptional<
+      [K in keyof T['properties'] as IsPropertyWriteOptional<
         T['properties'][K]
       > extends true
         ? K

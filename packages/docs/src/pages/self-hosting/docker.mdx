@@ -1,0 +1,29 @@
+---
+description: Learn how to run Triplit in a Docker container.
+---
+
+# Docker
+
+Triplit publishes the following Docker images that run in the following environments:
+
+- [Node.js](https://hub.docker.com/r/aspencloud/triplit-server/tags)
+- [Bun](https://hub.docker.com/r/aspencloud/triplit-server-bun/tags)
+
+## Running Triplit in Docker
+
+To run Triplit in a Docker container, you can use the following command:
+
+```bash
+docker run -p 8080:6543 -e LOCAL_DATABASE_URL="./app.db" aspencloud/triplit-server
+```
+
+This will run the Triplit server with SQLite as a storage engine at port `6543` on your host machine. The docker image uses SQLite as the storage engine and `LOCAL_DATABASE_URL` sets the path to the SQLite database file.
+
+## Configuration
+
+This will run a Triplit server with SQLite as a storage engine at port `8080` within the container. You may also pass in the following environment variables to configure the setup of the server process:
+
+- `NODE_OPTIONS` - Node.js [options](https://nodejs.org/api/cli.html) for the server
+  `docker run <OTHER_PARAMS> -e NODE_OPTIONS="--max-old-space-size=4096" aspencloud/triplit-server`
+
+Additional [environment variables](/self-hosting#configuration) can be set to configure the server.

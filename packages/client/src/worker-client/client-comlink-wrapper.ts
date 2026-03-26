@@ -1,7 +1,8 @@
 import * as ComLink from 'comlink';
-import { TriplitClient as Client } from '../client/triplit-client.js';
-import { LogLevel } from '../@triplit/types/logger.js';
-import { DefaultLogger } from '../client-logger.js';
+import {
+  TriplitClient as Client,
+  TriplitClient,
+} from '../client/triplit-client.js';
 import { WorkerInternalClientNotInitializedError } from '../errors.js';
 import {
   SubscribeBackgroundOptions,
@@ -15,10 +16,12 @@ import {
   ReadModel,
   SchemaQuery,
 } from '@triplit/db';
+import { logger as LOGGER, LogHandler } from '@triplit/logger';
 import {
   ClientOptions,
   ClientTransactOptions,
 } from '../client/types/client.js';
+import { clientLogHandler } from '../client-logger.js';
 
 interface ClientWorker<M extends Models<M> = Models>
   extends Omit<Client<M>, 'update' | 'transact'> {
@@ -34,49 +37,27 @@ interface ClientWorker<M extends Models<M> = Models>
   ) => Promise<Output>;
 }
 
-class WorkerLogger {
-  logScope: string | undefined;
-  constructor(opts: { scope?: string; level: LogLevel }) {
-    this.logScope = opts.scope;
-  }
-}
-
+type VariablesChangeHandler = (
+  variables: typeof TriplitClient.prototype.vars
+) => void;
 export class ClientComlinkWrapper<M extends Models<M> = Models>
   implements ClientWorker<M>
 {
   public client: Client<M> | null = null;
+  private variableChangeListeners = new Set<VariablesChangeHandler>();
   constructor() {}
-  init(options: ClientOptions<M>, logger: any) {
+  init(options: ClientOptions<M>, workerThreadLogHandler: LogHandler) {
     if (this.client != undefined) return;
-    const { schema, logLevel, token, autoConnect, ...remainingOptions } =
-      options;
-    const workerLogger = new DefaultLogger({
-      level: logLevel,
-      onLog: (log) => {
-        if (!logger) return;
-        if (log.scope == undefined) {
-          log.scope = '';
-        }
-        switch (log.level) {
-          case 'error':
-            logger.error(log);
-            break;
-          case 'warn':
-            logger.warn(log);
-            break;
-          case 'info':
-            logger.info(log);
-            break;
-          case 'debug':
-            logger.debug(log);
-            break;
-        }
-      },
-    });
+    // Handle session in main thread
+    const { token, ...remainingOptions } = options;
+
+    // Setup logger
+    LOGGER.registerHandler(workerThreadLogHandler);
+
     this.client = new Client<M>({
       ...remainingOptions,
-      schema: schema,
-      logger: workerLogger,
+      // Handle autoConnect in the main thread
+      autoConnect: false,
     });
   }
   async fetch(...args: Parameters<Client<M>['fetch']>) {
@@ -244,6 +225,24 @@ export class ClientComlinkWrapper<M extends Models<M> = Models>
     if (!this.client) throw new WorkerInternalClientNotInitializedError();
     return ComLink.proxy(this.client.onConnectionStatusChange(...args));
   }
+  onVariablesChange(callback: VariablesChangeHandler) {
+    if (!this.client) throw new WorkerInternalClientNotInitializedError();
+    const unsub = this.client.onConnectionOptionsChange(() => {
+      callback(this.client!.vars);
+    });
+    this.variableChangeListeners.add(callback);
+    let unsubscribed = false;
+    // TODO: really need to clean up some of this async state logic
+    this.client.ready.then(() => {
+      if (unsubscribed) return;
+      callback(this.client!.vars);
+    });
+    return ComLink.proxy(() => {
+      unsubscribed = true;
+      this.variableChangeListeners.delete(callback);
+      unsub();
+    });
+  }
   connect() {
     if (!this.client) throw new WorkerInternalClientNotInitializedError();
     return this.client.connect();
@@ -264,7 +263,10 @@ export class ClientComlinkWrapper<M extends Models<M> = Models>
     ...args: Parameters<Client<M>['db']['updateGlobalVariables']>
   ) {
     if (!this.client) throw new WorkerInternalClientNotInitializedError();
-    return this.client.updateGlobalVariables(...args);
+    await this.client.updateGlobalVariables(...args);
+    for (const callback of this.variableChangeListeners) {
+      callback(this.client.vars);
+    }
   }
   async clear(options: ClearOptions = {}) {
     if (!this.client) throw new WorkerInternalClientNotInitializedError();

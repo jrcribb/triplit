@@ -109,7 +109,7 @@ describe('Schema diffing', () => {
         attribute: ['id'],
         dataType: {
           type: 'string',
-          config: { nullable: false, default: { args: null, func: 'uuid' } },
+          config: { nullable: false, default: { args: null, func: 'nanoid' } },
         },
       },
     ]);
@@ -125,7 +125,7 @@ describe('Schema diffing', () => {
         attribute: ['id'],
         dataType: {
           type: 'string',
-          config: { nullable: false, default: { args: null, func: 'uuid' } },
+          config: { nullable: false, default: { args: null, func: 'nanoid' } },
         },
         isNewCollection: false,
       },
@@ -185,7 +185,7 @@ describe('Schema diffing', () => {
         type: 'delete',
         attribute: ['id'],
         dataType: {
-          config: { nullable: false, default: { args: null, func: 'uuid' } },
+          config: { nullable: false, default: { args: null, func: 'nanoid' } },
           type: 'string',
         },
       },
@@ -199,11 +199,46 @@ describe('Schema diffing', () => {
         attribute: ['id'],
         dataType: {
           type: 'string',
-          config: { nullable: false, default: { args: null, func: 'uuid' } },
+          config: { nullable: false, default: { args: null, func: 'nanoid' } },
         },
         isNewCollection: true,
       },
     ]);
+  });
+
+  describe('relationships', () => {
+    it('can diff adding a relationship', () => {
+      const schemaA = {
+        collections: S.Collections({
+          users: {
+            schema: S.Schema({ id: S.Id() }),
+          },
+          todos: {
+            schema: S.Schema({ id: S.Id() }),
+          },
+        }),
+      };
+      const schemaB = {
+        collections: S.Collections({
+          users: {
+            schema: S.Schema({ id: S.Id() }),
+            relationships: {
+              todos: S.RelationById('todos', '$1.id'),
+            },
+          },
+          todos: {
+            schema: S.Schema({ id: S.Id() }),
+          },
+        }),
+      };
+      const diff = diffSchemas(schemaA, schemaB);
+      expect(diff).toEqual([
+        {
+          _diff: 'collectionRelationships',
+          collection: 'users',
+        },
+      ]);
+    });
   });
 });
 
@@ -430,6 +465,101 @@ describe('detecting dangerous edits', () => {
       expect(results.length).toBe(0);
     });
   });
+
+  it('new collections are backwards compatible', async () => {
+    const db = new DB({ schema: stressTestSchema });
+    // await db.insert('stressTest', { id: 'test' });
+    const result = await db.overrideSchema(
+      {
+        collections: S.Collections({
+          stressTest: {
+            schema: S.Schema(stressTest),
+          },
+          newCollection: {
+            schema: S.Schema({ id: S.Id() }),
+          },
+        }),
+      },
+      { failOnBackwardsIncompatibleChange: true }
+    );
+    expect(result.successful).toBe(true);
+  });
+});
+
+describe.each([true, false])(
+  'schema override with permissions %s',
+  async (hasPermissions) => {
+    const schemaA = {
+      collections: S.Collections({
+        users: {
+          schema: S.Schema({ id: S.Id(), name: S.String() }),
+          ...(hasPermissions
+            ? {
+                permissions: {
+                  user: {
+                    read: { filter: [true] },
+                  },
+                },
+              }
+            : {}),
+        },
+      }),
+    };
+    const schemaB = {
+      collections: S.Collections({
+        users: {
+          schema: S.Schema({ id: S.Id() }),
+          ...(hasPermissions
+            ? {
+                permissions: {
+                  user: {
+                    read: { filter: [true] },
+                  },
+                },
+              }
+            : {}),
+        },
+      }),
+    };
+    it('will not allow backwards incompatible changes', async () => {
+      const db = new DB({ schema: schemaA });
+      await db.insert(
+        'users',
+        {
+          id: '1',
+          name: 'test',
+        },
+        { skipRules: true }
+      );
+      const result = await db.overrideSchema(schemaB);
+      expect(result.successful).toBe(false);
+    });
+  }
+);
+
+it('data is entirely usable after deleting a columns and reflects the new schema', async () => {
+  const db = new DB({
+    schema: {
+      collections: S.Collections({
+        test: {
+          schema: S.Schema({ id: S.Id(), name: S.Optional(S.String()) }),
+        },
+      }),
+    },
+  });
+  await db.insert('test', { id: '1', name: 'test' });
+  await db.update('test', '1', (entity) => {
+    entity.name = undefined; //nulll
+  });
+  await db.overrideSchema({
+    collections: S.Collections({
+      test: {
+        schema: S.Schema({ id: S.Id() }),
+      },
+    }),
+  });
+  const result = await db.fetch({ collectionName: 'test' });
+  expect(result).toEqual([{ id: '1' }]);
 });
 
 describe('roles', () => {

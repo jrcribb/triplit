@@ -1,5 +1,337 @@
 # node-server
 
+## 1.0.61
+
+### Patch Changes
+
+- Updated dependencies [c0b6bc98]
+  - @triplit/server@1.1.8
+
+## 1.0.60
+
+### Patch Changes
+
+- @triplit/server@1.1.7
+
+## 1.0.59
+
+### Patch Changes
+
+- @triplit/server@1.1.6
+
+## 1.0.58
+
+### Patch Changes
+
+- @triplit/server@1.1.5
+
+## 1.0.57
+
+### Patch Changes
+
+- @triplit/server@1.1.4
+
+## 1.0.56
+
+### Patch Changes
+
+- @triplit/server@1.1.3
+
+## 1.0.55
+
+### Patch Changes
+
+- @triplit/server@1.1.2
+
+## 1.0.54
+
+### Patch Changes
+
+- @triplit/server@1.1.1
+
+## 1.0.53
+
+### Patch Changes
+
+- Updated dependencies [4841af99]
+  - @triplit/server@1.1.0
+
+## 1.0.52
+
+### Patch Changes
+
+- @triplit/server@1.0.52
+
+## 1.0.51
+
+### Patch Changes
+
+- @triplit/server@1.0.51
+
+## 1.0.50
+
+### Patch Changes
+
+- @triplit/server@1.0.50
+
+## 1.0.49
+
+### Patch Changes
+
+- @triplit/server@1.0.49
+
+## 1.0.48
+
+### Patch Changes
+
+- Updated dependencies [ba6e9973]
+  - @triplit/server@1.0.48
+
+## 1.0.47
+
+### Patch Changes
+
+- @triplit/server@1.0.47
+
+## 1.0.46
+
+### Patch Changes
+
+- @triplit/server@1.0.46
+
+## 1.0.45
+
+### Patch Changes
+
+- Updated dependencies [263a50b8]
+  - @triplit/server@1.0.45
+
+## 1.0.44
+
+### Patch Changes
+
+- Updated dependencies [3871b1f8]
+  - @triplit/server@1.0.44
+
+## 1.0.43
+
+### Patch Changes
+
+- @triplit/server@1.0.43
+
+## 1.0.42
+
+### Patch Changes
+
+- @triplit/server@1.0.42
+
+## 1.0.41
+
+### Patch Changes
+
+- @triplit/server@1.0.41
+
+## 1.0.40
+
+### Patch Changes
+
+- Updated dependencies [6e9eac7f]
+  - @triplit/server@1.0.40
+
+## 1.0.39
+
+### Patch Changes
+
+- Updated dependencies [461d1813]
+  - @triplit/server@1.0.39
+
+## 1.0.38
+
+### Patch Changes
+
+- Updated dependencies [a57442f4]
+  - @triplit/server@1.0.38
+
+## 1.0.37
+
+### Patch Changes
+
+- @triplit/server@1.0.37
+
+## 1.0.36
+
+### Patch Changes
+
+- cb91170d: Make max body size configurable via env var
+- Updated dependencies [cb91170d]
+  - @triplit/server@1.0.36
+
+## 1.0.35
+
+### Patch Changes
+
+- @triplit/server@1.0.35
+
+## 1.0.34
+
+### Patch Changes
+
+- @triplit/server@1.0.34
+
+## 1.0.33
+
+### Patch Changes
+
+- Updated dependencies [592b7527]
+- Updated dependencies [ba85711f]
+  - @triplit/server@1.0.33
+
+## 1.0.32
+
+### Patch Changes
+
+- @triplit/server@1.0.32
+
+## 1.0.31
+
+### Patch Changes
+
+- @triplit/server@1.0.31
+
+## 1.0.30
+
+### Patch Changes
+
+- Updated dependencies [c5b3b67a]
+  - @triplit/server@1.0.30
+
+## 1.0.29
+
+### Patch Changes
+
+- Updated dependencies [10010075]
+  - @triplit/server@1.0.29
+
+## 1.0.28
+
+### Patch Changes
+
+- Updated dependencies [7e15091c]
+  - @triplit/server@1.0.28
+
+## 1.0.27
+
+### Patch Changes
+
+- @triplit/server@1.0.27
+
+## 1.0.26
+
+### Patch Changes
+
+- @triplit/server@1.0.26
+
+## 1.0.25
+
+### Patch Changes
+
+- Updated dependencies [893dcb0a]
+  - @triplit/server@1.0.25
+
+## 1.0.24
+
+### Patch Changes
+
+- Updated dependencies [378fa02c]
+  - @triplit/server@1.0.24
+
+## 1.0.23
+
+### Patch Changes
+
+- Updated dependencies [c69d89fc]
+  - @triplit/server@1.0.23
+
+## 1.0.22
+
+### Patch Changes
+
+- @triplit/server@1.0.22
+
+## 1.0.21
+
+### Patch Changes
+
+- @triplit/server@1.0.21
+
+## 1.0.20
+
+### Patch Changes
+
+- @triplit/server@1.0.20
+
+## 1.0.19
+
+### Patch Changes
+
+- @triplit/server@1.0.19
+
+## 1.0.18
+
+### Patch Changes
+
+- Updated dependencies [8eb2eb35]
+  - @triplit/server@1.0.18
+
+## 1.0.17
+
+### Patch Changes
+
+- Updated dependencies [74736c3f]
+  - @triplit/server@1.0.17
+
+## 1.0.16
+
+### Patch Changes
+
+- @triplit/server@1.0.16
+
+## 1.0.15
+
+### Patch Changes
+
+- @triplit/server@1.0.15
+
+## 1.0.14
+
+### Patch Changes
+
+- @triplit/server@1.0.14
+
+## 1.0.13
+
+### Patch Changes
+
+- @triplit/server@1.0.13
+
+## 1.0.12
+
+### Patch Changes
+
+- @triplit/server@1.0.12
+
+## 1.0.11
+
+### Patch Changes
+
+- @triplit/server@1.0.11
+
+## 1.0.10
+
+### Patch Changes
+
+- @triplit/server@1.0.10
+
 ## 1.0.9
 
 ### Patch Changes

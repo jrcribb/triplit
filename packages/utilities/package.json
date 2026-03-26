@@ -1,7 +1,7 @@
 {
   "name": "@triplit/utilities",
   "packageManager": "yarn@4.2.2",
-  "version": "0.0.9",
+  "version": "0.0.15",
   "type": "module",
   "files": [
     "/dist"
@@ -34,14 +34,12 @@
     "test": "vitest run",
     "publish-pkg": "node ../../scripts/npm-check-version-and-publish.js"
   },
-  "dependencies": {
-    "@triplit/db": "workspace:^"
-  },
   "devDependencies": {
+    "@triplit/db": "workspace:^",
     "@types/json-schema": "^7.0.15",
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
-    "typescript": "^5.8.2",
+    "typescript": "^5.8.3",
     "vitest": "^3.0.7"
   },
   "peerDependencies": {

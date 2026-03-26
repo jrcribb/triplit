@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { readdirSync, statSync, readFileSync, copyFileSync } from 'fs';
+import { readdirSync, statSync, readFileSync, copyFileSync, rmSync } from 'fs';
 import { join, resolve } from 'path';
 
 const SRC_DIR = 'src';
@@ -83,6 +83,8 @@ async function buildFiles() {
   const entryFilePath = join(SRC_DIR, 'index.ts');
   const files = [entryFilePath, ...cmdFiles];
   const deps = getDeps();
+  // rm rf OUT_DIR, otherwise we generate duplicate files between builds
+  rmSync(OUT_DIR, { recursive: true, force: true });
   await build({
     inject: ['./cjs-shim.js'],
     entryPoints: files,
@@ -94,12 +96,28 @@ async function buildFiles() {
     format: 'esm',
     target: 'node16',
     // All deps are assumed to be external unless in dev dependencies
-    external: deps,
+    external: [...deps, 'bun:sqlite'],
     // plugins: [nativeNodeModulesPlugin],
   });
 
   // copy yoga.wasm file over to dist
   copyFileSync('./yoga.wasm', join(OUT_DIR, 'yoga.wasm'));
+
+  // Manually copy sqlite worker file for access by dev server
+  // Had trouble getting esbuild to handle this in the main bundle (pull in the worker file as a file)
+  const sqliteWorkerPath =
+    './node_modules/@triplit/db/dist/kv-store/storage/sqlite-worker/sqlite.worker.js';
+  const sqliteWorkerDest = join(OUT_DIR, 'sqlite.worker.js');
+  // bundle worker file, output to sqliteWorkerDest
+  await build({
+    entryPoints: [sqliteWorkerPath],
+    outfile: sqliteWorkerDest,
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node16',
+    external: ['better-sqlite3'], // better-sqlite3 is user provided
+  });
 }
 
 // Run the build

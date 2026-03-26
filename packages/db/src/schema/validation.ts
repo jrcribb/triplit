@@ -1,5 +1,8 @@
 import { DBSchema } from '../db.js';
+import { DBSerializationError } from '../errors.js';
+import { hasNoValue, isDefaultFunction } from '../utils/value.js';
 import { DEFAULT_FUNCTIONS } from './data-types/constants.js';
+import { JsonType } from './data-types/definitions/json.js';
 import {
   BooleanType,
   DateType,
@@ -7,8 +10,9 @@ import {
   RecordType,
   SetType,
   StringType,
+  Type,
 } from './data-types/index.js';
-import { hasNoValue, isPrimitiveType } from './data-types/type.js';
+import { isPrimitiveType } from './data-types/type.js';
 import {
   Collection,
   CollectionPermission,
@@ -20,7 +24,6 @@ import {
   Models,
   Relationship,
   Role,
-  TypeConfig,
 } from './types/index.js';
 
 export function validateSchema(schema: DBSchema) {
@@ -127,6 +130,9 @@ export function validateDataType(type: DataType): string | undefined {
   if (type.type === 'date') {
     return validateDateType(type);
   }
+  if (type.type === 'json') {
+    return validateJsonType(type);
+  }
   if (type.type === 'number') {
     return validateNumberType(type);
   }
@@ -147,28 +153,35 @@ export function validateDataType(type: DataType): string | undefined {
 
 function validateBooleanType(type: BooleanType) {
   if (type.type !== 'boolean') return 'not a boolean type';
-  const configInvalid = validateBaseDataTypeConfig(type.config);
+  const configInvalid = validateBaseDataTypeConfig(type);
   if (configInvalid) return `type boolean is invalid: ${configInvalid}`;
   return;
 }
 
 function validateDateType(type: DateType) {
   if (type.type !== 'date') return 'not a date type';
-  const configInvalid = validateBaseDataTypeConfig(type.config);
+  const configInvalid = validateBaseDataTypeConfig(type);
   if (configInvalid) return `type date is invalid: ${configInvalid}`;
+  return;
+}
+
+function validateJsonType(type: JsonType) {
+  if (type.type !== 'json') return 'not a json type';
+  const configInvalid = validateBaseDataTypeConfig(type);
+  if (configInvalid) return `type json is invalid: ${configInvalid}`;
   return;
 }
 
 function validateNumberType(type: NumberType) {
   if (type.type !== 'number') return 'not a number type';
-  const configInvalid = validateBaseDataTypeConfig(type.config);
+  const configInvalid = validateBaseDataTypeConfig(type);
   if (configInvalid) return `type number is invalid: ${configInvalid}`;
   return;
 }
 
 function validateRecordType(type: RecordType) {
   if (type.type !== 'record') return 'not a record type';
-  const configInvalid = validateBaseDataTypeConfig(type.config);
+  const configInvalid = validateBaseDataTypeConfig(type);
   if (configInvalid) return `type record is invalid: ${configInvalid}`;
   if (hasNoValue(type.properties)) return 'type record is missing properties';
   if (typeof type.properties !== 'object')
@@ -186,7 +199,7 @@ function validateRecordType(type: RecordType) {
 
 function validateSetType(type: SetType) {
   if (type.type !== 'set') return 'not a set type';
-  const configInvalid = validateBaseDataTypeConfig(type.config);
+  const configInvalid = validateBaseDataTypeConfig(type);
   if (configInvalid) return `type set is invalid: ${configInvalid}`;
   if (hasNoValue(type.items)) return 'type set is missing items';
   const invalidItems = validateDataType(type.items);
@@ -197,7 +210,7 @@ function validateSetType(type: SetType) {
 
 function validateStringType(type: StringType) {
   if (type.type !== 'string') return 'not a string type';
-  const configInvalid = validateBaseDataTypeConfig(type.config);
+  const configInvalid = validateBaseDataTypeConfig(type);
   if (configInvalid) return `type string is invalid: ${configInvalid}`;
   if (!hasNoValue(type.config?.enum)) {
     if (!Array.isArray(type.config.enum))
@@ -213,42 +226,61 @@ function validatePropertyName(name: string) {
   if (hasNoValue(name)) return 'property name is not defined';
   if (typeof name !== 'string') return 'property name is not a string';
   if (name.length === 0) return 'property name is empty';
-  if (/^[0-9]/.test(name))
-    return 'property name cannot start with a numeric character';
   if (!/^[a-zA-Z0-9_]+$/.test(name))
     return 'property name contains invalid characters - only alphanumeric characters and underscores are allowed.';
 }
 
-export function validateBaseDataTypeConfig(config: TypeConfig | undefined) {
-  if (hasNoValue(config)) return;
-  if (typeof config !== 'object') return 'type config is not an object';
+export function validateBaseDataTypeConfig(type: DataType) {
+  if (hasNoValue(type.config)) return;
+  if (typeof type.config !== 'object') return 'type config is not an object';
   // validate nullable
-  if (!hasNoValue(config.nullable) && typeof config.nullable !== 'boolean')
+  if (
+    !hasNoValue(type.config.nullable) &&
+    typeof type.config.nullable !== 'boolean'
+  )
     return 'option nullable is invalid';
   // validate optional
-  if (!hasNoValue(config.optional) && typeof config.optional !== 'boolean')
+  if (
+    !hasNoValue(type.config.optional) &&
+    typeof type.config.optional !== 'boolean'
+  )
     return 'option optional is invalid';
   // validate default
-  const invalidDefault = validateDefaultValue(config.default);
+  const invalidDefault = validateDefaultValue(type);
   if (invalidDefault) return `option default is invalid: ${invalidDefault}`;
 }
 
-function validateDefaultValue(value: any) {
-  if (hasNoValue(value)) return;
+function validateDefaultValue(type: DataType) {
+  const defaultValue = type.config?.default;
+  if (hasNoValue(defaultValue)) return;
+  if (type.type === 'record')
+    return 'default value cannot be set for record types';
   // TODO: validate default value based on type (or enum)
-  if (typeof value === 'object') {
-    const invalidDefaultFunction = validateDefaultFunction(value);
+  if (isDefaultFunction(defaultValue)) {
+    const invalidDefaultFunction = validateDefaultFunction(
+      type.type,
+      defaultValue
+    );
     if (invalidDefaultFunction)
       return `default value is invalid: ${invalidDefaultFunction}`;
-  } else if (
-    typeof value !== 'number' &&
-    typeof value !== 'boolean' &&
-    typeof value !== 'string'
-  )
-    return 'default value is not a primitive';
+  } else {
+    // Check that the default value can be encoded to the type
+    try {
+      // TODO: The only other check might be to ensure its json parsable (for schema purposes)
+      Type.encode(type, defaultValue);
+    } catch (e) {
+      if (e instanceof DBSerializationError) {
+        return `default value could not be serialized to type`;
+      }
+      throw e;
+    }
+  }
 }
 
-function validateDefaultFunction(fnObj: DefaultFunction) {
+function validateDefaultFunction(
+  type: DataType['type'],
+  fnObj: DefaultFunction
+) {
   if (typeof fnObj !== 'object') return 'default function format is invalid';
   if (hasNoValue(fnObj.func))
     return 'default function is missing func identifier';
@@ -257,21 +289,27 @@ function validateDefaultFunction(fnObj: DefaultFunction) {
     return `default function ${fnObj.func} is not recognized`;
   if (funcId === 'now') {
     if (!hasNoValue(fnObj.args)) return 'default function "now" has no args';
+    if (!['date', 'string'].includes(type))
+      return 'default function "now" is not valid for this type';
   }
-  if (funcId === 'uuid') {
+  if (funcId === 'nanoid' || funcId === 'uuid') {
     if (!hasNoValue(fnObj.args)) {
       if (!Array.isArray(fnObj.args)) {
-        return 'default function "uuid" args is not an array';
+        return `default function "${funcId}" args is not an array`;
       }
       if (fnObj.args.length > 0) {
         if (typeof fnObj.args[0] !== 'number')
-          return 'default function "uuid" arg[0] is not a number';
+          return `default function "${funcId}" arg[0] is not a number`;
       }
     }
+    if (!['string'].includes(type))
+      return 'default function "now" is not valid for this type';
   }
   if (funcId === 'Set.empty') {
     if (!hasNoValue(fnObj.args))
       return 'default function "Set.empty" has no args';
+    if (!['set'].includes(type))
+      return 'default function "Set.empty" is not valid for this type';
   }
 }
 

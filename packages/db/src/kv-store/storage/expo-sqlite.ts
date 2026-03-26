@@ -6,7 +6,11 @@ import {
   ScanOptions,
 } from '../../types.js';
 import * as SQLite from 'expo-sqlite';
-import { DEFAULT_PRAGMA, STATEMENTS } from '../utils/sqlite.js';
+import {
+  parseSqliteKvStoreOptions,
+  SQLiteKVStoreOptions,
+  STATEMENTS,
+} from '../utils/sqlite.js';
 import { MemoryTransaction } from '../transactions/memory-tx.js';
 import { ScopedKVStore } from '../utils/scoped-store.js';
 
@@ -17,17 +21,22 @@ type SQLiteState = {
 
 export class ExpoSQLiteKVStore implements KVStore {
   private storeReady: Promise<SQLiteState>;
-  constructor(name: string);
-  constructor(db: SQLite.SQLiteDatabase);
-  constructor(arg0: string | SQLite.SQLiteDatabase) {
+
+  constructor(name: string, options?: SQLiteKVStoreOptions);
+  constructor(db: SQLite.SQLiteDatabase, options?: SQLiteKVStoreOptions);
+  constructor(
+    arg0: string | SQLite.SQLiteDatabase,
+    options: SQLiteKVStoreOptions = {}
+  ) {
     let dbPromise: Promise<SQLite.SQLiteDatabase>;
     if (typeof arg0 === 'string') {
       dbPromise = SQLite.openDatabaseAsync(arg0);
     } else {
       dbPromise = Promise.resolve(arg0);
     }
+    const parsedOptions = parseSqliteKvStoreOptions(options);
     this.storeReady = dbPromise.then(async (db) => {
-      await db.execAsync(DEFAULT_PRAGMA);
+      await db.execAsync(parsedOptions.pragma);
       // TODO: promise.all the prepares?
       const createTableStatement = await db.prepareAsync(
         STATEMENTS.createTable
@@ -50,6 +59,7 @@ export class ExpoSQLiteKVStore implements KVStore {
       };
     });
   }
+
   scope(scope: Tuple): KVStore {
     return new ScopedKVStore(this, scope);
   }
@@ -79,13 +89,13 @@ export class ExpoSQLiteKVStore implements KVStore {
     const { statements } = await this.storeReady;
     const fullKey = scope ? [...scope, ...key] : key;
     const encodedKey = encodeTuple(fullKey);
-    const result = await (
+    const row = await (
       await statements.get.executeAsync(encodedKey)
     ).getFirstAsync();
-    if (!result) return undefined;
+    if (!row) return undefined;
     return JSON.parse(
       // @ts-expect-error
-      result
+      row.value
     );
   }
   async set(key: Tuple, value: any, scope?: Tuple): Promise<void> {

@@ -34,6 +34,7 @@ export function triplitRoute<
     | ((
         loaderParams: LoaderFnContext<
           TParentRoute,
+          TId,
           ResolveParams<Path>,
           unknown,
           unknown,
@@ -53,8 +54,9 @@ export function triplitRoute<
     loader: async <
       Ctx extends LoaderFnContext<
         TParentRoute,
+        TId,
         unknown,
-        ResolveParams<Path>,
+        Record<string, any>,
         AnyContext,
         unknown,
         unknown
@@ -77,11 +79,14 @@ export function triplitRoute<
       const { results: initialResults, query } = useLoaderData({
         strict: false,
       });
+      // TODO: latestQuery not staying up to date
       const [latestQuery, setQuery] = useState<Q>(query);
+      // TODO: how do we expose updateQuery?
       const updateQuery = useCallback((newQuery: Q) => {
         setQuery(newQuery);
       }, []);
-      const resp = useQuery(client, latestQuery);
+      // TODO: use latestQuery here
+      const resp = useQuery(client, query);
       const results = useMemo(() => {
         const latestResults = resp.results ?? initialResults;
         return latestResults ?? [];

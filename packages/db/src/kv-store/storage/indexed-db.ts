@@ -7,23 +7,29 @@ import {
 import { compareTuple, Tuple } from '../../codec.js';
 import { MemoryTransaction } from '../transactions/memory-tx.js';
 import { ScopedKVStore } from '../utils/scoped-store.js';
+import { BTreeKVStore } from './memory-btree.js';
 
 const version = 1;
 const storeName = 'triplit';
 
-type IndexedDbKVOptions = {
+export type IndexedDbKVOptions = {
   batchSize?: number;
+  useCache?: boolean;
 };
 
 export class IndexedDbKVStore implements KVStore {
   private db: Promise<IDBDatabase>;
+  private cache: BTreeKVStore | undefined;
   readonly options: IndexedDbKVOptions;
 
   constructor(
     db: string | Promise<IDBDatabase>,
-    options: IndexedDbKVOptions = {}
+    options: IndexedDbKVOptions = { useCache: true }
   ) {
     this.options = options;
+    if (options.useCache) {
+      this.cache = new BTreeKVStore();
+    }
     this.db =
       typeof db === 'string'
         ? new Promise((resolve, reject) => {
@@ -34,9 +40,9 @@ export class IndexedDbKVStore implements KVStore {
               this.setupSchema(database);
             };
 
-            request.onsuccess = (event: Event) => {
+            request.onsuccess = async (event: Event) => {
               const database = (event.target as IDBOpenDBRequest).result;
-              resolve(database);
+              resolve(await this.populateCache(database));
             };
 
             request.onerror = (event: Event) => {
@@ -46,7 +52,33 @@ export class IndexedDbKVStore implements KVStore {
               reject((event.target as IDBOpenDBRequest).error);
             };
           })
-        : db;
+        : db.then(this.populateCache);
+  }
+
+  private async populateCache(db: IDBDatabase) {
+    const transaction = db.transaction(storeName, 'readonly');
+    const store = transaction.objectStore(storeName);
+    const keys: string[][] = await new Promise<string[][]>(
+      (resolve, reject) => {
+        const request = store.getAllKeys();
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result as string[][]);
+      }
+    );
+    const values: any[] = await new Promise((resolve, reject) => {
+      const request = store.getAll();
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => resolve(request.result);
+    });
+    if (keys.length !== values.length) {
+      throw new Error('IndexedDB keys and values length mismatch');
+    }
+    for (let i = 0; i < keys.length; i++) {
+      const key = keys[i];
+      const value = values[i];
+      this.cache && this.cache.data.set(key, value);
+    }
+    return db;
   }
 
   private setupSchema(db: IDBDatabase): void {
@@ -57,6 +89,9 @@ export class IndexedDbKVStore implements KVStore {
 
   async get(key: Tuple, scope?: Tuple) {
     const db = await this.db;
+    if (this.cache) {
+      return this.cache.get(key, scope);
+    }
     const fullKey = (scope ? [...scope, ...key] : key) as string[];
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(storeName, 'readonly', {
@@ -80,7 +115,10 @@ export class IndexedDbKVStore implements KVStore {
       const store = transaction.objectStore(storeName);
       const request = store.put(value, fullKey);
 
-      request.onsuccess = () => resolve();
+      request.onsuccess = async () => {
+        this.cache && (await this.cache.set(key, value, scope));
+        resolve();
+      };
       request.onerror = () => reject(request.error);
     });
   }
@@ -95,7 +133,10 @@ export class IndexedDbKVStore implements KVStore {
       const store = transaction.objectStore(storeName);
       const request = store.delete(fullKey);
 
-      request.onsuccess = () => resolve();
+      request.onsuccess = async () => {
+        this.cache && (await this.cache.delete(key, scope));
+        resolve();
+      };
       request.onerror = () => reject(request.error);
     });
   }
@@ -105,6 +146,10 @@ export class IndexedDbKVStore implements KVStore {
     scope?: Tuple
   ): AsyncIterable<[Tuple, any]> {
     const db = await this.db;
+    if (this.cache) {
+      yield* this.cache.scan(options, scope);
+      return;
+    }
     const lower = scope ? [...scope, ...options.prefix] : options.prefix;
     const upper = [...lower, '\uffff'];
     const transaction = db.transaction(storeName, 'readonly', {
@@ -112,46 +157,35 @@ export class IndexedDbKVStore implements KVStore {
     });
     const store = transaction.objectStore(storeName);
     const batchSize = this.options.batchSize ?? 1000;
-    let keys: string[][] = [];
-    let values: any[] = [];
-    let keyRange = IDBKeyRange.bound(lower, upper, false, true);
+    let currentLower = lower;
+    let firstPage = true;
     while (true) {
-      keys = await new Promise<string[][]>((resolve, reject) => {
-        const request = store.getAllKeys(keyRange, batchSize);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result as string[][]);
-      });
+      if (compareTuple(currentLower, upper) >= 0) break;
+      const keyRange = IDBKeyRange.bound(currentLower, upper, firstPage, true);
+      const keys = await getBatchKeys<string[]>(store, keyRange, batchSize);
       if (!keys.length) break;
-      values = await new Promise((resolve, reject) => {
-        const request = store.getAll(keyRange, batchSize);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result);
-      });
+      const values = await getBatchValues(store, keyRange, batchSize);
       if (!values.length) break;
-      const lastKey = keys.at(-1)!;
-      const lastPage = compareTuple(lastKey, upper) > 0;
       for (let i = 0; i < keys.length; i++) {
-        if (lastPage) {
-          if (compareTuple(keys[i], upper) > 0) break;
-        }
         const prefixLength = (scope?.length ?? 0) + options.prefix.length;
         const keyWithoutPrefix =
           prefixLength > 0 ? keys[i].slice(prefixLength) : keys[i];
         if (keyWithoutPrefix.length === 0) break;
         yield [keyWithoutPrefix, values[i]];
       }
-      // Could be more, set up to continue scanning
-      if (values.length === batchSize) {
-        keyRange = IDBKeyRange.lowerBound(keys.at(-1), true);
-        keys = [];
-        values = [];
-      } else {
-        break;
-      }
+      const lastPage = values.length < batchSize;
+      if (lastPage) break;
+      const lastKey = keys.at(-1)!;
+      currentLower = lastKey;
     }
   }
 
   async *scanValues(options: ScanOptions, scope?: Tuple): AsyncIterable<any> {
+    await this.db;
+    if (this.cache) {
+      yield* this.cache.scanValues(options, scope);
+      return;
+    }
     const db = await this.db;
     const lower = scope ? [...scope, ...options.prefix] : options.prefix;
     const upper = [...lower, '\uffff'];
@@ -160,75 +194,30 @@ export class IndexedDbKVStore implements KVStore {
     });
     const store = transaction.objectStore(storeName);
     const batchSize = this.options.batchSize ?? 1000;
-    let keys: string[][] = [];
-    let values: any[] = [];
-    let keyRange = IDBKeyRange.bound(lower, upper, false, true);
+    let currentLower = lower;
+    // As we paginate, the first page should include the lower bound according to our API
+    let firstPage = true;
     while (true) {
-      keys = await new Promise<string[][]>((resolve, reject) => {
-        const request = store.getAllKeys(keyRange, batchSize);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result as string[][]);
-      });
-      if (!keys.length) break;
-      values = await new Promise((resolve, reject) => {
-        const request = store.getAll(keyRange, batchSize);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result);
-      });
+      if (compareTuple(currentLower, upper) >= 0) break;
+      const keyRange = IDBKeyRange.bound(currentLower, upper, firstPage, true);
+      // Get range values
+      const values = await getBatchValues(store, keyRange, batchSize);
+      // If no values, no data to return
       if (!values.length) break;
-      const lastKey = keys.at(-1)!;
-      const lastPage = compareTuple(lastKey, upper) > 0;
-      for (let i = 0; i < keys.length; i++) {
-        if (lastPage) {
-          if (compareTuple(keys[i], upper) > 0) break;
-        }
-        yield values[i];
+      for (const value of values) {
+        yield value;
       }
-      // Could be more, set up to continue scanning
-      if (values.length === batchSize) {
-        keyRange = IDBKeyRange.lowerBound(keys.at(-1), true);
-        keys = [];
-        values = [];
-      } else {
-        break;
-      }
-    }
-  }
-
-  async *scanCursor(
-    options: ScanOptions,
-    scope?: Tuple
-  ): AsyncIterable<[Tuple, any]> {
-    const db = await this.db;
-    const lower = scope ? [...scope, ...options.prefix] : options.prefix;
-    const upper = [...lower, '\uffff'];
-    const transaction = db.transaction(storeName, 'readonly', {
-      durability: 'relaxed',
-    });
-    const store = transaction.objectStore(storeName);
-    const range = IDBKeyRange.bound(lower, upper, false, true);
-    const request = store.openCursor(range);
-
-    while (true) {
-      const cursor = await new Promise<IDBCursorWithValue>(
-        (resolve, reject) => {
-          request.onerror = () => reject(request.error);
-          request.onsuccess = () =>
-            resolve((request as IDBRequest<IDBCursorWithValue>).result);
-        }
-      );
-      if (!cursor) {
-        break;
-      }
-      const prefixLength = (scope?.length ?? 0) + options.prefix.length;
-      const keyWithoutPrefix = (
-        prefixLength > 0
-          ? (cursor.key as string[]).slice(prefixLength)
-          : cursor.key
-      ) as string[];
-      if (keyWithoutPrefix.length === 0) break;
-      yield [keyWithoutPrefix, cursor.value];
-      cursor.continue();
+      // Last page will not be full
+      const lastPage = values.length < batchSize;
+      if (lastPage) break;
+      const lastKey = (await getKeyInCursor(store, keyRange, batchSize)) as
+        | string[]
+        | undefined;
+      // If it cannot find the last key, it means our batch size is gt remaining key range and we're on last page (ie redundant check with above)
+      if (!lastKey) break;
+      // Reset pagination scan state
+      currentLower = lastKey;
+      firstPage = false;
     }
   }
 
@@ -241,7 +230,8 @@ export class IndexedDbKVStore implements KVStore {
     if (!scope?.length) {
       const request = store.clear();
       return new Promise<void>((resolve, reject) => {
-        request.onsuccess = () => {
+        request.onsuccess = async () => {
+          this.cache && (await this.cache.clear(scope));
           resolve();
         };
 
@@ -253,7 +243,8 @@ export class IndexedDbKVStore implements KVStore {
       const range = IDBKeyRange.bound(lower, upper, false, true);
       return new Promise<void>((resolve, reject) => {
         const request = store.delete(range);
-        request.onsuccess = () => {
+        request.onsuccess = async () => {
+          this.cache && (await this.cache.clear(scope));
           resolve();
         };
 
@@ -261,7 +252,6 @@ export class IndexedDbKVStore implements KVStore {
       });
     }
   }
-
   scope(scope: Tuple): ScopedKVStore<this> {
     return new ScopedKVStore(this, scope);
   }
@@ -272,6 +262,9 @@ export class IndexedDbKVStore implements KVStore {
 
   async count(options: CountOptions, scope?: Tuple): Promise<number> {
     const db = await this.db;
+    if (this.cache) {
+      return this.cache.count(options, scope);
+    }
     const lower = scope ? [...scope, ...options.prefix] : options.prefix;
     const upper = [...lower, '\uffff'];
     const range = IDBKeyRange.bound(lower, upper, false, true);
@@ -297,20 +290,100 @@ export class IndexedDbKVStore implements KVStore {
       });
       const store = tx.objectStore(storeName);
       let lastOp = null;
+      const deletesCopy: Tuple[] = [];
+      const setsCopy: [Tuple, any][] = [];
       for await (const key of deletes) {
         lastOp = store.delete(key as string[]);
+        deletesCopy.push(key);
       }
       for await (const [key, value] of sets) {
         lastOp = store.put(value, key as string[]);
+        setsCopy.push([key, value]);
       }
 
       if (lastOp) {
-        lastOp.onsuccess = () => resolve();
+        lastOp.onsuccess = async () => {
+          this.cache && (await this.cache.applyEdits(setsCopy, deletesCopy));
+          resolve();
+        };
         // TODO: figure out how to make on error for any error
         lastOp.onerror = () => reject(lastOp.error);
       } else {
+        this.cache && (await this.cache.applyEdits(setsCopy, deletesCopy));
         resolve();
       }
     });
   }
+
+  async getBatchKeys<K = IDBValidKey>(
+    keyRange: IDBKeyRange,
+    batchSize: number
+  ) {
+    const db = await this.db;
+    const transaction = db.transaction(storeName, 'readonly', {
+      durability: 'relaxed',
+    });
+    const store = transaction.objectStore(storeName);
+    return getBatchKeys(store, keyRange, batchSize);
+  }
+}
+
+/**
+ * Given a range, get the key at the offset (if offset goes over the end, returns undefined)
+ */
+function getKeyInCursor(
+  store: IDBObjectStore,
+  keyRange: IDBKeyRange,
+  offset: number = 0
+): Promise<IDBValidKey | undefined> {
+  return new Promise((resolve, reject) => {
+    const request = store.openKeyCursor(keyRange, 'next');
+    let advanced = false;
+    request.onsuccess = (event) => {
+      const req = event.target as IDBRequest<IDBCursorWithValue | null>;
+      const cursor = req?.result;
+      // If there's no cursor here, we didn't have enough entries
+      if (!cursor) {
+        resolve(undefined);
+        return;
+      }
+      // If we should advance, do so
+      if (!advanced && offset > 1) {
+        advanced = true;
+        cursor.advance(offset);
+        return;
+      }
+      // either return the cursor key or resolve undefined
+      resolve(cursor.key);
+    };
+
+    request.onerror = (event) => {
+      const req = event.target as IDBRequest<IDBCursorWithValue | null>;
+      reject(req.error);
+    };
+  });
+}
+
+function getBatchKeys<K = IDBValidKey>(
+  store: IDBObjectStore,
+  keyRange: IDBKeyRange,
+  batchSize: number
+) {
+  return new Promise<K[]>((resolve, reject) => {
+    const request = store.getAllKeys(keyRange, batchSize);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result as K[]);
+  });
+}
+
+function getBatchValues<T = any>(
+  store: IDBObjectStore,
+  keyRange: IDBKeyRange,
+  batchSize: number
+) {
+  return new Promise<T[]>((resolve, reject) => {
+    const request = store.getAll(keyRange, batchSize);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+  });
 }

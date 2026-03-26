@@ -8,6 +8,7 @@ exports[`query planning > query: '20 most recent messages in a conversa…' 1`] 
       "type": "SCAN",
     },
     {
+      "after": undefined,
       "filter": [
         [
           "conversationId",
@@ -192,6 +193,7 @@ exports[`query planning > query: 'Conversations including the most rece…' 1`] 
           "type": "SCAN",
         },
         {
+          "after": undefined,
           "filter": [
             [
               "conversationId",
@@ -282,6 +284,7 @@ exports[`query planning > query: 'Flights to california including the d…' 1`] 
       "viewId": "0",
     },
     {
+      "after": undefined,
       "filter": [
         [
           "destination",
@@ -327,6 +330,7 @@ exports[`query planning > query: 'Flights to california including the d…' 1`] 
           "type": "SCAN",
         },
         {
+          "after": undefined,
           "filter": [
             [
               "state",
@@ -349,6 +353,7 @@ exports[`query planning > query: 'Flights to california including the d…' 1`] 
           "type": "SCAN",
         },
         {
+          "after": undefined,
           "filter": [
             [
               "state",
@@ -447,6 +452,7 @@ exports[`query planning > query: 'Posts authored by user with username …' 1`] 
       "viewId": "0",
     },
     {
+      "after": undefined,
       "filter": [
         [
           "authorId",
@@ -468,6 +474,7 @@ exports[`query planning > query: 'Posts authored by user with username …' 1`] 
           "type": "SCAN",
         },
         {
+          "after": undefined,
           "filter": [
             [
               "username",
@@ -515,6 +522,9 @@ exports[`query planning > query: 'Posts ordered by the last name of the…' 1`] 
           "type": "RESOLVE_FROM_VIEW",
           "viewId": "0",
         },
+        {
+          "type": "PICK",
+        },
       ],
       "type": "SUBQUERY",
     },
@@ -523,6 +533,19 @@ exports[`query planning > query: 'Posts ordered by the last name of the…' 1`] 
         [
           "_order_0.name",
           "ASC",
+          {
+            "cardinality": "one",
+            "subquery": {
+              "collectionName": "$view_0",
+              "where": [
+                [
+                  "id",
+                  "=",
+                  "$1.authorId",
+                ],
+              ],
+            },
+          },
         ],
       ],
       "type": "SORT",
@@ -566,6 +589,7 @@ exports[`query planning > query: 'messages from conversations that the …' 1`] 
       "viewId": "0",
     },
     {
+      "after": undefined,
       "filter": [
         [
           "conversationId",
@@ -604,6 +628,7 @@ exports[`query planning > query: 'messages from conversations that the …' 1`] 
           "type": "SCAN",
         },
         {
+          "after": undefined,
           "filter": [
             [
               "userId",
@@ -615,6 +640,72 @@ exports[`query planning > query: 'messages from conversations that the …' 1`] 
         },
         {
           "type": "COLLECT",
+        },
+      ],
+      "views": {},
+    },
+  },
+}
+`;
+
+exports[`query planning > query: 'subquery with two filters with variab…' 1`] = `
+{
+  "steps": [
+    {
+      "collectionName": "messages",
+      "type": "SCAN",
+    },
+    {
+      "subPlan": [
+        {
+          "type": "PREPARE_VIEW",
+          "viewId": "0",
+        },
+        {
+          "filter": [
+            [
+              "id",
+              "=",
+              "$1.senderId",
+            ],
+            [
+              "name",
+              "=",
+              "$1.text",
+            ],
+          ],
+          "type": "RESOLVE_FROM_VIEW",
+          "viewId": "0",
+        },
+      ],
+      "type": "ITERATOR_SUBQUERY_FILTER",
+    },
+    {
+      "type": "COLLECT",
+    },
+  ],
+  "views": {
+    "0": {
+      "steps": [
+        {
+          "collectionName": "users",
+          "type": "SCAN",
+        },
+        {
+          "type": "COLLECT",
+        },
+        {
+          "fields": [
+            [
+              "id",
+              "ASC",
+            ],
+            [
+              "name",
+              "ASC",
+            ],
+          ],
+          "type": "SORT",
         },
       ],
       "views": {},
